@@ -27,6 +27,14 @@ The separately selected migration candidate builds all roles with:
 
 This adds the `reclaimed-softdevice` feature and selects application flash `0x1000..0x65000`. It replaces the resident S140 SoftDevice with RMK's current SDC/MPSL stack; transport roles stay the same. The default layout and UF2 guard remain conservative. This command only cross-builds: physical recovery, backup restoration and hardware acceptance remain required before an image can be approved. CI runs both layouts independently and retains the default left overflow as a failure.
 
+To build the explicitly selected recovery-first keyboard variants:
+
+```sh
+./scripts/check.sh --reclaimed-softdevice --usb-recovery-first
+```
+
+The additional feature reserves the installed Adafruit bootloader's existing recovery marker at application base + `0x200`. It changes USB cold-start behavior and is not enabled by default. Binary fit does not verify that the vendor bootloader implements the convention. USB-only receiver variants are diagnostic: their normal cold-plug workflow is unsuitable with this marker. See [update foundation research](research/update-foundation.md).
+
 Development omits web/Vial remapping, custom message transport, combos, forks, Morse actions and recorded macros. Profile switching and a small function layer are configured directly in Rust. These size choices do not establish factory feature parity.
 
 The host scanner tests validate I²C input configuration, polarity, mapping uniqueness, full snapshots, partial-read failure isolation and repeated electrical transitions. They do not exercise physical wiring, RMK debounce timing, radio reliability or OS HID behavior. See [acceptance](acceptance.md) for those gates.

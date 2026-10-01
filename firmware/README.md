@@ -28,6 +28,21 @@ cargo build --locked --release --features right,reclaimed-softdevice
 cargo build --locked --release --features receiver,reclaimed-softdevice
 ```
 
-All three migration roles compile with the pinned latest RMK revision and Rust toolchain. Flash content is 339,936 bytes for left, 218,052 bytes for right and 249,772 bytes for receiver; RAM content is 64,556, 41,796 and 54,188 bytes respectively. ELF inspection confirms that all file-backed load segments lie in the selected application flash interval and all zero-fill RAM segments lie in the high 96 KiB RAM interval. These checks establish build fit and region confinement; hardware operation and recovery still require separate validation.
+All three migration roles compile with the pinned latest RMK revision and Rust toolchain. Flash content is 339,988 bytes for left, 218,052 bytes for right and 249,772 bytes for receiver; RAM content is 64,556, 41,796 and 54,188 bytes respectively. ELF inspection confirms that all file-backed load segments lie in the selected application flash interval and all zero-fill RAM segments lie in the high 96 KiB RAM interval. These checks establish build fit and region confinement; hardware operation and recovery still require separate validation.
 
 The factory source is named `memory-factory.x` so cortex-m-rt's `INCLUDE memory.x` resolves the feature-selected file generated in `OUT_DIR`. Keeping a source `memory.x` beside Cargo.toml would shadow that generated file and silently ignore the layout selection. The renamed factory file is byte-identical to the original.
+
+The left role enables RMK's upstream `adafruit_bl` behavior. Hold the left Fn key, press and release the left Escape key, then release Fn to request the Adafruit bootloader. RMK processes this action on Escape release, writes `0x57` to `GPREGRET`, and requests a system reset. Fn+5 still selects Bluetooth profile 4. This provides a software update-entry request for an operational left application; it has not yet been physically validated on this board.
+
+This entry requires the application, scanner and key processing to be running. It cannot recover a failed boot or a hung scanner. The right half and receiver still need their own independently verified entry and recovery paths. No custom bootloader or OTA updater is included, and there is no health-based rollback guarantee. Flash and restoration remain governed by the separate physical-entry and backup checks.
+
+An additional explicit `usb-recovery-first` feature inserts the existing Adafruit `0x87eeb07c` application marker at application base + `0x200`. The linker reserves the marker before executable text and asserts that it cannot overlap vectors. This feature is off by default for every role. It requests the installed upstream bootloader's recovery-first convention; it does not replace the bootloader or implement rollback.
+
+The upstream revision enters DFU on startup when this marker applies. If USB enumerates within the three-second window, DFU stays active; disconnecting USB after that does not make this installed revision boot the application. A half can instead start on battery without USB, wait for the timeout, and then attach USB after its application starts. Actual vendor behavior and a usable power-cycle procedure must be verified on hardware. An always USB-powered receiver would enter DFU on normal cold plugs, so this option is unsuitable for its normal firmware and is provided only as an explicit analysis candidate.
+
+```sh
+cargo build --locked --release --features right,usb-recovery-first
+cargo build --locked --release --features left,reclaimed-softdevice,usb-recovery-first
+```
+
+The marker can offer an application-independent startup window when the verified power/start conditions apply. It is not a watchdog, A/B update system, health check, or automatic restoration guarantee. Keep the independent host backup and restoration path.

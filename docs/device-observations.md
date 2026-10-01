@@ -23,3 +23,8 @@ The current readback is 884,736 container bytes: 1,728 contiguous 256-byte paylo
 Decoded SoftDevice metadata corroborates firmware ID `0x123`, size/application base `0x27000`, and version 7.3.0. The application vector's initial stack is `0x20020000`. The readback includes the SoftDevice and existing application, including the proposed RMK settings interval; it excludes the MBR, factory filesystem, bootloader, UICR and bootloader settings. It is therefore a backup of the overwrite candidate region, not a complete device backup.
 
 The owner clarified that there is no external reset pinhole. Recovery access would require opening the enclosure. The supplied manufacturer video shows right-half module edge contacts; this has not established physical recovery on the owner's left half. Software MSC entry alone cannot recover an application that cannot execute its keyboard shortcut.
+## Right factory readback, 2026-10-01
+
+The owner unplugged the left, connected the right with its external switch ON, and held factory Fn+0. A `NocFree &` drive appeared. Read-only metadata reports the same `0.9.2-39-g0147d71` bootloader, 2025-12-26 build date and S140 7.3.0 as the left.
+
+`CURRENT.UF2` is saved locally in `.evidence/factory-right/`, with source/destination SHA-256 `b74ba6c686b15a74f837ba26eb67efd241a6744c48d64d6fed7eb72974f3f043`. All 1,728 blocks have valid magic, numbering, 256-byte payloads and contiguous addresses `0x1000..0x6d000`, custom family `0x239a0029`. Factory application vectors are SP `0x20020000`, Thumb PC `0x37875`. This is the right's own backup; it must not be replaced with the left's. It excludes the MBR, filesystem, bootloader and UICR. No firmware was written.

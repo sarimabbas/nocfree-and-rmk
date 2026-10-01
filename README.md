@@ -31,6 +31,7 @@ Backlighting, indicators, physical mode-switch handling, factory web configurati
 - [Community and NocFree ZMK comparison](docs/research/community-size.md)
 - [Guarded flashing and recovery plan](docs/flashing.md)
 - [Explicit migration safety evidence](docs/research/migration-safety.md)
+- [Recovery-first foundation and rollback choices](docs/research/update-foundation.md)
 - [Observed device behavior](docs/device-observations.md)
 - [Physical acceptance requirements](docs/acceptance.md)
 

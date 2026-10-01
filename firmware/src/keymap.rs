@@ -1,5 +1,5 @@
 use rmk::types::action::{Action, KeyAction};
-use rmk::{a, k, mo};
+use rmk::{a, k, kbctrl, mo};
 // ANSI electrical order: 37 left keys, then 47 right keys.
 pub fn default_keymap() -> [[[KeyAction; 84]; 1]; 2] {
     let base = [
@@ -89,6 +89,8 @@ pub fn default_keymap() -> [[[KeyAction; 84]; 1]; 2] {
         k!(Right),
     ];
     let mut function = [a!(Transparent); 84];
+    // Left-local Escape, released while Fn is active, requests Adafruit DFU.
+    function[0] = kbctrl!(Bootloader);
     function[1] = k!(BrightnessDown);
     function[2] = k!(BrightnessUp);
     function[37] = k!(MediaPrevTrack);

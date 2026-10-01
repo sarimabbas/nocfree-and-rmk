@@ -30,6 +30,21 @@ class GuardTests(unittest.TestCase):
     def test_valid_application(self):
         self.assertEqual(guard.inspect(image())['blocks'], 1)
 
+    def test_recovery_marker_is_checked_by_address_even_in_shuffled_file(self):
+        blocks = multi_image([guard.START, guard.START + 256, guard.START + 512])
+        struct.pack_into('<I', blocks[2], 32, 0x87EEB07C)
+        data = b''.join([blocks[2], blocks[0], blocks[1]])
+        self.assertEqual(guard.inspect(data, require_recovery_marker=True)['blocks'], 3)
+
+    def test_missing_wrong_or_misplaced_recovery_marker_is_rejected(self):
+        with self.assertRaises(ValueError):
+            guard.inspect(image(), require_recovery_marker=True)
+        blocks = multi_image([guard.START, guard.START + 256, guard.START + 512])
+        for index in (1, 2):
+            struct.pack_into('<I', blocks[index], 36, 0x87EEB07C)
+        with self.assertRaises(ValueError):
+            guard.inspect(b''.join(blocks), require_recovery_marker=True)
+
     def test_protected_addresses(self):
         for address in (0, 0x1000, guard.START - 256, guard.END, 0x74000, 0x10001000):
             with self.subTest(address=address), self.assertRaises(ValueError):

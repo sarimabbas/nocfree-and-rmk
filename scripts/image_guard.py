@@ -11,7 +11,7 @@ FAMILY = 0x621E937A
 START, END = 0x27000, 0x65000
 
 
-def inspect(data):
+def inspect(data, require_recovery_marker=False):
     if not data or len(data) % 512:
         raise ValueError('UF2 must contain complete 512-byte blocks')
     blocks = {}
@@ -42,6 +42,9 @@ def inspect(data):
         raise ValueError('invalid nRF52833 initial stack pointer')
     if not pc & 1 or not START <= pc & ~1 < end:
         raise ValueError('reset vector is not Thumb code inside this image')
+    if require_recovery_marker:
+        if len(ordered) < 3 or struct.unpack_from('<I', ordered[2][1])[0] != 0x87EEB07C:
+            raise ValueError('requires Adafruit recovery marker at application base + 0x200')
     return dict(sha256=hashlib.sha256(data).hexdigest(), family_id=hex(FAMILY),
                 start=hex(START), end_exclusive=hex(end), blocks=total,
                 stack_pointer=hex(sp), reset_vector=hex(pc),
@@ -51,9 +54,11 @@ def inspect(data):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--image', '-i', type=Path, required=True, help='Application UF2 to inspect; never written to a device')
+    parser.add_argument('--require-recovery-marker', '-r', action='store_true',
+                        help='Also require the recovery-first marker; does not verify installed bootloader behavior')
     args = parser.parse_args()
     try:
-        print(json.dumps(inspect(args.image.read_bytes()), indent=2))
+        print(json.dumps(inspect(args.image.read_bytes(), args.require_recovery_marker), indent=2))
     except (OSError, ValueError) as error:
         parser.exit(1, f'Rejected: {error}\n')
 

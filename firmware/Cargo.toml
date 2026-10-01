@@ -7,7 +7,9 @@ license = "MIT"
 default = []
 # Explicit migration: replaces resident S140; never a normal update.
 reclaimed-softdevice = []
-left = ["rmk/split", "rmk/dongle"]
+# Optional existing-bootloader recovery window; changes USB cold-start UX.
+usb-recovery-first = []
+left = ["rmk/split", "rmk/dongle", "rmk/adafruit_bl"]
 right = ["rmk/split"]
 receiver = ["rmk/dongle"]
 [dependencies]

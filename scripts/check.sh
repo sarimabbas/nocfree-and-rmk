@@ -1,15 +1,14 @@
 #!/bin/sh
 # One repeatable local/CI entrypoint; never writes to a device.
 set -eu
-case "${1:-}" in
-    "") layout_features="" ;;
-    --reclaimed-softdevice) layout_features=",reclaimed-softdevice" ;;
-    *) echo "Usage: $0 [--reclaimed-softdevice]" >&2; exit 2 ;;
-esac
-if [ "$#" -gt 1 ]; then
-    echo "Usage: $0 [--reclaimed-softdevice]" >&2
-    exit 2
-fi
+layout_features=""
+for option in "$@"; do
+    case "$option" in
+        --reclaimed-softdevice) layout_features="$layout_features,reclaimed-softdevice" ;;
+        --usb-recovery-first) layout_features="$layout_features,usb-recovery-first" ;;
+        *) echo "Usage: $0 [--reclaimed-softdevice] [--usb-recovery-first]" >&2; exit 2 ;;
+    esac
+done
 cd "$(dirname "$0")/.."
 python3 -m unittest discover -s tests -v
 cargo test --locked --manifest-path crates/nocfree-input/Cargo.toml
