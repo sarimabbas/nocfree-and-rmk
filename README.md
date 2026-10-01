@@ -27,6 +27,8 @@ Backlighting, indicators, physical mode-switch handling, factory web configurati
 - [Tested update foundation and current device state](docs/recovery-probe.md)
 - [Build results and rejected size experiments](docs/build-results.md)
 - [Architecture](docs/architecture.md)
+- [Staged implementation and owner-assisted bring-up plan](docs/implementation-plan.md)
+- [Pinned RMK transport reliability review](docs/research/transport-reliability.md)
 - [Hardware and factory image evidence](docs/research/hardware.md)
 - [RMK compatibility, battery and transport research](docs/research/rmk.md)
 - [Measured RMK size comparisons](docs/research/size-options.md)

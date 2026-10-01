@@ -4,7 +4,9 @@
 
 The separately reviewed right-half `recovery-probe` is USB-only: 14,192 B linked section content, 2,952 B RAM, and file-backed LOAD span `0x27000..0x2a870` including the reserved marker gap. Vector SP is `0x20020000`, reset PC `0x27205`, recovery word at `0x27200` is `0x87eeb07c`. It preserves resident S140 and all existing flash boundaries. It is now installed on the right; its USB identity, update entry, cold recovery, factory restoration and reinstallation were tested. See [hardware results](recovery-probe.md).
 
-The current guard harness has 15 Python tests and the input driver has 7 Rust tests. Optional recovery-first keyboard builds also cross-build: migration left/right/receiver stay below `0x65000`, and factory-preserving right ends at `0x5c4cc`. These are preparation results; they do not establish hardware recovery or rollback.
+The current guard harness has 16 Python tests and the input driver has 7 Rust tests. Optional recovery-first keyboard builds also cross-build: migration left/right/receiver stay below `0x65000`, and factory-preserving right ends at `0x5c4cc`. These are preparation results; they do not establish hardware recovery or rollback.
+
+The offline follow-up on 2026-10-01 reran all three harness variants with Rust 1.93.1 and Arm GNU 15.2.rel1. Both explicit migration variants passed all three keyboard roles and the separate factory-preserving recovery probe. The default harness passed host tests, formatting, right, receiver and recovery probe, but correctly failed the left linker limit by 86,048 B. The saved probe UF2 also passed the tightened application RAM guard with the required marker. No device was accessed or changed in this follow-up.
 
 The earlier measurements below precede the update-entry and recovery-marker additions.
 
