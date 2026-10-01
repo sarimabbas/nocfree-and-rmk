@@ -126,7 +126,11 @@ async fn main(spawner: Spawner) {
     #[cfg(not(feature = "right"))]
     let device_config = rmk::config::DeviceConfig {
         manufacturer: "NocFree RMK community",
-        product_name: "NocFree AND RMK",
+        product_name: if cfg!(feature = "receiver") {
+            "NocFree AND RMK Receiver"
+        } else {
+            "NocFree AND RMK Left"
+        },
         ..Default::default()
     };
     #[cfg(not(feature = "receiver"))]

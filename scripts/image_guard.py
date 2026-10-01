@@ -8,7 +8,7 @@ import struct
 
 FAMILY = 0x621E937A
 # Preserve factory SoftDevice, inferred filesystem, bootloader and UICR.
-START, END = 0x27000, 0x6D000
+START, END = 0x27000, 0x65000
 
 
 def inspect(data):

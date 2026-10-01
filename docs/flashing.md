@@ -22,7 +22,7 @@ Do not run mass erase, unlock/recover commands, write UICR, or replace SoftDevic
 
 Run the pinned firmware build and the repeatable [acceptance harness](acceptance.md). Builds must reserve factory low flash, filesystem/bootloader space, and bootloader-owned RAM. An ELF is a build result, not an approved flash image. Do not substitute a generic nRF52840/nice!nano UF2 converter or use an example linker map.
 
-The read-only guard checks 256-byte, family-tagged nRF52833 UF2 payloads in `[0x27000, 0x6d000)`, contiguous blocks and vector validity:
+The read-only guard checks 256-byte, family-tagged nRF52833 UF2 payloads in `[0x27000, 0x65000)`, contiguous blocks and vector validity:
 
 ```sh
 python3 scripts/image_guard.py --image /absolute/path/to/application.uf2
