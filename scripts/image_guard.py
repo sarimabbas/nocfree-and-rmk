@@ -50,7 +50,7 @@ def inspect(data):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('image', type=Path)
+    parser.add_argument('--image', '-i', type=Path, required=True, help='Application UF2 to inspect; never written to a device')
     args = parser.parse_args()
     try:
         print(json.dumps(inspect(args.image.read_bytes()), indent=2))

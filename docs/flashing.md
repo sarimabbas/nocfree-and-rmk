@@ -25,7 +25,7 @@ Run the pinned firmware build and the repeatable [acceptance harness](acceptance
 The read-only guard checks 256-byte, family-tagged nRF52833 UF2 payloads in `[0x27000, 0x6d000)`, contiguous blocks and vector validity:
 
 ```sh
-python3 scripts/image_guard.py /absolute/path/to/application.uf2
+python3 scripts/image_guard.py --image /absolute/path/to/application.uf2
 ```
 
 The upper limit is a conservative inference from the factory board package, pending your actual bootloader identity. The guard's pass message explicitly leaves device compatibility unverified.

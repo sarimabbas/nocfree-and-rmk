@@ -1,0 +1,29 @@
+[rmk]
+debounce_time = 5
+combo_max_num = 0
+fork_max_num = 0
+morse_max_num = 0
+morse_profile_max_num = 1
+macro_max_num = 0
+macro_space_size = 32
+split_peripherals_num = 1
+split_central_sleep_timeout_seconds = 0
+ble_profiles_num = 5
+[split]
+connection = "ble"
+[split.central]
+rows = 1
+cols = 37
+row_offset = 0
+col_offset = 0
+battery_adc_pin = "P0_04"
+battery_user_description = "Left"
+[split.central.matrix]
+[[split.peripheral]]
+rows = 1
+cols = 47
+row_offset = 0
+col_offset = 37
+battery_adc_pin = "P0_04"
+battery_user_description = "Right"
+[split.peripheral.matrix]

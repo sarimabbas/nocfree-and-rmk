@@ -1,0 +1,11 @@
+[package]
+name = "nocfree-input"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+[dependencies]
+embedded-hal-async = "1"
+
+[dev-dependencies]
+futures = { version = "0.3", features = ["executor"] }
+embedded-hal = "1"
