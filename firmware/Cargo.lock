@@ -1505,6 +1505,7 @@ dependencies = [
  "embassy-executor",
  "embassy-nrf",
  "embassy-time",
+ "embassy-usb",
  "embedded-hal-async",
  "nocfree-input",
  "nrf-mpsl",

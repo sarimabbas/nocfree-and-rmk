@@ -18,8 +18,10 @@ cargo fmt --manifest-path firmware/Cargo.toml -- --check
     cd firmware
     failed=0
     for role in left right receiver; do
-        cargo build --locked --release --target thumbv7em-none-eabihf \
+        cargo build --locked --release --bin nocfree-rmk --target thumbv7em-none-eabihf \
             --no-default-features --features "$role$layout_features" || failed=1
     done
+    cargo build --locked --release --bin recovery-probe --target thumbv7em-none-eabihf \
+        --no-default-features --features right,recovery-probe,usb-recovery-first || failed=1
     exit "$failed"
 )

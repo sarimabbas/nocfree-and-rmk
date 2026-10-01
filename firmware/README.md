@@ -46,3 +46,15 @@ cargo build --locked --release --features left,reclaimed-softdevice,usb-recovery
 ```
 
 The marker can offer an application-independent startup window when the verified power/start conditions apply. It is not a watchdog, A/B update system, health check, or automatic restoration guarantee. Keep the independent host backup and restoration path.
+
+The separate `recovery-probe` binary is a stage-zero, USB-only right-half diagnostic. It initializes USB CDC and the Embassy executor/time driver, sends a version/role greeting when the serial port opens with DTR asserted, and requests the existing Adafruit bootloader when the host selects 1200 baud with DTR low. It does not initialize the radio, key scanner, battery ADC, keyboard processing or storage. The normal keyboard binary remains the default Cargo run target; ordinary role builds do not include this diagnostic.
+
+```sh
+cargo build --locked --release --bin recovery-probe --features right,recovery-probe,usb-recovery-first
+```
+
+The probe requires the factory `0x27000` layout and the explicit recovery-first marker; incompatible migration or role features fail compilation. Its diagnostic USB identity is VID `0x4c4b`, PID `0x4650`, product `NocFree Recovery Probe Right`. This development identity is not a registered production allocation. The CDC descriptors follow Embassy's composite convention for Windows; enumeration and serial behavior on each host OS still need physical tests.
+
+After independently approved installation, verify the bootloader startup window with USB attached, then start the right half on battery with USB disconnected, wait beyond three seconds and attach USB. Open its serial port at a normal baud rate with DTR high and read `NocFree recovery probe 0.1.0 right factory`. Select 1200 baud and deassert DTR to request vendor DFU; confirm the bootloader identity, read back the image, and exercise the verified host restoration procedure. These are pending hardware checks, not accomplished acceptance results. Keep the factory backup and physical startup path: a running CDC application is only the software entry path. No radio or keyboard functionality is expected from this diagnostic.
+
+The locked probe build passes with 14,192 bytes of code/data and 2,952 bytes of RAM content. File-backed load segments occupy 14,448 bytes including the reserved marker gap, from `0x27000` to `0x2a870`. Independent ELF inspection confirms the initial stack at `0x20020000`, reset handler at `0x27205`, recovery marker at `0x27200`, and preservation of the resident SoftDevice region. These are build and geometry results; USB enumeration, update entry and restoration have not yet been demonstrated with this probe.

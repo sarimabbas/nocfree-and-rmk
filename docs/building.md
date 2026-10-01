@@ -35,6 +35,16 @@ To build the explicitly selected recovery-first keyboard variants:
 
 The additional feature reserves the installed Adafruit bootloader's existing recovery marker at application base + `0x200`. It changes USB cold-start behavior and is not enabled by default. Binary fit does not verify that the vendor bootloader implements the convention. USB-only receiver variants are diagnostic: their normal cold-plug workflow is unsuitable with this marker. See [update foundation research](research/update-foundation.md).
 
+The harness also builds a separate stage-zero USB diagnostic for the right half, always preserving S140 regardless of the selected keyboard layout. To build only that diagnostic:
+
+```sh
+cd firmware
+cargo build --locked --release --bin recovery-probe --no-default-features \
+  --features right,recovery-probe,usb-recovery-first
+```
+
+It identifies itself as `NocFree Recovery Probe Right`, sends a version greeting through USB CDC and requests the existing UF2 bootloader on a 1200-baud touch with DTR low. It performs no scanning, radio, ADC, battery or storage initialization. Compile guards reject migration and other roles. It is not keyboard firmware. A packaged diagnostic must pass `scripts/image_guard.py --image PATH --require-recovery-marker` and requires a considered first hardware trial; source-supported recovery behavior is not yet observed.
+
 Development omits web/Vial remapping, custom message transport, combos, forks, Morse actions and recorded macros. Profile switching and a small function layer are configured directly in Rust. These size choices do not establish factory feature parity.
 
 The host scanner tests validate I²C input configuration, polarity, mapping uniqueness, full snapshots, partial-read failure isolation and repeated electrical transitions. They do not exercise physical wiring, RMK debounce timing, radio reliability or OS HID behavior. See [acceptance](acceptance.md) for those gates.
