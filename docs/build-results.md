@@ -2,13 +2,13 @@
 
 ## Recovery foundation checkpoint
 
-The separately reviewed right-half `recovery-probe` is USB-only: 14,192 B linked section content, 2,952 B RAM, and file-backed LOAD span `0x27000..0x2a870` including the reserved marker gap. Vector SP is `0x20020000`, reset PC `0x27205`, recovery word at `0x27200` is `0x87eeb07c`. It preserves resident S140 and all existing flash boundaries. It has not been installed or tested on hardware.
+The separately reviewed right-half `recovery-probe` is USB-only: 14,192 B linked section content, 2,952 B RAM, and file-backed LOAD span `0x27000..0x2a870` including the reserved marker gap. Vector SP is `0x20020000`, reset PC `0x27205`, recovery word at `0x27200` is `0x87eeb07c`. It preserves resident S140 and all existing flash boundaries. It is now installed on the right; its USB identity, update entry, cold recovery, factory restoration and reinstallation were tested. See [hardware results](recovery-probe.md).
 
 The current guard harness has 15 Python tests and the input driver has 7 Rust tests. Optional recovery-first keyboard builds also cross-build: migration left/right/receiver stay below `0x65000`, and factory-preserving right ends at `0x5c4cc`. These are preparation results; they do not establish hardware recovery or rollback.
 
 The earlier measurements below precede the update-entry and recovery-marker additions.
 
-These are software checks and binary inspections, not a physical working firmware release. Source is the conventional three-role port based on RMK commit `9607aedf343b17dd6b27307583ae80c4f728fbbd`. No application has been installed on a keyboard or receiver.
+These earlier measurements are software checks and binary inspections, not a physical working keyboard firmware release. Source is the conventional three-role port based on RMK commit `9607aedf343b17dd6b27307583ae80c4f728fbbd`. At this earlier stage no application had been installed; the later right-only diagnostic trial is recorded above.
 
 ## Repeatable local harness
 

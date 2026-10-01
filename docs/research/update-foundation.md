@@ -2,6 +2,8 @@
 
 Research 2026-10-01. No device writes. Recommendation: retain the installed Adafruit bootloader and investigate its existing boot-before-application USB recovery convention before replacing bootloaders. Keep previous images on the computer for manual rollback; the current approximately 340 KiB RMK central cannot fit two internal update slots in 512 KiB.
 
+Subsequent root/owner-approved trial: the right-only USB diagnostic now demonstrates the marker's USB-first recovery workflow, application startup, update entry, factory restoration and reinstallation. The research agent did not perform device operations. See [hardware results](../recovery-probe.md). This result applies to the tested right, S140-preserving layout; left, receiver and S140 migration remain separate gates.
+
 ## Recovery and rollback are separate
 
 A bootloader can keep USB flashing available when application code fails without retaining an old application. A previous UF2 on the computer provides manual rollback only if that independent USB entry remains reachable. Automatic rollback requires retaining both old and new firmware plus swap state. It does not follow merely from installing a smaller foundational application.
@@ -16,7 +18,7 @@ The installed build reports upstream [0147d71e73b9a2c217f56dbc9877d07bb45d6467](
 |---|---|---|
 | Factory Fn+5 or Rust Bootloader/1200-baud command | No; application must run | Factory Fn+5 MSC and factory 1200-baud serial entry observed |
 | Double NRST reset within ~500 ms or board DFU input | Yes | No verified external NRST/DFU control on this NocFree unit; power cycling is not NRST |
-| Existing `APP_ASKS_FOR_SINGLE_TAP_RESET` image marker | Yes, if marker remains intact and vendor implements upstream behavior | Source-supported candidate; not tried on this unit |
+| Existing `APP_ASKS_FOR_SINGLE_TAP_RESET` image marker | Yes, if marker remains intact and vendor implements upstream behavior | Subsequently demonstrated on right USB diagnostic; left and receiver unverified |
 
 The marker is a 32-bit word `0x87eeb07c` at the dynamically selected application base plus `0x200`. It is an upstream MakeCode-style convention, not a new bootloader stub. With this word present, the bootloader can enter USB DFU before executing the application. USB enumeration cancels the three-second startup timeout; without USB it times out and runs the application. The marker branch is not gated by RESETREAS: it applies to power-on, software and watchdog reset, not just NRST. Exceptions are GPREGRET skip magic `0x6d` and a valid app with retained RAM marker `0x4ee5677e`; upstream clears that RAM word immediately before launching the application. Existing watchdogs are fed by the bootloader while waiting in DFU. The exact power/reset workflow still needs hardware verification.
 

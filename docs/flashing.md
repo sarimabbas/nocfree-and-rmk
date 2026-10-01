@@ -1,8 +1,8 @@
 # Flashing and recovery
 
-**Current gate: closed.** This is an unvalidated development port. No device has been flashed or established an independent recovery route after application failure. The left half has been observed entering factory CDC-only DFU and returning after reconnecting; see [device observations](device-observations.md). The original factory applications and the new Rust radio stack use different internals; matching UF2 addresses is necessary but insufficient to establish a compatible bootloader handoff.
+**Complete keyboard/migration gate: closed.** The owner explicitly approved a controlled right-half USB-only diagnostic trial. Its installation, USB/update entry, cold USB recovery without an application command, factory restoration and reinstallation passed; see [tested foundation](recovery-probe.md). The right currently runs this diagnostic. The left and receiver remain factory firmware. This does not establish keyboard/radio behavior or approve S140 replacement.
 
-The owner prefers to keep the enclosure closed. No independent external recovery control has been verified, so the explicit SoftDevice-replacement candidate must remain unflashed. The available factory Fn+5 route depends on a functioning application. See [migration safety](research/migration-safety.md) for the backup coverage and unavailable official left recovery video.
+The owner prefers to keep the enclosure closed. The right's existing bootloader marker now has a tested USB-first recovery workflow; an equivalent left workflow remains unverified. The explicit SoftDevice-replacement candidate remains unflashed. Factory Fn+5 depends on a functioning application. See [migration safety](research/migration-safety.md) for the backup coverage and unavailable official left recovery video.
 
 ## Prepare without writing
 
