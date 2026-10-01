@@ -11,7 +11,7 @@ These are software checks and binary inspections, not a physical working firmwar
 | Python image guard | 13 tests pass |
 | Rust expander driver | 7 tests pass |
 | Rust formatting | Pass |
-| Left release build | Fails protected FLASH limit (final linker overflow 85,984 B) |
+| Left release build | Fails protected FLASH limit (latest regression overflow 86,016 B; prior build 85,984 B) |
 | Right release build | Pass: 218,052 B text+data; 41,796 B data+BSS |
 | Receiver release build | Pass: 249,772 B text+data; 54,188 B data+BSS |
 
@@ -36,4 +36,16 @@ Disposable diagnostic binaries used fictional larger flash maps only to measure 
 
 Published independent image comparisons are in [size options](research/size-options.md) and [community/ZMK evidence](research/community-size.md). They show larger MCUs or reclaimed low flash as the common current RMK route, while the reduced-function ZMK port fits with a different BLE stack.
 
-The remaining choices are actual conventional code-size reduction or a separately verified migration into unused resident-SoftDevice space. Neither is permission to weaken the current image guard. Independent recovery and a restorable backup must precede migration planning.
+## Explicit migration candidate
+
+`./scripts/check.sh --reclaimed-softdevice` uses a nondefault application range `0x1000..0x65000`, replacing S140 with the SDC/MPSL stack linked by current RMK. It retains the same standard transport roles and high 96 KiB RAM. Each MCU receives its own role image.
+
+| Role | Flash text+data | RAM data+BSS | Highest flash end (exclusive) |
+|---|---:|---:|---:|
+| Left | 339,936 B | 64,556 B | `0x53fe4` |
+| Right | 218,052 B | 41,796 B | `0x363c4` |
+| Receiver | 249,772 B | 54,188 B | `0x3dfb4` |
+
+All three migration roles cross-build with the pinned toolchain. Independent ELF inspection confirms the left vector table at `0x1000`, stack pointer `0x20020000`, reset vector `0x1101`, and file-backed LOAD segments below `0x65000`. RAM allocations end at `0x20017c30`. These bounds leave the MBR, RMK storage, factory filesystem and bootloader regions outside the application image.
+
+The default factory-preserving layout remains unchanged and still fails for the left. CI checks both layouts independently. Link geometry does not prove installed bootloader compatibility, erase behavior, recovery, or functioning USB/radio hardware. The default UF2 guard has not been weakened, no migration UF2 has been generated, and no device write has occurred. Physical recovery and restoration verification remain prerequisites to a migration trial.

@@ -5,6 +5,8 @@ edition = "2024"
 license = "MIT"
 [features]
 default = []
+# Explicit migration: replaces resident S140; never a normal update.
+reclaimed-softdevice = []
 left = ["rmk/split", "rmk/dongle"]
 right = ["rmk/split"]
 receiver = ["rmk/dongle"]

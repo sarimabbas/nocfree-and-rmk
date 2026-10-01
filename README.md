@@ -1,6 +1,6 @@
 # NocFree AND + RMK
 
-An experimental Rust port for the **ANSI NocFree AND**, using current RMK and a conventional left-central/right-peripheral split. **Not ready to flash:** the left firmware still exceeds the protected application partition. No replacement firmware has been installed on a board.
+An experimental Rust port for the **ANSI NocFree AND**, using current RMK and a conventional left-central/right-peripheral split. **Not ready to flash:** all three roles now cross-build in an explicit migration layout, but independent recovery and hardware operation remain unverified. No replacement firmware has been installed on a board.
 
 The target is USB or Bluetooth HID from the left half, Bluetooth split communication from the right, separate battery reporting, and a reflashed RMK Bluetooth-to-USB receiver. The factory receiver protocol is proprietary; an unchanged receiver is incompatible with this design. Host behavior still needs macOS, Windows and Linux testing.
 
@@ -10,9 +10,11 @@ The nRF52833 boards read switches through PCA9555 I²C expanders. One small scan
 
 - ANSI left-half USB identity confirmed on the owner's board.
 - Factory 1200-baud bootloader entry and return after reconnect verified without writing firmware. That entry exposed CDC serial, not a UF2 drive.
+- Factory Fn+5 entry exposes a UF2 drive; its SoftDevice/application readback is saved locally and hash-verified. It does not back up the bootloader or filesystem.
 - Seven Rust input-driver tests and thirteen Python image-guard tests pass.
 - Right and receiver firmware cross-build within the preserved flash/RAM ranges.
 - Left fails the protected linker limit; the whole build harness correctly fails until this is resolved.
+- Separately selected `reclaimed-softdevice` builds fit all three roles by replacing S140 with current RMK's radio stack. They preserve the MBR, filesystem and bootloader address regions. The conservative image guard still rejects this layout; no migration image is approved for flashing.
 
 “No missed keystrokes or input lag” remains an acceptance requirement. RMK currently has six-key ordinary rollover, and split disconnect/reconnect delivery needs deliberate testing. Source compilation and mock tests do not establish physical latency or loss-free operation.
 

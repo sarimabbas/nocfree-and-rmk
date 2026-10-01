@@ -11,3 +11,15 @@ Observed during the initial porting session on 2026-09-30 (America/Los_Angeles):
 This establishes factory software bootloader entry and no-write return for this left half. It does **not** establish bootloader version, maximum application partition, current firmware readback, rollback after overwriting the application, or entry when the application cannot boot. Right-half and receiver identities have not been observed.
 
 Do not publish local serial numbers or Bluetooth addresses. Serial port names change between connections and are deliberately omitted here. The read-only identity procedure should match the full role/product, not a stale path or shared VID/PID alone.
+
+## Additional MSC observation
+
+The owner held factory Fn+5 on the left while connected in USB mode. A NocFree drive appeared with `INFO_UF2.TXT` and `CURRENT.UF2`. These files were read and copied **off** the device; source/destination hashes matched. No file was copied onto the drive.
+
+Metadata: UF2 Bootloader `0.9.2-39-g0147d71`, model and board ID `NocFree &`, build date December 26, 2025, SoftDevice `S140 7.3.0`.
+
+The current readback is 884,736 container bytes: 1,728 contiguous 256-byte payloads spanning `0x1000..0x6d000`. Its board-specific UF2 family is `0x239a0029`; this differs from the standard nRF52833 family in the official application ZIP. The copy is stored privately under `.evidence/factory-left/` and excluded from Git. Its SHA-256 is `88cb768f452682cb12025f2296ee151442349079405a7a11f454f752153e4100`.
+
+Decoded SoftDevice metadata corroborates firmware ID `0x123`, size/application base `0x27000`, and version 7.3.0. The application vector's initial stack is `0x20020000`. The readback includes the SoftDevice and existing application, including the proposed RMK settings interval; it excludes the MBR, factory filesystem, bootloader, UICR and bootloader settings. It is therefore a backup of the overwrite candidate region, not a complete device backup.
+
+The owner clarified that there is no external reset pinhole. Recovery access would require opening the enclosure. The supplied manufacturer video shows right-half module edge contacts; this has not established physical recovery on the owner's left half. Software MSC entry alone cannot recover an application that cannot execute its keyboard shortcut.

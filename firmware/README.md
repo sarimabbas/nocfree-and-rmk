@@ -19,3 +19,15 @@ The ANSI map follows the community port's 37 left plus 47 right electrical posit
 Battery level uses the factory 130/100 voltage conversion, RMK's voltage-derived capacity estimate, and separate left/right BLE battery characteristics. Charging state is unavailable because the factory charging indicator shares an actively controlled pin. Backlighting and factory proprietary 2.4 GHz compatibility are not implemented.
 
 RMK's current split event forwarding does not guarantee delivery across link failure. Mock scanner tests cannot establish zero lost keystrokes or bounded end-to-end latency. Resolve this and run the physical acceptance harness before calling the port ready.
+
+An explicit, nondefault `reclaimed-softdevice` feature builds a migration candidate with application flash at `0x1000..0x65000`. It replaces the resident S140 SoftDevice with RMK's linked SoftDevice Controller and MPSL. It preserves the MBR, factory filesystem, bootloader and metadata, and retains the same high 96 KiB RAM and storage reservation. Default builds still use `memory-factory.x` and preserve S140. This migration requires independently verified physical bootloader entry, matching bootloader behavior, and restoration of the backed-up SoftDevice/application range; a successful build alone does not authorize flashing.
+
+```sh
+cargo build --locked --release --features left,reclaimed-softdevice
+cargo build --locked --release --features right,reclaimed-softdevice
+cargo build --locked --release --features receiver,reclaimed-softdevice
+```
+
+All three migration roles compile with the pinned latest RMK revision and Rust toolchain. Flash content is 339,936 bytes for left, 218,052 bytes for right and 249,772 bytes for receiver; RAM content is 64,556, 41,796 and 54,188 bytes respectively. ELF inspection confirms that all file-backed load segments lie in the selected application flash interval and all zero-fill RAM segments lie in the high 96 KiB RAM interval. These checks establish build fit and region confinement; hardware operation and recovery still require separate validation.
+
+The factory source is named `memory-factory.x` so cortex-m-rt's `INCLUDE memory.x` resolves the feature-selected file generated in `OUT_DIR`. Keeping a source `memory.x` beside Cargo.toml would shadow that generated file and silently ignore the layout selection. The renamed factory file is byte-identical to the original.
