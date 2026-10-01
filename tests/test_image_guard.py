@@ -16,6 +16,16 @@ def image(address=guard.START, family=guard.FAMILY, flags=0x2000, sp=0x20020000,
     return data
 
 
+def multi_image(addresses):
+    """Construct individually numbered blocks without assuming file order."""
+    blocks = []
+    for index, address in enumerate(addresses):
+        block = image(address=address)
+        struct.pack_into('<II', block, 20, index, len(addresses))
+        blocks.append(block)
+    return blocks
+
+
 class GuardTests(unittest.TestCase):
     def test_valid_application(self):
         self.assertEqual(guard.inspect(image())['blocks'], 1)
@@ -40,6 +50,61 @@ class GuardTests(unittest.TestCase):
         bad[0] = 0
         for data in (b'', image()[:-1], image() + image(), bad):
             with self.assertRaises(ValueError):
+                guard.inspect(data)
+
+    def test_shuffled_blocks_are_valid(self):
+        blocks = multi_image([guard.START, guard.START + 256, guard.START + 512])
+        result = guard.inspect(b''.join([blocks[2], blocks[0], blocks[1]]))
+        self.assertEqual(result['blocks'], 3)
+        self.assertEqual(result['end_exclusive'], hex(guard.START + 768))
+
+    def test_gaps_and_repeated_target_addresses_are_rejected(self):
+        for addresses in ([guard.START, guard.START + 512], [guard.START, guard.START]):
+            with self.subTest(addresses=addresses), self.assertRaises(ValueError):
+                guard.inspect(b''.join(multi_image(addresses)))
+
+    def test_final_application_block_can_end_at_boundary(self):
+        addresses = range(guard.START, guard.END, 256)
+        result = guard.inspect(b''.join(multi_image(addresses)))
+        self.assertEqual(result['end_exclusive'], hex(guard.END))
+
+    def test_stack_may_point_one_past_ram_but_not_above_it(self):
+        self.assertEqual(guard.inspect(image(sp=0x20020000))['stack_pointer'], '0x20020000')
+        for sp in (0x20020008, 0x20000000, 0x2001ffff):
+            with self.subTest(sp=sp), self.assertRaises(ValueError):
+                guard.inspect(image(sp=sp))
+
+    def test_reset_vector_must_be_inside_loaded_payload(self):
+        self.assertEqual(guard.inspect(image(pc=guard.START + 255))['blocks'], 1)
+        for pc in (guard.START - 1, guard.START + 257):
+            with self.subTest(pc=pc), self.assertRaises(ValueError):
+                guard.inspect(image(pc=pc))
+
+    def test_unaligned_addresses_and_nonstandard_payload_sizes_are_rejected(self):
+        with self.assertRaises(ValueError):
+            guard.inspect(image(address=guard.START + 4))
+        for size in (0, 128, 257, 476):
+            data = image()
+            struct.pack_into('<I', data, 16, size)
+            with self.subTest(size=size), self.assertRaises(ValueError):
+                guard.inspect(data)
+
+    def test_block_numbering_is_complete_and_unique(self):
+        for index, count in ((1, 1), (0, 2), (0, 0)):
+            data = image()
+            struct.pack_into('<II', data, 20, index, count)
+            with self.subTest(index=index, count=count), self.assertRaises(ValueError):
+                guard.inspect(data)
+        blocks = multi_image([guard.START, guard.START + 256])
+        struct.pack_into('<I', blocks[1], 20, 0)
+        with self.assertRaises(ValueError):
+            guard.inspect(b''.join(blocks))
+
+    def test_each_magic_word_is_checked(self):
+        for offset in (0, 4, 508):
+            data = image()
+            struct.pack_into('<I', data, offset, 0)
+            with self.subTest(offset=offset), self.assertRaises(ValueError):
                 guard.inspect(data)
 
 

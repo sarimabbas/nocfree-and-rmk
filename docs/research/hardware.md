@@ -1,6 +1,6 @@
 # Hardware and factory-image evidence
 
-Inspected 2026-09-30. No bundled recovery application or factory firmware was executed; no device was flashed. Hardware has not been connected or measured. These are published mappings and static artifact evidence, not a tested board support package.
+Inspected 2026-09-30. No bundled recovery application or factory firmware was executed; no device was flashed. The root agent later connected the left unit and observed the USB identities recorded below; electrical pin mappings have not been measured. These are published mappings and static artifact evidence, not a tested board support package.
 
 ## Sources and confidence
 
@@ -52,7 +52,7 @@ Factory right internal nRF52833 RADIO uses nRF24-compatible ESB to the left's ex
 
 Left external nRF24 pins: SCK `P0.28`, MOSI `P0.29`, MISO `P0.30`, CE `P0.03`, CSN `P0.02`. No IRQ or power-enable pin is published. Right has no external SPI radio in the documented path.
 
-A new BLE split protocol can avoid the external radio and reuse RMK's split support. A reflashed USB receiver can use BLE to receive both halves, avoiding proprietary ESB compatibility work. Whether native RMK supports the exact left-central/right-peripheral versus dongle-central topology with this MCU and memory budget must be verified separately. The factory receiver protocol/pairing bytes are not documented; compatibility with an unchanged factory dongle cannot be claimed.
+A new BLE split protocol can avoid the external radio and reuse RMK's split support. A reflashed USB receiver can use BLE to receive the left central (which aggregates both halves), avoiding proprietary ESB compatibility work. Whether native RMK supports the exact left-central/right-peripheral versus dongle-central topology with this MCU and memory budget must be verified separately. The factory receiver protocol/pairing bytes are not documented; compatibility with an unchanged factory dongle cannot be claimed.
 
 There is no published wired inter-half data connection. USB to the left with a wireless right is a wired host mode; fully wired split operation requires separately confirmed hardware or two host USB devices. Host support follows ordinary USB/BLE HID, but macOS/Windows/Linux acceptance and reconnect behavior remain hardware-test requirements.
 
@@ -90,3 +90,21 @@ Ordered top-level constants and names indicate left/dongle USB ID `0x2886:0x8029
 Before a first application flash, collect the connected role, layout, USB descriptors, `INFO_UF2.TXT` if MSC entry is available, and a readable current firmware backup if supported. Prove factory recovery entry and rollback on the actual unit. If firmware cannot boot, 1200-baud software entry may no longer work; an independent reset/bootloader-entry path must be identified. Community documentation says accessible double-tap reset is unverified. No independent physical recovery sequence was established from this bundle.
 
 The v2.4.5 catalog reports stale-event and I²C-fault fixes, 13 ms right debounce, dongle rollback to v2.4.3, and remaining interference effects. Zero missed inputs and zero latency are not promises software can substantiate without a bounded hardware acceptance test, radio-interference testing, and reconnect/fault injection. The deliverable must separate compilation from those results.
+
+
+## Live serial-only entry observed during this session
+
+The root agent identified the user's left ANSI application as USB `0x2886:0x8029`, issued the factory 1200-baud entry, then observed USB `0x239a:0x002a` at `/dev/cu.usbmodem124301`. No mass-storage volume or external disk appeared. This is a successful serial bootloader entry, not proof that UF2 drag-and-drop works. The research agent did not interact with the device.
+
+[Adafruit bootloader main.c at c67f0b](https://github.com/adafruit/Adafruit_nRF52_Bootloader/blob/c67f0bcf0fa8e841426335b1bbde91cda6ca1f50/src/main.c) distinguishes `GPREGRET=0x4e` (CDC only) from `0x57` (UF2 plus CDC). The observed absence of MSC is consistent with intentionally entering the serial-only mode; it does not prove MSC is absent from the installed bootloader altogether.
+
+The [legacy serial DFU transport](https://github.com/adafruit/Adafruit_nRF52_Bootloader/blob/c67f0bcf0fa8e841426335b1bbde91cda6ca1f50/lib/sdk11/components/libraries/bootloader_dfu/dfu_transport_serial.c) uses Nordic HCI framing and SLIP, with packet types INIT=1, STOP_INIT=2, START=3, DATA=4, STOP_DATA=5. It has no firmware readback, board-information query, or harmless restart opcode. STOP_DATA validates and activates firmware; it must not be used to request a no-write reset. Secure-DFU opcodes describe a different protocol and must not be guessed here.
+
+Static vendor recovery bytecode shows its flash command is `adafruit-nrfutil dfu serial -pkg <application.zip> -p <port> -b 115200 --singlebank`. This is evidence of the update transport, not authorization to execute it. Its validator expects device type 82 and SoftDevice FWID 291, which it identifies as nRF52833/S140 7.3.0. App-only updates still cause the bootloader to erase/write the application and update bootloader metadata; an app UF2 guard does not protect the single-bank serial transport automatically.
+
+For returning from an otherwise untouched bootloader without writing firmware, a genuine power cycle is the safest route: remove USB power and turn the keyboard battery switch off, then restore power. The current upstream bootloader also exits startup DFU on actual VBUS loss if no update traffic has begun. That behavior is not established for the installed factory bootloader; unplugging USB alone while battery power remains must not be claimed to restart this device. USB DTR/RTS toggles are not reset controls in the inspected upstream bootloader.
+
+Read-only identity checks available without writing DFU bytes are USB descriptors, interface enumeration, and serial-port identity. They do not reveal flash boundaries, installed bootloader version, or current application bytes. An independent reset/UF2 entry or SWD backup path remains necessary before custom flashing can be labeled recoverable.
+
+
+Upstream preservation detail: [single-bank preparation](https://github.com/adafruit/Adafruit_nRF52_Bootloader/blob/c67f0bcf0fa8e841426335b1bbde91cda6ca1f50/lib/sdk11/components/libraries/bootloader_dfu/dfu_single_bank.c) erases `m_image_size` bytes from the dynamically determined application start, rounded to flash pages by the erase helper. A strictly application-only BIN bounded below `0x65000` would therefore preserve higher application settings and factory filesystem in this upstream implementation. The [nRF52833 build default](https://github.com/adafruit/Adafruit_nRF52_Bootloader/blob/c67f0bcf0fa8e841426335b1bbde91cda6ca1f50/Makefile) reserves seven 4-KiB application-data pages below `0x74000`, consistent with `0x6d000`. Installed-bootloader equivalence remains unverified, and its settings metadata at `0x7f000` legitimately changes on an update. START itself begins application erase; even sending the header is a firmware-write operation.

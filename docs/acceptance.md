@@ -16,7 +16,7 @@ Record firmware commit/hash, layout, board revision, bootloader identity per rol
 ## Scanner and input
 
 - Verify each physical key independently against the ANSI map, then every modifier chord, layer key, and repeated press/release across both halves.
-- Press keys on both halves simultaneously, including all populated positions; compare expected and observed HID press/release streams. Every missing or duplicate transition, stuck key, I²C error or queue overflow is a failure.
+- Press keys on both halves simultaneously, across all populated positions; compare expected and observed HID press/release streams within the six-key ordinary rollover limit. More than six simultaneously held ordinary keys is a known unsupported case, not a passing no-loss test. Every missing or duplicate transition, stuck key, I²C error or queue overflow is a failure.
 - Use a repeatable electrical or mechanical actuator and timestamp switch actuation and host event capture with a shared clock. A human typing test cannot quantify missed events or latency.
 - Run at least 100,000 transitions in USB, direct BLE and receiver modes, separately. Include fast taps, holds, rolls, chords, and saturation. Store raw traces and report count, median, p95, p99 and maximum press/release latency. Set a numerical latency budget with the owner before marking a pass; there is no physically meaningful zero-latency budget.
 - Test sustained traffic under Wi-Fi/Bluetooth interference and weak signal. Zero loss in a finite run is evidence for that workload, not a universal guarantee.
@@ -25,7 +25,7 @@ Record firmware commit/hash, layout, board revision, bootloader identity per rol
 
 - Disconnect the right half while a key is held, reconnect, and verify release recovery without a stuck modifier or ghost key. Repeat while host or receiver disconnects.
 - Test USB attach/detach, host sleep/wake, connection loss/reconnect, profile change and physical transport switch under input. State clearly whether keys during outages are intentionally dropped or replayed. Do not silently equate reconnect with reliable input.
-- On macOS, Windows and Linux independently verify enumeration, ordinary keys, NKRO/chords, media keys, caps-lock host output, BLE pairing/unpairing, receiver pairing and persistence after reboot.
+- On macOS, Windows and Linux independently verify enumeration, ordinary keys, six-key rollover/chords (RMK currently reports at most six ordinary held keys plus modifiers), media keys, caps-lock host output, BLE pairing/unpairing, receiver pairing and persistence after reboot.
 - Test battery reporting for both halves while charging and discharging; compare voltage with a meter. Verify divider-enable polarity and ADC settling. Do not treat a nominal voltage curve as calibrated remaining capacity.
 - Measure idle/active/charging current, low-battery behavior and wake latency. Initial development disables split sleep to avoid unmeasured wake delay; battery life is unproven.
 
