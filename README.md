@@ -11,7 +11,7 @@ The nRF52833 boards read switches through PCA9555 I²C expanders. One small scan
 - ANSI left-half USB identity confirmed on the owner's board.
 - Factory 1200-baud bootloader entry and return after reconnect verified without writing firmware. That entry exposed CDC serial, not a UF2 drive.
 - Factory Fn+5 entry exposes a UF2 drive; its SoftDevice/application readback is saved locally and hash-verified. It does not back up the bootloader or filesystem.
-- Seven Rust input-driver tests and fifteen Python image-guard tests pass.
+- Seven Rust input-driver tests and sixteen Python image-guard tests pass.
 - Right-half probe installation, USB identity, software update entry, cold USB recovery, factory restore and reinstallation passed on the owner's hardware. The right currently runs that diagnostic, with no keyboard functionality; left and receiver remain factory firmware.
 - Right and receiver firmware cross-build within the preserved flash/RAM ranges.
 - Left fails the protected linker limit; the whole build harness correctly fails until this is resolved.
@@ -32,6 +32,7 @@ Backlighting, indicators, physical mode-switch handling, factory web configurati
 - [Measured RMK size comparisons](docs/research/size-options.md)
 - [Community and NocFree ZMK comparison](docs/research/community-size.md)
 - [Guarded flashing and recovery plan](docs/flashing.md)
+- [Offline image-safety review](docs/research/overnight-safety-review.md)
 - [Explicit migration safety evidence](docs/research/migration-safety.md)
 - [Recovery-first foundation and rollback choices](docs/research/update-foundation.md)
 - [Observed device behavior](docs/device-observations.md)

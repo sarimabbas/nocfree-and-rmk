@@ -89,6 +89,14 @@ class GuardTests(unittest.TestCase):
             with self.subTest(sp=sp), self.assertRaises(ValueError):
                 guard.inspect(image(sp=sp))
 
+    def test_initial_stack_preserves_reserved_bootloader_ram(self):
+        # The factory layout reserves the low 32 KiB for warm-reset state.
+        # A descending stack at the first usable address also pushes below it.
+        for sp in (0x20000008, 0x20007ff8, 0x20008000):
+            with self.subTest(sp=sp), self.assertRaises(ValueError):
+                guard.inspect(image(sp=sp))
+        self.assertEqual(guard.inspect(image(sp=0x20008008))['stack_pointer'], '0x20008008')
+
     def test_reset_vector_must_be_inside_loaded_payload(self):
         self.assertEqual(guard.inspect(image(pc=guard.START + 255))['blocks'], 1)
         for pc in (guard.START - 1, guard.START + 257):

@@ -9,6 +9,8 @@ import struct
 FAMILY = 0x621E937A
 # Preserve factory SoftDevice, inferred filesystem, bootloader and UICR.
 START, END = 0x27000, 0x65000
+# Match the application linker; preserve the bootloader's warm-reset RAM.
+RAM_START, RAM_END = 0x20008000, 0x20020000
 
 
 def inspect(data, require_recovery_marker=False):
@@ -38,8 +40,8 @@ def inspect(data, require_recovery_marker=False):
             raise ValueError('overlapping or non-contiguous image')
     sp, pc = struct.unpack_from('<II', ordered[0][1])
     end = START + total * 256
-    if not 0x20000000 < sp <= 0x20020000 or sp % 8:
-        raise ValueError('invalid nRF52833 initial stack pointer')
+    if not RAM_START < sp <= RAM_END or sp % 8:
+        raise ValueError('initial stack pointer must use application RAM, preserving bootloader RAM')
     if not pc & 1 or not START <= pc & ~1 < end:
         raise ValueError('reset vector is not Thumb code inside this image')
     if require_recovery_marker:

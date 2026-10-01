@@ -43,7 +43,7 @@ cargo build --locked --release --bin recovery-probe --no-default-features \
   --features right,recovery-probe,usb-recovery-first
 ```
 
-It identifies itself as `NocFree Recovery Probe Right`, sends a version greeting through USB CDC and requests the existing UF2 bootloader on a 1200-baud touch with DTR low. It performs no scanning, radio, ADC, battery or storage initialization. Compile guards reject migration and other roles. It is not keyboard firmware. A packaged diagnostic must pass `scripts/image_guard.py --image PATH --require-recovery-marker` and requires a considered first hardware trial; source-supported recovery behavior is not yet observed.
+It identifies itself as `NocFree Recovery Probe Right`, sends a version greeting through USB CDC and requests the existing UF2 bootloader on a 1200-baud touch with DTR low. It performs no scanning, radio, ADC, battery or storage initialization. Compile guards reject migration and other roles. It is not keyboard firmware. A packaged diagnostic must pass `scripts/image_guard.py --image PATH --require-recovery-marker`. The controlled trial demonstrated update entry, cold USB recovery and factory restoration on the owner's right half; see [the observed results](recovery-probe.md). This does not establish recovery on the left or receiver, or for the separate S140-replacement layout.
 
 Development omits web/Vial remapping, custom message transport, combos, forks, Morse actions and recorded macros. Profile switching and a small function layer are configured directly in Rust. These size choices do not establish factory feature parity.
 
