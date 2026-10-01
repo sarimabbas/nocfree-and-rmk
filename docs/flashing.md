@@ -2,6 +2,8 @@
 
 **Current gate: closed.** This is an unvalidated development port. No device has been flashed or established an independent recovery route after application failure. The left half has been observed entering factory CDC-only DFU and returning after reconnecting; see [device observations](device-observations.md). The original factory applications and the new Rust radio stack use different internals; matching UF2 addresses is necessary but insufficient to establish a compatible bootloader handoff.
 
+The owner prefers to keep the enclosure closed. No independent external recovery control has been verified, so the explicit SoftDevice-replacement candidate must remain unflashed. The available factory Fn+5 route depends on a functioning application. See [migration safety](research/migration-safety.md) for the backup coverage and unavailable official left recovery video.
+
 ## Prepare without writing
 
 Keep `output_20260911_v2.4.5.zip` outside the repo and check its SHA-256:

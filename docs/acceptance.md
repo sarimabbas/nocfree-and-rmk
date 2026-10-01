@@ -9,7 +9,7 @@ Record firmware commit/hash, layout, board revision, bootloader identity per rol
 1. Preserve the official ZIP and verify its hash against `docs/research/factory-images.json`.
 2. Confirm normal enumeration with one connected device.
 3. Observe the vendor-supported bootloader entry without erasing anything. Save `INFO_UF2.TXT` and inspect bootloader version, board ID, family and SoftDevice.
-4. Confirm a complete factory application rollback route for that exact role. The ZIP contains application images, not a complete bootloader backup. Do not replace the bootloader, SoftDevice, filesystem or UICR.
+4. Confirm a complete factory application rollback route for that exact role. The ZIP contains application images, not a complete bootloader backup. Default updates preserve SoftDevice. An explicit migration also requires a verified SoftDevice/application readback, matching restore semantics and independently tested physical bootloader entry. Preserve the bootloader, filesystem and UICR.
 5. Inspect any `CURRENT.UF2` backup for coverage; never assume it includes pairing/configuration or the bootloader.
 6. Only after the app handoff and protected ranges are confirmed may an RMK application be packaged for a physical trial. Existing factory app starts at `0x27000`; this alone does not establish compatibility with RMK's controller stack.
 

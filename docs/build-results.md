@@ -48,4 +48,6 @@ Published independent image comparisons are in [size options](research/size-opti
 
 All three migration roles cross-build with the pinned toolchain. Independent ELF inspection confirms the left vector table at `0x1000`, stack pointer `0x20020000`, reset vector `0x1101`, and file-backed LOAD segments below `0x65000`. RAM allocations end at `0x20017c30`. These bounds leave the MBR, RMK storage, factory filesystem and bootloader regions outside the application image.
 
+Inspection also confirms that each candidate covers the old S140 magic address `0x3004` with a word other than `0x51b1e5db`, as required for the upstream bootloader's no-SoftDevice application-start selection. See [migration safety](research/migration-safety.md) for the installed upstream revision, restoration coverage and remaining vendor/hardware uncertainty.
+
 The default factory-preserving layout remains unchanged and still fails for the left. CI checks both layouts independently. Link geometry does not prove installed bootloader compatibility, erase behavior, recovery, or functioning USB/radio hardware. The default UF2 guard has not been weakened, no migration UF2 has been generated, and no device write has occurred. Physical recovery and restoration verification remain prerequisites to a migration trial.

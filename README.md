@@ -30,6 +30,7 @@ Backlighting, indicators, physical mode-switch handling, factory web configurati
 - [Measured RMK size comparisons](docs/research/size-options.md)
 - [Community and NocFree ZMK comparison](docs/research/community-size.md)
 - [Guarded flashing and recovery plan](docs/flashing.md)
+- [Explicit migration safety evidence](docs/research/migration-safety.md)
 - [Observed device behavior](docs/device-observations.md)
 - [Physical acceptance requirements](docs/acceptance.md)
 
