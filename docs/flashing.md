@@ -1,8 +1,8 @@
 # Flashing and recovery
 
-**Complete keyboard/migration gate: closed.** The owner explicitly approved a controlled right-half USB-only diagnostic trial. Its installation, USB/update entry, cold USB recovery without an application command, factory restoration and reinstallation passed; see [tested foundation](recovery-probe.md). The right currently runs this diagnostic. The left and receiver remain factory firmware. This does not establish keyboard/radio behavior or approve S140 replacement.
+**Complete keyboard migration gate: closed.** Both halves passed factory-layout USB input/recovery trials. The right runs its Mac input diagnostic; the left is restored to factory firmware after an explicitly approved [lower-layout USB trial](research/left-migration-trial.md). That trial demonstrated independent USB recovery after overwriting part of S140 and exact full readable factory restoration. Application startup failed, so no full RMK migration or additional candidate is approved by that trial.
 
-The owner prefers to keep the enclosure closed. The right's existing bootloader marker now has a tested USB-first recovery workflow; an equivalent left workflow remains unverified. The explicit SoftDevice-replacement candidate remains unflashed. Factory Fn+5 depends on a functioning application. See [migration safety](research/migration-safety.md) for the backup coverage and unavailable official left recovery video.
+The owner prefers to keep the enclosure closed. Both halves have tested independent USB-first recovery sequences, but those observations remain device/layout-specific. Factory Fn+5 depends on a functioning application. The restored left's final normal factory startup passed; the receiver has not been modified or given its own recovery trial. See [migration safety](research/migration-safety.md) for backup coverage and protected regions.
 
 ## Prepare without writing
 

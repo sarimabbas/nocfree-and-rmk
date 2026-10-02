@@ -1,12 +1,14 @@
 # Implementation and hardware bring-up plan
 
-Status, 2026-10-01: the complete left, right and receiver applications cross-build in the explicit reclaimed-SoftDevice layout. Only the right USB recovery diagnostic has run on the owner's board. Its successful restore/reinstall and cold-start recovery trial do not validate keyboard scanning, radio, battery or lighting. Left and receiver remain factory firmware. No hardware writes are part of the unattended software work.
+Status, 2026-10-01: complete left/right/receiver applications cross-build in the explicit reclaimed-SoftDevice layout. Both halves passed separate USB typing and recovery diagnostics. The right still runs its Mac input diagnostic. The left is now restored to factory firmware: its [lower-layout USB trial](research/left-migration-trial.md) passed independent recovery and exact complete readable factory restoration, but failed the application-startup gate. The receiver remains untouched factory firmware. Split/radio, battery and lighting hardware validation remain pending.
 
 ## Next implementable milestone
 
-The next software milestone is a reviewed input/recovery bring-up candidate with unchanged production split ownership: run the host scanner harness, build all three roles, package only guarded images, and prepare the complete physical key-sweep and held-key disconnect checklist. Keep the already tested recovery probe available as its own checkpoint. Do not fold unimplemented backlight, physical-selector APIs or power optimization into this candidate.
+Review the lower-layout bootloader/application startup prerequisites and prepare a focused, observable USB candidate if source evidence justifies one. Keep the restored factory image and proven enclosure-closed recovery route. Do not bypass the failed startup gate by flashing the full RMK central.
 
-Offline work can finish source review, repeatable fault tests, build/size checks, image packaging and targeted RMK API proposals. Owner-assisted work begins with choosing the connected role, proving recovery for any role not already tested, installing a specifically reviewed candidate, physically exercising keys, cycling power, pairing hosts/receiver, and measuring voltage/current/latency. The left migration and receiver installation stay blocked on their own recovery evidence rather than on a software build result.
+Once lower-layout startup passes, validate right-to-left BLE with left USB host output before direct host Bluetooth or receiver operation. Run the host scanner harness, cross-build every role and independently review the actual framework transport/reconnect paths. Keep backlight, physical-selector APIs and power optimization out of the initial split trial.
+
+Offline work can finish source review, repeatable fault tests, build/size checks, image packaging and targeted RMK API proposals. Owner-assisted trials require a specifically reviewed image, physical key/modifier sweeps, disconnect/release and wake tests, pairing and latency measurements. Receiver installation still needs device-specific recovery evidence; left migration now needs a working lower-layout application startup rather than more copies of the same failed candidate.
 
 ## Boundaries and evidence
 
