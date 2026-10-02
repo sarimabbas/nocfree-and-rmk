@@ -1,6 +1,6 @@
 # Full right RMK split trial candidate
 
-Prepared 2026-10-02. Software preparation and fresh right bootloader readback only; not approved, installed or hardware validated. The left runs the verified full RMK USB candidate. The right retains its working Mac USB diagnostic and is currently in its existing bootloader.
+Prepared 2026-10-02. The owner approved the scoped trial and the one-shot host transfer completed after fresh right identity and exact baseline checks. Independent recovery/readback and split hardware validation remain pending. The left runs the verified full RMK USB candidate. The saved working right Mac diagnostic and factory backup remain available privately; current right application execution is not yet established.
 
 ## Exact candidate
 
@@ -21,3 +21,7 @@ Existing right cold recovery was observed with OFF plus USB disconnected first, 
 The right peripheral intentionally has no runtime USB HID/CDC driver. Absence from USB after launch is expected. After independent recovery passes, start it battery-first near the unchanged running left. RMK discovers split peripheral ID 0 automatically and persists peer addresses; no host Bluetooth pairing is required for this link. Source inspection establishes peer-address persistence, not authenticated bonding.
 
 First acceptance is owner-confirmed right keys through the left USB keyboard, then cross-half modifiers and layers, simultaneous input, reconnect/release recovery and wake latency. Split/radio/battery/latency acceptance is pending. Right-only USB typing disappears with this role; the left owns the combined keymap. Full source topology and primary references are in [split architecture](split-architecture.md).
+
+## Approved transfer checkpoint
+
+The owner explicitly approved the exact image and application/runtime-storage ranges above. Thirty independent offline helper checks passed, including wrong role, image, source, range, identity, pending approval, stale review, repeated transfer and corrupted readback rejection. These are host checks, not hardware acceptance. The candidate-bound one-shot transfer completed after another fresh same-device identity, exact metadata and full baseline readback. No automatic retry occurred. The owner-operated right OFF/USB-absent/reconnect-OFF recovery cycle is the next gate; no successful new-image recovery or split input is assumed. Companion remains paused because its existing physical startup text is left-specific.
