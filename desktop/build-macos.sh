@@ -5,7 +5,7 @@ case "${1:-}" in
   -h|--help)
     echo 'Build the local read-only NocFree Companion macOS app.'
     echo 'Usage: desktop/build-macos.sh [--help | --version]'
-    echo 'Requires Rust and macOS. Creates dist/NocFree Companion.app.'
+    echo 'Requires Rust, macOS and Apple command-line tools. Creates dist/NocFree Companion.app.'
     exit 0 ;;
   -v|--version) echo 'NocFree Companion 0.1.0'; exit 0 ;;
   '') ;;
@@ -17,7 +17,18 @@ cd "$(dirname "$0")"
 echo 'Building the read-only companion…'
 cargo build --locked
 bundle='../dist/NocFree Companion.app'
-mkdir -p "$bundle/Contents/MacOS"
+mkdir -p "$bundle/Contents/MacOS" "$bundle/Contents/Resources"
+icon_work=$(mktemp -d "${TMPDIR:-/tmp}/nocfree-icon.XXXXXX")
+trap 'rm -rf "$icon_work"' EXIT HUP INT TERM
+/usr/bin/qlmanage -t -s 1024 -o "$icon_work" assets/companion-icon.svg >/dev/null
+/usr/bin/swift render-icon.swift "$icon_work/companion-icon.svg.png" "$icon_work/icon.png"
+mkdir "$icon_work/Companion.iconset"
+for size in 16 32 128 256 512; do
+  /usr/bin/sips -z "$size" "$size" "$icon_work/icon.png" --out "$icon_work/Companion.iconset/icon_${size}x${size}.png" >/dev/null
+  double=$((size * 2))
+  /usr/bin/sips -z "$double" "$double" "$icon_work/icon.png" --out "$icon_work/Companion.iconset/icon_${size}x${size}@2x.png" >/dev/null
+done
+/usr/bin/iconutil -c icns "$icon_work/Companion.iconset" -o "$bundle/Contents/Resources/Companion.icns"
 cp target/debug/nocfree-companion "$bundle/Contents/MacOS/nocfree-companion.new"
 mv "$bundle/Contents/MacOS/nocfree-companion.new" "$bundle/Contents/MacOS/nocfree-companion"
 cat > "$bundle/Contents/Info.plist" <<'PLIST'
@@ -28,6 +39,7 @@ cat > "$bundle/Contents/Info.plist" <<'PLIST'
 <key>CFBundleIdentifier</key><string>io.github.sarimabbas.nocfree-companion</string>
 <key>CFBundleName</key><string>NocFree Companion</string>
 <key>CFBundleDisplayName</key><string>NocFree Companion</string>
+<key>CFBundleIconFile</key><string>Companion.icns</string>
 <key>CFBundlePackageType</key><string>APPL</string>
 <key>CFBundleShortVersionString</key><string>0.1.0</string>
 <key>CFBundleVersion</key><string>1</string>

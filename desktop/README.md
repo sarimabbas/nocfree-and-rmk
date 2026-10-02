@@ -1,8 +1,12 @@
 # NocFree Companion
 
-A read-only macOS prototype using GPUI and `iamnbutler/gpuikit`. It starts with the left half, shows one physical step at a time, and saves a private firmware copy automatically after fresh connection and metadata checks. Once normal startup returns, it guides the right half. There are no firmware-write, reset, erase or serial-port commands.
+A read-only macOS prototype using GPUI and `iamnbutler/gpuikit`. A start screen names two journeys: factory backup/restore and RMK installation. Only saving current firmware copies is available; restore and RMK installation are explicitly unavailable. The future RMK journey calls for a factory backup first, but this prototype does not establish that a saved current image is factory firmware or restore-compatible.
+
+After the owner chooses Save firmware copies, the app starts with the left half, shows one physical step at a time, and saves a private firmware copy automatically after fresh connection and metadata checks. Once normal startup returns, it guides the right half. There are no firmware-write, reset, erase or serial-port commands.
 
 Photo-based SVG illustrations preserve each half's staggered outline, key widths and the right half's ampersand badge. Both assets are embedded in the executable and show orientation, not device status.
+
+The Dock icon uses an independently drawn white ampersand on blue, rather than the manufacturer's logo. The macOS build renders its SVG source into the standard ICNS sizes and bundles it before signing; generated icon files stay out of Git. Rendering uses Apple's Quick Look, Swift command-line tools, `sips` and `iconutil`.
 
 This version recognizes the ANSI factory left and this project's Mac USB diagnostic on the right. Receiver support, factory-right onboarding and Windows/Linux discovery are pending. The prescribed physical role and USB connection are correlated; identity alone does not prove the role, independent recovery, or restore compatibility. The app asks for the dongle to remain disconnected because it shares the factory left's identity.
 
