@@ -5,6 +5,7 @@
     any(
         feature = "migration-hal-probe",
         feature = "migration-hal-serial-probe",
+        feature = "migration-hal-neutral-probe",
         feature = "migration-usb-build-serial-probe"
     ),
     allow(unreachable_code, unused_variables)
@@ -15,7 +16,10 @@ const _: () = assert!(
         + cfg!(feature = "migration-runtime-probe") as usize
         + cfg!(feature = "migration-hal-probe") as usize
         + cfg!(feature = "migration-hal-serial-probe") as usize
-        + cfg!(feature = "migration-usb-build-serial-probe") as usize)
+        + cfg!(feature = "migration-usb-build-serial-probe") as usize
+        + cfg!(feature = "migration-hal-neutral-probe") as usize
+        + cfg!(feature = "migration-usb-enabled-serial-probe") as usize
+        + cfg!(feature = "migration-usb-configured-serial-probe") as usize)
         <= 1,
     "Select at most one migration startup stage"
 );
@@ -114,13 +118,44 @@ bind_interrupts!(struct Irqs {
     feature = "migration-runtime-probe",
     feature = "migration-hal-probe",
     feature = "migration-hal-serial-probe",
-    feature = "migration-usb-build-serial-probe"
+    feature = "migration-usb-build-serial-probe",
+    feature = "migration-hal-neutral-probe",
+    feature = "migration-usb-enabled-serial-probe",
+    feature = "migration-usb-configured-serial-probe"
 ))]
 fn return_to_bootloader(request: u32) -> ! {
     // nrf-pac 0.4.0: POWER.GPREGRET = 0x40000000 + 0x51c.
     unsafe { core::ptr::write_volatile(0x4000_051c as *mut u32, request) };
     cortex_m::asm::dsb();
     cortex_m::peripheral::SCB::sys_reset();
+}
+
+// These callbacks report framework boundaries without replacing its USB runner.
+// The handler lives in main's future for the same lifetime as the built device.
+#[cfg(any(
+    feature = "migration-usb-enabled-serial-probe",
+    feature = "migration-usb-configured-serial-probe"
+))]
+struct UsbStageHandler;
+
+#[cfg(any(
+    feature = "migration-usb-enabled-serial-probe",
+    feature = "migration-usb-configured-serial-probe"
+))]
+impl embassy_usb::Handler for UsbStageHandler {
+    #[cfg(feature = "migration-usb-enabled-serial-probe")]
+    fn enabled(&mut self, enabled: bool) {
+        if enabled {
+            return_to_bootloader(0x4e);
+        }
+    }
+
+    #[cfg(feature = "migration-usb-configured-serial-probe")]
+    fn configured(&mut self, configured: bool) {
+        if configured {
+            return_to_bootloader(0x4e);
+        }
+    }
 }
 
 // Keep the normal probe's startup path identical; stage returns deliberately
@@ -138,6 +173,8 @@ async fn main(_spawner: Spawner) {
     return_to_bootloader(0x57);
     #[cfg(feature = "migration-hal-serial-probe")]
     return_to_bootloader(0x4e);
+    #[cfg(feature = "migration-hal-neutral-probe")]
+    return_to_bootloader(0x00);
 
     let driver = Driver::new(p.USBD, Irqs, HardwareVbusDetect::new(Irqs));
     let mut config = Config::new(0x4c4b, PID);
@@ -155,6 +192,11 @@ async fn main(_spawner: Spawner) {
     let mut msos = [0; 16];
     let mut control = [0; 64];
     let mut state = State::new();
+    #[cfg(any(
+        feature = "migration-usb-enabled-serial-probe",
+        feature = "migration-usb-configured-serial-probe"
+    ))]
+    let mut stage_handler = UsbStageHandler;
     let mut builder = Builder::new(
         driver,
         config,
@@ -163,6 +205,11 @@ async fn main(_spawner: Spawner) {
         &mut msos,
         &mut control,
     );
+    #[cfg(any(
+        feature = "migration-usb-enabled-serial-probe",
+        feature = "migration-usb-configured-serial-probe"
+    ))]
+    builder.handler(&mut stage_handler);
     let cdc = CdcAcmClass::new(&mut builder, &mut state, 64);
     let mut device = builder.build();
     #[cfg(feature = "migration-usb-build-serial-probe")]

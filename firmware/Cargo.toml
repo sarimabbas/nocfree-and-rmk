@@ -34,6 +34,10 @@ migration-hal-probe = ["migration-probe"]
 # Returns after HAL initialization or USB construction with the serial-only request.
 migration-hal-serial-probe = ["migration-probe"]
 migration-usb-build-serial-probe = ["migration-probe"]
+# Matched reset control and framework USB callback boundaries for startup observations.
+migration-hal-neutral-probe = ["migration-probe"]
+migration-usb-enabled-serial-probe = ["migration-probe"]
+migration-usb-configured-serial-probe = ["migration-probe"]
 # Right-local USB typing diagnostic, with independent CDC update entry.
 input-probe = ["dep:embassy-usb", "rmk/adafruit_bl"]
 left = ["rmk/split", "rmk/dongle", "rmk/adafruit_bl"]
