@@ -20,7 +20,8 @@ const _: () = assert!(
         + cfg!(feature = "migration-hal-neutral-probe") as usize
         + cfg!(feature = "migration-usb-enabled-serial-probe") as usize
         + cfg!(feature = "migration-usb-configured-serial-probe") as usize
-        + cfg!(feature = "migration-usb-reset-serial-probe") as usize)
+        + cfg!(feature = "migration-usb-reset-serial-probe") as usize
+        + cfg!(feature = "migration-usb-addressed-serial-probe") as usize)
         <= 1,
     "Select at most one migration startup stage"
 );
@@ -123,7 +124,8 @@ bind_interrupts!(struct Irqs {
     feature = "migration-hal-neutral-probe",
     feature = "migration-usb-enabled-serial-probe",
     feature = "migration-usb-configured-serial-probe",
-    feature = "migration-usb-reset-serial-probe"
+    feature = "migration-usb-reset-serial-probe",
+    feature = "migration-usb-addressed-serial-probe"
 ))]
 fn return_to_bootloader(request: u32) -> ! {
     // nrf-pac 0.4.0: POWER.GPREGRET = 0x40000000 + 0x51c.
@@ -137,16 +139,24 @@ fn return_to_bootloader(request: u32) -> ! {
 #[cfg(any(
     feature = "migration-usb-enabled-serial-probe",
     feature = "migration-usb-configured-serial-probe",
-    feature = "migration-usb-reset-serial-probe"
+    feature = "migration-usb-reset-serial-probe",
+    feature = "migration-usb-addressed-serial-probe"
 ))]
 struct UsbStageHandler;
 
 #[cfg(any(
     feature = "migration-usb-enabled-serial-probe",
     feature = "migration-usb-configured-serial-probe",
-    feature = "migration-usb-reset-serial-probe"
+    feature = "migration-usb-reset-serial-probe",
+    feature = "migration-usb-addressed-serial-probe"
 ))]
 impl embassy_usb::Handler for UsbStageHandler {
+    #[cfg(feature = "migration-usb-addressed-serial-probe")]
+    fn addressed(&mut self, _addr: u8) {
+        // The framework dispatches SET_ADDRESS before acknowledging its status stage.
+        return_to_bootloader(0x4e);
+    }
+
     #[cfg(feature = "migration-usb-reset-serial-probe")]
     fn reset(&mut self) {
         return_to_bootloader(0x4e);
@@ -204,7 +214,8 @@ async fn main(_spawner: Spawner) {
     #[cfg(any(
         feature = "migration-usb-enabled-serial-probe",
         feature = "migration-usb-configured-serial-probe",
-        feature = "migration-usb-reset-serial-probe"
+        feature = "migration-usb-reset-serial-probe",
+        feature = "migration-usb-addressed-serial-probe"
     ))]
     let mut stage_handler = UsbStageHandler;
     let mut builder = Builder::new(
@@ -218,7 +229,8 @@ async fn main(_spawner: Spawner) {
     #[cfg(any(
         feature = "migration-usb-enabled-serial-probe",
         feature = "migration-usb-configured-serial-probe",
-        feature = "migration-usb-reset-serial-probe"
+        feature = "migration-usb-reset-serial-probe",
+        feature = "migration-usb-addressed-serial-probe"
     ))]
     builder.handler(&mut stage_handler);
     let cdc = CdcAcmClass::new(&mut builder, &mut state, 64);
