@@ -2,16 +2,23 @@
 #![no_main]
 #![cfg_attr(feature = "migration-runtime-probe", allow(unreachable_code))]
 #![cfg_attr(
-    feature = "migration-hal-probe",
+    any(
+        feature = "migration-hal-probe",
+        feature = "migration-hal-serial-probe",
+        feature = "migration-usb-build-serial-probe"
+    ),
     allow(unreachable_code, unused_variables)
 )]
 
-#[cfg(any(
-    all(feature = "migration-entry-probe", feature = "migration-runtime-probe"),
-    all(feature = "migration-entry-probe", feature = "migration-hal-probe"),
-    all(feature = "migration-runtime-probe", feature = "migration-hal-probe")
-))]
-compile_error!("Select at most one migration startup stage");
+const _: () = assert!(
+    (cfg!(feature = "migration-entry-probe") as usize
+        + cfg!(feature = "migration-runtime-probe") as usize
+        + cfg!(feature = "migration-hal-probe") as usize
+        + cfg!(feature = "migration-hal-serial-probe") as usize
+        + cfg!(feature = "migration-usb-build-serial-probe") as usize)
+        <= 1,
+    "Select at most one migration startup stage"
+);
 
 // This variant observes application entry, not USB or typing behavior. The runtime
 // sets VTOR before calling __pre_init; this hook immediately returns to the existing
@@ -101,12 +108,17 @@ bind_interrupts!(struct Irqs {
     CLOCK_POWER => usb::vbus_detect::InterruptHandler;
 });
 
-// These stages run after RAM initialization. Use the same vendor request as the
-// entry hook, without logging or depending on USB initialization.
-#[cfg(any(feature = "migration-runtime-probe", feature = "migration-hal-probe"))]
-fn return_to_bootloader() -> ! {
+// These stages run after RAM initialization. The request selects the existing
+// bootloader path; no logging or USB activity is required for the reset.
+#[cfg(any(
+    feature = "migration-runtime-probe",
+    feature = "migration-hal-probe",
+    feature = "migration-hal-serial-probe",
+    feature = "migration-usb-build-serial-probe"
+))]
+fn return_to_bootloader(request: u32) -> ! {
     // nrf-pac 0.4.0: POWER.GPREGRET = 0x40000000 + 0x51c.
-    unsafe { core::ptr::write_volatile(0x4000_051c as *mut u32, 0x57) };
+    unsafe { core::ptr::write_volatile(0x4000_051c as *mut u32, request) };
     cortex_m::asm::dsb();
     cortex_m::peripheral::SCB::sys_reset();
 }
@@ -116,14 +128,16 @@ fn return_to_bootloader() -> ! {
 #[embassy_executor::main]
 async fn main(_spawner: Spawner) {
     #[cfg(feature = "migration-runtime-probe")]
-    return_to_bootloader();
+    return_to_bootloader(0x57);
 
     let mut nrf_config = embassy_nrf::config::Config::default();
     // USB requires a stable HFXO; do not rely on the bootloader leaving it running.
     nrf_config.hfclk_source = embassy_nrf::config::HfclkSource::ExternalXtal;
     let p = embassy_nrf::init(nrf_config);
     #[cfg(feature = "migration-hal-probe")]
-    return_to_bootloader();
+    return_to_bootloader(0x57);
+    #[cfg(feature = "migration-hal-serial-probe")]
+    return_to_bootloader(0x4e);
 
     let driver = Driver::new(p.USBD, Irqs, HardwareVbusDetect::new(Irqs));
     let mut config = Config::new(0x4c4b, PID);
@@ -151,6 +165,12 @@ async fn main(_spawner: Spawner) {
     );
     let cdc = CdcAcmClass::new(&mut builder, &mut state, 64);
     let mut device = builder.build();
+    #[cfg(feature = "migration-usb-build-serial-probe")]
+    {
+        // Materialize the device before this deliberately diverging stage return.
+        core::hint::black_box(&mut device);
+        return_to_bootloader(0x4e);
+    }
     let (mut sender, receiver, changes) = cdc.split_with_control();
 
     let greeting = async {
