@@ -10,7 +10,7 @@ The nRF52833 boards read switches through PCA9555 I²C expanders. One small scan
 
 ## Current evidence
 
-- A later [entry-only probe trial](docs/research/migration-entry-trial.md) returned to bootloader after controlled battery-first startup, consistent with early entry, though hook execution itself remains unproven and HAL/USB runtime remains unvalidated. Exact complete factory restoration passed again. Current hardware: left factory firmware, right Mac USB diagnostic, receiver untouched.
+- A later [entry-only probe trial](docs/research/migration-entry-trial.md) returned to bootloader after controlled battery-first startup, consistent with early entry, though hook execution itself remains unproven and HAL/USB runtime remains unvalidated. A subsequent [runtime/HAL trial](docs/research/runtime-hal-trial.md) also observed bootloader reappearance after both controlled launch sequences, with exact readbacks; stage execution remains unproven. Exact complete factory restoration and final normal startup passed again. Current hardware: left factory firmware, right Mac USB diagnostic, receiver untouched.
 
 - The left USB diagnostic passed identity/greeting, exact readback, physical USB-first recovery, battery-first startup, exact factory restoration and diagnostic reinstallation. Final startup and owner-reported typing, Shift, Space and Tab passed; the complete acceptance sweep remains pending; see [left trial](docs/left-input-probe.md).
 - Factory 1200-baud bootloader entry and return after reconnect verified without writing firmware. That entry exposed CDC serial, not a UF2 drive.
@@ -28,6 +28,8 @@ Backlighting, indicators, physical mode-switch handling, factory web configurati
 
 ## Build, research and recovery
 
+- [Guided GPUI/gpuikit installer proposal](docs/research/guided-installer-app.md)
+- [Runtime/HAL observations and exact factory restoration](docs/research/runtime-hal-trial.md)
 - [Left migration recovery, failed startup and exact factory restoration](docs/research/left-migration-trial.md)
 - [Repeatable build harness](docs/building.md)
 - [Tested update foundation and current device state](docs/recovery-probe.md)

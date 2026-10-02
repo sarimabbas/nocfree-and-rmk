@@ -1,6 +1,6 @@
 # Left runtime and HAL stage-return candidates
 
-Prepared 2026-10-01. **Neither image is installed or approved for a new hardware trial.** The left remains restored factory firmware, the right its Mac diagnostic, and the receiver untouched. The [entry-only trial](migration-entry-trial.md) supplied observations consistent with early entry, not proof of execution or a diagnosis of the silent full USB probe.
+Prepared 2026-10-01. The owner subsequently approved and completed the [paired trial](runtime-hal-trial.md); bootloader reappeared after both controlled launch sequences, and exact factory restoration passed. Neither candidate remains installed or is approved for another trial. The left is restored factory firmware, the right its Mac diagnostic, and the receiver untouched. The [entry-only trial](migration-entry-trial.md) supplied observations consistent with early entry, not proof of execution or a diagnosis of the silent full USB probe.
 
 ## Two separate stopping points
 
