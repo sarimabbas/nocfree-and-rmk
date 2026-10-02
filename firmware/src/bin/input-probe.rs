@@ -41,7 +41,10 @@ bind_interrupts!(struct Irqs {
 
 #[embassy_executor::main]
 async fn main(_spawner: Spawner) {
-    let p = embassy_nrf::init(embassy_nrf::config::Config::default());
+    let mut config = embassy_nrf::config::Config::default();
+    // USB requires a stable HFXO; do not rely on the bootloader leaving it running.
+    config.hfclk_source = embassy_nrf::config::HfclkSource::ExternalXtal;
+    let p = embassy_nrf::init(config);
     let mut twim_buffer = [0u8; 8];
     let bus = twim::Twim::new(
         p.TWISPI0,

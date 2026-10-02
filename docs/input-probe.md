@@ -1,6 +1,22 @@
 # Right-half USB input bring-up candidate
 
-Status: installed in an owner-authorized right-only trial on 2026-10-01. USB identity, version greeting, keyboard HID enumeration, software update entry and exact application readback passed on macOS. Physical typing, key mapping, cold recovery of this candidate and wake/disconnect acceptance remain pending. Left and receiver remain factory firmware. The right is temporarily in MSC bootloader mode for the recovery checks.
+Status: installed in an owner-authorized right-only trial on 2026-10-01. USB identity, version greeting, keyboard HID enumeration, software update entry, exact application readback and cold USB recovery passed on macOS. A later battery-first startup attempt produced no USB enumeration. Physical typing, key mapping and wake/disconnect acceptance remain pending. Left and receiver remain factory firmware. The right is temporarily in MSC bootloader mode during diagnosis.
+
+## Startup diagnosis and clock correction
+
+After the reported battery-first attempt, both USB and serial inventories showed no NocFree device. OFF + USB absent five seconds, then reconnecting USB while OFF exposed the bootloader, and the complete readable flash hash still matched the installed input image. The owner observed its light on with OFF and USB connected. That observation alone does not establish the battery-switch contacts or whether an earlier restart occurred.
+
+Both diagnostic binaries omitted explicit HFXO startup: Embassy nRF 0.11 defaults to `HfclkSource::Internal`, and its USB driver does not request the crystal. [Nordic's nRF52833 specification, section 6.33.7.1](https://comp.anu.edu.au/courses/comp2300/assets/manuals/nRF52833_PS_v1.7.pdf) requires a stable HFXO for USB traffic. The [exact Embassy 0.11 USB serial example](https://github.com/embassy-rs/embassy/blob/embassy-nrf-v0.11.0/examples/nrf52840/src/bin/usb_serial.rs) explicitly starts it before constructing the USB driver. The minimal correction selects `HfclkSource::ExternalXtal` during initialization in both probes. Production MPSL clock ownership is unchanged.
+
+This is a confirmed initialization omission and a plausible cause of the startup failure, not a hardware-proven diagnosis yet. Do not assert that bootloader launches always inherit the oscillator: the [installed upstream bootloader USB teardown](https://github.com/adafruit/Adafruit_nRF52_Bootloader/blob/0147d71e73b9a2c217f56dbc9877d07bb45d6467/src/usb/usb.c#L106) describes disabling HCLK. Previously working USB/firmware supports a fitted crystal, but this is an inference rather than a schematic check. Waiting for a failed crystal can block the application; bootloader recovery precedes that application code and remains independent. Continuous HFXO increases diagnostic battery current.
+
+Independent implementation/review and before/after host harnesses passed: 39 host tests, formatting, all three recovery-first migration roles and both factory-preserving diagnostics. The clock-corrected input candidate in ignored `dist/input-probe-right-hfclk/` is 57,868 B, ends at `0x3520c` before UF2 padding to `0x35300`, and retains the same 15-page erase range through `0x36000`. Its UF2 and serial-package guards pass. Hashes:
+
+- UF2: `f25ff02963e136a8648b22cea7048c35361d631f48df52e08c830dc38ce51ce8`.
+- BIN: `dde9741ae4e52ccfc0b1b20a90ee97fd4cd626df1fc90aa9d5829babcd921946`.
+- Serial ZIP: `958b90df490ffa9e66795bdfdcd7563e306071ab96e3a3c2c1a271e635598ff5`.
+
+The original packaged diagnostic and restore artifacts remain unchanged for rollback. The following initial image hashes/results describe the earlier trial; clock-corrected hardware results will be recorded separately.
 
 ## Observed trial results
 

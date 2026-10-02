@@ -26,7 +26,10 @@ bind_interrupts!(struct Irqs {
 
 #[embassy_executor::main]
 async fn main(_spawner: Spawner) {
-    let p = embassy_nrf::init(embassy_nrf::config::Config::default());
+    let mut nrf_config = embassy_nrf::config::Config::default();
+    // USB requires a stable HFXO; do not rely on the bootloader leaving it running.
+    nrf_config.hfclk_source = embassy_nrf::config::HfclkSource::ExternalXtal;
+    let p = embassy_nrf::init(nrf_config);
     let driver = Driver::new(p.USBD, Irqs, HardwareVbusDetect::new(Irqs));
     let mut config = Config::new(0x4c4b, 0x4650);
     config.manufacturer = Some("NocFree RMK community");
