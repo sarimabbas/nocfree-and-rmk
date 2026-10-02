@@ -20,3 +20,19 @@ Require exact original left readback before the first transfer, each candidate's
 The neutral control must produce stable ordinary MSC with the expected CDC and storage interfaces. Unexpected serial mode or ambiguous behavior invalidates attribution: restore the factory image and stop. Only after that calibration should serial mode from a callback be interpreted as evidence consistent with reaching that callback. Enable completion without a configuration callback narrows investigation to attachment/control handling; absence at the enable boundary leaves READY/power/wakeup unresolved. Neither establishes a root cause.
 
 After the bounded trial, restore the complete original exposed factory container, including S140, verify its exact readback and confirm normal factory USB operation. No new image is authorized by this document.
+
+## Exact packaged candidates
+
+All artifacts were built from clean source commit `391ae896867c2887f38fd50c3b2997a1f05e4aa8`; binaries remain local under ignored `dist/`. Each uses the lower migration origin, standard nRF52833 UF2 family `0x621e937a`, stack `0x20020000`, reset vector `0x1205`, and retained recovery marker at `0x1200`. Canonical address/vector/family and exact BIN-to-UF2 padding guards passed. These structural checks do not authorize installation.
+
+| Candidate | BIN bytes | Touched interval | UF2 SHA-256 |
+| --- | ---: | --- | --- |
+| `hal-neutral` | 8328 | `0x1000..0x4000` | `3d69e50c5f2a8793e0d3c14e63e6a5e3fce169b7e765aa9cf50a820edc24a14e` |
+| `usb-enabled-serial` | 14776 | `0x1000..0x5000` | `9c53b0b7010ec49127e4bd580fb457b50c892332499050b846edfdb7c9ed7da5` |
+| `usb-configured-serial` | 14776 | `0x1000..0x5000` | `8cc21df8aae676c1bf3f5dc44731ec1b289ef1e5f067f4c63c225315434f365a` |
+
+The rebuilt HAL-serial reference is byte-identical to the previously hardware-tested binary and UF2. The neutral binary differs from that reference at exactly one byte, address `0x13ca`: request `0x4e` becomes `0x00`. Callback images touch four pages, extending one page beyond the previous three-page trial; their untouched-range check must start at `0x5000`, not `0x4000`. Neither reaches the bootloader or other protected regions.
+
+The repeatable `./scripts/check.sh --reclaimed-softdevice` passed before changes and after integration: 42 Python tests, five scanner tests, two doctests, all six role/keymap builds and the diagnostic matrix. These are software checks; the factory-preserving full left RMK build's previously recorded flash overflow remains a separate unresolved limitation.
+
+All 28 pairs of distinct startup-stage features and 12 wrong-role combinations for the new stages were rejected for the expected compile-time guard reason. Independent artifact review reconstructed ELF load segments into the exact BIN, checked every UF2 payload/padding byte and validated the original restore image. Optimized callback code conditionally returns on false and writes `0x4e` followed by DSB/system reset on true; handler vtable placement selects the intended enabled or configured slot. The ordinary asynchronous READY/power/waker/control paths remain linked. Data/BSS stay within the migration RAM bounds. No actionable source or artifact findings remained.
