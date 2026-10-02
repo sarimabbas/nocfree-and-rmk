@@ -12,7 +12,7 @@ The nRF52833 boards read switches through PCA9555 I²C expanders. One small scan
 - Factory 1200-baud bootloader entry and return after reconnect verified without writing firmware. That entry exposed CDC serial, not a UF2 drive.
 - Factory Fn+5 entry exposes a UF2 drive; its SoftDevice/application readback is saved locally and hash-verified. It does not back up the bootloader or filesystem.
 - Seven Rust input-driver tests and 32 Python safety tests (UF2 and serial packages) pass.
-- The right-only USB typing diagnostic is installed. Its version, keyboard interface, software update entry, exact application readback and initial cold recovery passed on macOS. A USB-clock initialization correction resolved the observed battery-first enumeration failure; its subsequent startup and greeting passed. Physical typing and the complete key sweep remain pending.
+- The right-only USB typing diagnostic is installed. Its version, keyboard interface, software update entry, exact application readback and initial cold recovery passed on macOS. A USB-clock initialization correction resolved the observed battery-first enumeration failure; its subsequent startup, greeting and owner-reported basic typing passed. The complete key sweep and wake/disconnect tests remain pending.
 - Earlier right-half recovery-probe installation, USB identity, software update entry, cold USB recovery, factory restore and reinstallation passed on the owner's hardware. The right now runs the newer clock-corrected input diagnostic; left and receiver remain factory firmware.
 - Right and receiver firmware cross-build within the preserved flash/RAM ranges.
 - Left fails the protected linker limit; the whole build harness correctly fails until this is resolved.

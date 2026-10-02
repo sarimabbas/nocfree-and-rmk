@@ -1,6 +1,6 @@
 # Right-half USB input bring-up candidate
 
-Status: installed in an owner-authorized right-only trial on 2026-10-01. USB identity, version greeting, keyboard HID enumeration, software update entry, exact application readback and initial cold USB recovery passed on macOS. A battery-first startup attempt produced no USB enumeration with the original image; the clock-corrected image now passes that same startup sequence and version greeting. Physical typing, key mapping and wake/disconnect acceptance remain pending. The right is running the corrected input diagnostic; left and receiver remain factory firmware.
+Status: installed in an owner-authorized right-only trial on 2026-10-01. USB identity, version greeting, keyboard HID enumeration, software update entry, exact application readback and initial cold USB recovery passed on macOS. A battery-first startup attempt produced no USB enumeration with the original image; the clock-corrected image now passes that same startup sequence and version greeting. The owner confirmed basic right-half typing after the requested H/J/K/L check. The complete key sweep and wake/disconnect acceptance remain pending. The right is running the corrected input diagnostic; left and receiver remain factory firmware.
 
 ## Startup diagnosis and clock correction
 
