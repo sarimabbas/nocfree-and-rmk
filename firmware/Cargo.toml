@@ -9,6 +9,11 @@ default-run = "nocfree-rmk"
 name = "recovery-probe"
 path = "src/bin/recovery-probe.rs"
 required-features = ["recovery-probe"]
+
+[[bin]]
+name = "input-probe"
+path = "src/bin/input-probe.rs"
+required-features = ["input-probe"]
 [features]
 default = []
 # Explicit migration: replaces resident S140; never a normal update.
@@ -17,6 +22,8 @@ reclaimed-softdevice = []
 usb-recovery-first = []
 # Stage-zero USB-only probe; uses the existing Adafruit reset request.
 recovery-probe = ["dep:embassy-usb", "rmk/adafruit_bl"]
+# Right-local USB typing diagnostic, with independent CDC update entry.
+input-probe = ["dep:embassy-usb", "rmk/adafruit_bl"]
 left = ["rmk/split", "rmk/dongle", "rmk/adafruit_bl"]
 right = ["rmk/split"]
 receiver = ["rmk/dongle"]

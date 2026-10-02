@@ -11,7 +11,8 @@ The nRF52833 boards read switches through PCA9555 I²C expanders. One small scan
 - ANSI left-half USB identity confirmed on the owner's board.
 - Factory 1200-baud bootloader entry and return after reconnect verified without writing firmware. That entry exposed CDC serial, not a UF2 drive.
 - Factory Fn+5 entry exposes a UF2 drive; its SoftDevice/application readback is saved locally and hash-verified. It does not back up the bootloader or filesystem.
-- Seven Rust input-driver tests and sixteen Python image-guard tests pass.
+- Seven Rust input-driver tests and 32 Python safety tests (UF2 and serial packages) pass.
+- A separate right-only USB typing diagnostic is reviewed, cross-built and packaged, preserving the tested update foundation. It has not been installed or hardware tested.
 - Right-half probe installation, USB identity, software update entry, cold USB recovery, factory restore and reinstallation passed on the owner's hardware. The right currently runs that diagnostic, with no keyboard functionality; left and receiver remain factory firmware.
 - Right and receiver firmware cross-build within the preserved flash/RAM ranges.
 - Left fails the protected linker limit; the whole build harness correctly fails until this is resolved.
@@ -25,6 +26,7 @@ Backlighting, indicators, physical mode-switch handling, factory web configurati
 
 - [Repeatable build harness](docs/building.md)
 - [Tested update foundation and current device state](docs/recovery-probe.md)
+- [Right-only USB typing candidate and trial checklist](docs/input-probe.md)
 - [Build results and rejected size experiments](docs/build-results.md)
 - [Architecture](docs/architecture.md)
 - [Staged implementation and owner-assisted bring-up plan](docs/implementation-plan.md)
