@@ -1,6 +1,6 @@
 # Left migration trial candidate
 
-Prepared 2026-10-01. **Not installed; hardware approval and validation pending.** This is a USB recovery diagnostic, not typing firmware or the RMK split central. It reuses the tested recovery probe with a separate explicit `migration-probe` feature. The existing MBR and bootloader remain outside its address range.
+Prepared and trialed 2026-10-01. **Factory firmware restored after the lower-layout startup gate failed.** See [hardware trial results](left-migration-trial.md). This is a USB recovery diagnostic, not typing firmware or the RMK split central. It reuses the tested recovery probe with a separate explicit `migration-probe` feature. The existing MBR and bootloader remain outside its address range.
 
 ## Reproduce and verify
 
@@ -44,4 +44,4 @@ Independent implementation and safety-review agents checked the source, guards, 
 
 Follow [the researched migration sequence](next-migration-trial.md). Before transfer, independently establish the connected left unit and verify its installed diagnostic and bootloader readback. After transfer, require exact candidate bytes, final-page padding and retained readable-byte equality, bootloader identity with absent SoftDevice, USB greeting, physical USB-first recovery, battery-first startup, and full factory restoration/readback equality. Stop on any failed gate before considering the full RMK central.
 
-The lower-layout bootloader path and restoration of overwritten S140 have not been hardware-tested. An interrupted write or vendor bootloader difference could require opening the enclosure or a debug probe. No automatic rollback or interrupted-update guarantee is provided. The right half and receiver are outside this trial.
+The trial demonstrated independent USB recovery after the lower-layout write and exact restoration of the readable S140/application/settings region. Lower-layout application startup failed and its cause remains unknown. Interrupted writes remain untested and could require opening the enclosure or a debug probe. No automatic rollback or interrupted-update guarantee is provided. The right half and receiver were not written during this trial.
