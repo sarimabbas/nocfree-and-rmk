@@ -28,6 +28,9 @@ recovery-probe = ["dep:embassy-usb", "rmk/adafruit_bl"]
 migration-probe = ["recovery-probe", "reclaimed-softdevice", "usb-recovery-first"]
 # Left-only reset-entry heartbeat; returns to existing DFU before RAM initialization.
 migration-entry-probe = ["migration-probe"]
+# Stage returns after executor startup or unchanged HAL initialization, respectively.
+migration-runtime-probe = ["migration-probe"]
+migration-hal-probe = ["migration-probe"]
 # Right-local USB typing diagnostic, with independent CDC update entry.
 input-probe = ["dep:embassy-usb", "rmk/adafruit_bl"]
 left = ["rmk/split", "rmk/dongle", "rmk/adafruit_bl"]

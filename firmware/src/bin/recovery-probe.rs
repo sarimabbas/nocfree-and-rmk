@@ -1,5 +1,17 @@
 #![no_std]
 #![no_main]
+#![cfg_attr(feature = "migration-runtime-probe", allow(unreachable_code))]
+#![cfg_attr(
+    feature = "migration-hal-probe",
+    allow(unreachable_code, unused_variables)
+)]
+
+#[cfg(any(
+    all(feature = "migration-entry-probe", feature = "migration-runtime-probe"),
+    all(feature = "migration-entry-probe", feature = "migration-hal-probe"),
+    all(feature = "migration-runtime-probe", feature = "migration-hal-probe")
+))]
+compile_error!("Select at most one migration startup stage");
 
 // This variant observes application entry, not USB or typing behavior. The runtime
 // sets VTOR before calling __pre_init; this hook immediately returns to the existing
@@ -89,12 +101,30 @@ bind_interrupts!(struct Irqs {
     CLOCK_POWER => usb::vbus_detect::InterruptHandler;
 });
 
+// These stages run after RAM initialization. Use the same vendor request as the
+// entry hook, without logging or depending on USB initialization.
+#[cfg(any(feature = "migration-runtime-probe", feature = "migration-hal-probe"))]
+fn return_to_bootloader() -> ! {
+    // nrf-pac 0.4.0: POWER.GPREGRET = 0x40000000 + 0x51c.
+    unsafe { core::ptr::write_volatile(0x4000_051c as *mut u32, 0x57) };
+    cortex_m::asm::dsb();
+    cortex_m::peripheral::SCB::sys_reset();
+}
+
+// Keep the normal probe's startup path identical; stage returns deliberately
+// terminate it early, and the HAL stage deliberately leaves its peripherals unused.
 #[embassy_executor::main]
 async fn main(_spawner: Spawner) {
+    #[cfg(feature = "migration-runtime-probe")]
+    return_to_bootloader();
+
     let mut nrf_config = embassy_nrf::config::Config::default();
     // USB requires a stable HFXO; do not rely on the bootloader leaving it running.
     nrf_config.hfclk_source = embassy_nrf::config::HfclkSource::ExternalXtal;
     let p = embassy_nrf::init(nrf_config);
+    #[cfg(feature = "migration-hal-probe")]
+    return_to_bootloader();
+
     let driver = Driver::new(p.USBD, Irqs, HardwareVbusDetect::new(Irqs));
     let mut config = Config::new(0x4c4b, PID);
     config.manufacturer = Some("NocFree RMK community");

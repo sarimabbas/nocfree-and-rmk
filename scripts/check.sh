@@ -35,5 +35,9 @@ cargo fmt --manifest-path firmware/Cargo.toml -- --check
         --no-default-features --features left,migration-probe || failed=1
     cargo build --locked --release --bin recovery-probe --target thumbv7em-none-eabihf \
         --no-default-features --features left,migration-entry-probe || failed=1
+    for stage in runtime hal; do
+        cargo build --locked --release --bin recovery-probe --target thumbv7em-none-eabihf \
+            --no-default-features --features "left,migration-$stage-probe" || failed=1
+    done
     exit "$failed"
 )
