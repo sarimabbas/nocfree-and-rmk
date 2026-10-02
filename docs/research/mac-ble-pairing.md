@@ -54,3 +54,7 @@ The next-build host product name is `NocFree RMK`, reflecting that the left coor
 Offline validation passed before and after the logging feature changes: 42 image/package host tests, seven scanner host tests, and all six production role/keymap cross-builds plus the diagnostic builds. The warning logger retains pairing/runner errors but omits ordinary disconnect reasons (Info). Its 1,024-byte buffer can drop or truncate data, so missing output cannot prove absence of a failure. Independent review passed the feature scope; installation and hardware logging remain unapproved/unverified.
 
 The offline candidate with whole-keyboard name has BIN size 405,220 bytes and page-padded coverage `0x1000..0x64000`; application vectors are SP `0x20020000`, Thumb reset `0x1205`. `inspect_migration` passes exact payload/vector/family/recovery-marker checks. These are structural software results only; no device transfer or serial reader is authorized by this preparation.
+
+## Approved logging trial
+
+The owner approved resetting saved wireless pairings and proceeding with the prepared logging diagnostic. Root saved a fresh left baseline and settings copy, verified the current name-fix application/tail/protected gap, and completed one transfer of the guarded USB-logging candidate. An independent helper review passed 32 offline checks. Host copy completion is not device acceptance: fresh recovery readback and battery-first startup are pending. No right/dongle write, factory restore, bootloader change, UICR action or dock power action occurred.
