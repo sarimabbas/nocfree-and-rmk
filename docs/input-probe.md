@@ -1,6 +1,6 @@
 # Right-half USB input bring-up candidate
 
-Status: installed in an owner-authorized right-only trial on 2026-10-01. USB identity, version greeting, keyboard HID enumeration, software update entry, exact application readback and cold USB recovery passed on macOS. A later battery-first startup attempt produced no USB enumeration. Physical typing, key mapping and wake/disconnect acceptance remain pending. Left and receiver remain factory firmware. The right is temporarily in MSC bootloader mode during diagnosis.
+Status: installed in an owner-authorized right-only trial on 2026-10-01. USB identity, version greeting, keyboard HID enumeration, software update entry, exact application readback and initial cold USB recovery passed on macOS. A battery-first startup attempt produced no USB enumeration with the original image; the clock-corrected image now passes that same startup sequence and version greeting. Physical typing, key mapping and wake/disconnect acceptance remain pending. The right is running the corrected input diagnostic; left and receiver remain factory firmware.
 
 ## Startup diagnosis and clock correction
 
@@ -16,7 +16,7 @@ Independent implementation/review and before/after host harnesses passed: 39 hos
 - BIN: `dde9741ae4e52ccfc0b1b20a90ee97fd4cd626df1fc90aa9d5829babcd921946`.
 - Serial ZIP: `958b90df490ffa9e66795bdfdcd7563e306071ab96e3a3c2c1a271e635598ff5`.
 
-The clock-corrected candidate is now installed within the ongoing owner-authorized right trial. Its USB greeting passed, software update entry returned to the same bootloader, and exact readback verified the application, erased tail, unchanged S140 and unchanged readable flash above `0x36000`. Full readable UF2 SHA-256 is `a1c5eebc633016e5c36a7eeac5465ac893a09c25475631d466574c6b3824d7eb`. Battery-first startup and physical input are still pending.
+The clock-corrected candidate is now installed within the ongoing owner-authorized right trial. Its USB greeting passed, software update entry returned to the same bootloader, and exact readback verified the application, erased tail, unchanged S140 and unchanged readable flash above `0x36000`. Full readable UF2 SHA-256 is `a1c5eebc633016e5c36a7eeac5465ac893a09c25475631d466574c6b3824d7eb`. The owner then repeated OFF + USB absent five seconds, ON without USB five seconds, then USB attachment. The corrected input device enumerated and returned its expected greeting. This before/after result supports the clock omission as the USB startup failure's cause; it is one observed corrected startup, not a stress test. Physical input remains pending.
 
 The initial short 1200-baud open/close did not trigger update mode. A deliberate sequence succeeded: open at 115200 with DTR high, wait 200 ms, change to 1200, deassert DTR, keep open 800 ms, then close. Embassy CDC notifications include both line coding and DTR changes but coalesce into the latest state; the failed short request does not establish a missing firmware handler. Use explicit host control sequencing for future trials. Private corrected-image records are in `.evidence/trial-input-right/hfclk/`.
 
