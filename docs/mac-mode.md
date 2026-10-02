@@ -1,6 +1,6 @@
 # Mac function row
 
-Status: both Mac USB diagnostics are installed with exact readback and battery-first startup verified on macOS. The requested media-row hardware checks remain pending owner feedback; F5/F6 backlight support is not implemented.
+Status: both Mac USB diagnostics are installed with exact readback and battery-first startup verified on macOS. The owner reports the requested brightness, Mission Control, Spotlight, playback/volume and Fn-function checks work. External-display brightness still requires Ctrl on this setup; F5/F6 backlight support is not implemented.
 
 The optional `mac-keymap` Cargo feature selects the user's Mac function row in the
 shared electrical default keymap. Both USB input diagnostics and the production left
@@ -99,3 +99,9 @@ The right was then correlated from its role-specific normal identity/greeting to
 The right is currently in its existing bootloader awaiting owner-operated battery-first startup. The left is running its Mac diagnostic. Both media rows remain hardware-test pending; F5/F6 remain ordinary function keys because backlight support is still pending. The dongle remains untouched.
 
 The owner then performed the right OFF/USB-absent five seconds, ON/battery-first ten seconds, USB-reattach sequence. The exact right Mac greeting passed, and the left Mac diagnostic remained enumerated. Both halves are now running the Mac diagnostics. Owner-assisted brightness, Mission Control, Spotlight, playback/volume and Fn-function-row checks have been requested; no results are assumed. Independent review verified both installed readbacks and preserved readable ranges.
+
+## Owner-assisted Mac row result
+
+The owner reported that all requested Mac-row checks worked: external display brightness with Ctrl+F1/F2, Mission Control, Spotlight, playback/volume controls and Fn ordinary function keys. This is an owner-assisted functional pass, not raw HID capture, an exhaustive key sweep or numerical reliability validation. Keyboard backlight was explicitly excluded.
+
+The owner asked why their Magic Keyboard changes display brightness without Ctrl. The current firmware emits standard consumer brightness usages `0x0070`/`0x006f`; [Apple documents Control+brightness for supported external displays](https://support.apple.com/en-us/102650). The exact Magic Keyboard report/driver-routing difference has not been captured, so Apple-specific routing remains an inference rather than a measured explanation. A future external-display preference could map F1/F2 to the already tested Ctrl+brightness chord using RMK modifiers; do not inject Ctrl into every display/profile without making that choice explicit.
