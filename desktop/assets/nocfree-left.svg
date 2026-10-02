@@ -1,0 +1,117 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="520" height="400" viewBox="0 0 520 400" role="img" aria-labelledby="title desc">
+  <title id="title">NocFree AND left half</title>
+  <desc id="desc">Top-down sketch of the silver split keyboard with off-white staggered keycaps and a wide thumb space key.</desc>
+  <path d="M88 40 H428 Q440 40 440 52 V151 H416 V199 H428 V247 H452 V346 Q452 358 440 358 H88 Q76 358 76 346 V52 Q76 40 88 40 Z" fill="#e4e7e8" stroke="#a8b0b5" stroke-width="1.2" stroke-linejoin="round"/>
+  <g font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-weight="400" text-anchor="middle" fill="#545a60">
+    <rect x="92" y="58" width="44" height="44" rx="7" fill="#d8d8d1" stroke="#aeb5b9" stroke-width="0.8"/>
+    <rect x="94" y="56" width="40" height="41" rx="6" fill="#f7f6f1" stroke="#ffffff" stroke-width="0.8"/>
+    <text x="114" y="81" font-size="10">esc</text>
+    <rect x="140" y="58" width="44" height="44" rx="7" fill="#d8d8d1" stroke="#aeb5b9" stroke-width="0.8"/>
+    <rect x="142" y="56" width="40" height="41" rx="6" fill="#f7f6f1" stroke="#ffffff" stroke-width="0.8"/>
+    <text x="162" y="81" font-size="10">F1</text>
+    <rect x="188" y="58" width="44" height="44" rx="7" fill="#d8d8d1" stroke="#aeb5b9" stroke-width="0.8"/>
+    <rect x="190" y="56" width="40" height="41" rx="6" fill="#f7f6f1" stroke="#ffffff" stroke-width="0.8"/>
+    <text x="210" y="81" font-size="10">F2</text>
+    <rect x="236" y="58" width="44" height="44" rx="7" fill="#d8d8d1" stroke="#aeb5b9" stroke-width="0.8"/>
+    <rect x="238" y="56" width="40" height="41" rx="6" fill="#f7f6f1" stroke="#ffffff" stroke-width="0.8"/>
+    <text x="258" y="81" font-size="10">F3</text>
+    <rect x="284" y="58" width="44" height="44" rx="7" fill="#d8d8d1" stroke="#aeb5b9" stroke-width="0.8"/>
+    <rect x="286" y="56" width="40" height="41" rx="6" fill="#f7f6f1" stroke="#ffffff" stroke-width="0.8"/>
+    <text x="306" y="81" font-size="10">F4</text>
+    <rect x="332" y="58" width="44" height="44" rx="7" fill="#d8d8d1" stroke="#aeb5b9" stroke-width="0.8"/>
+    <rect x="334" y="56" width="40" height="41" rx="6" fill="#f7f6f1" stroke="#ffffff" stroke-width="0.8"/>
+    <text x="354" y="81" font-size="10">F5</text>
+    <rect x="380" y="58" width="44" height="44" rx="7" fill="#d8d8d1" stroke="#aeb5b9" stroke-width="0.8"/>
+    <rect x="382" y="56" width="40" height="41" rx="6" fill="#f7f6f1" stroke="#ffffff" stroke-width="0.8"/>
+    <text x="402" y="81" font-size="10">F6</text>
+    <rect x="92" y="106" width="44" height="44" rx="7" fill="#d8d8d1" stroke="#aeb5b9" stroke-width="0.8"/>
+    <rect x="94" y="104" width="40" height="41" rx="6" fill="#f7f6f1" stroke="#ffffff" stroke-width="0.8"/>
+    <text x="114" y="129" font-size="13">`</text>
+    <rect x="140" y="106" width="44" height="44" rx="7" fill="#d8d8d1" stroke="#aeb5b9" stroke-width="0.8"/>
+    <rect x="142" y="104" width="40" height="41" rx="6" fill="#f7f6f1" stroke="#ffffff" stroke-width="0.8"/>
+    <text x="162" y="129" font-size="13">1</text>
+    <rect x="188" y="106" width="44" height="44" rx="7" fill="#d8d8d1" stroke="#aeb5b9" stroke-width="0.8"/>
+    <rect x="190" y="104" width="40" height="41" rx="6" fill="#f7f6f1" stroke="#ffffff" stroke-width="0.8"/>
+    <text x="210" y="129" font-size="13">2</text>
+    <rect x="236" y="106" width="44" height="44" rx="7" fill="#d8d8d1" stroke="#aeb5b9" stroke-width="0.8"/>
+    <rect x="238" y="104" width="40" height="41" rx="6" fill="#f7f6f1" stroke="#ffffff" stroke-width="0.8"/>
+    <text x="258" y="129" font-size="13">3</text>
+    <rect x="284" y="106" width="44" height="44" rx="7" fill="#d8d8d1" stroke="#aeb5b9" stroke-width="0.8"/>
+    <rect x="286" y="104" width="40" height="41" rx="6" fill="#f7f6f1" stroke="#ffffff" stroke-width="0.8"/>
+    <text x="306" y="129" font-size="13">4</text>
+    <rect x="332" y="106" width="44" height="44" rx="7" fill="#d8d8d1" stroke="#aeb5b9" stroke-width="0.8"/>
+    <rect x="334" y="104" width="40" height="41" rx="6" fill="#f7f6f1" stroke="#ffffff" stroke-width="0.8"/>
+    <text x="354" y="129" font-size="13">5</text>
+    <rect x="380" y="106" width="44" height="44" rx="7" fill="#d8d8d1" stroke="#aeb5b9" stroke-width="0.8"/>
+    <rect x="382" y="104" width="40" height="41" rx="6" fill="#f7f6f1" stroke="#ffffff" stroke-width="0.8"/>
+    <text x="402" y="129" font-size="13">6</text>
+    <rect x="92" y="154" width="68.0" height="44" rx="7" fill="#d8d8d1" stroke="#aeb5b9" stroke-width="0.8"/>
+    <rect x="94" y="152" width="64.0" height="41" rx="6" fill="#f7f6f1" stroke="#ffffff" stroke-width="0.8"/>
+    <text x="126" y="177" font-size="10">tab</text>
+    <rect x="164.0" y="154" width="44" height="44" rx="7" fill="#d8d8d1" stroke="#aeb5b9" stroke-width="0.8"/>
+    <rect x="166.0" y="152" width="40" height="41" rx="6" fill="#f7f6f1" stroke="#ffffff" stroke-width="0.8"/>
+    <text x="186" y="177" font-size="13">Q</text>
+    <rect x="212.0" y="154" width="44" height="44" rx="7" fill="#d8d8d1" stroke="#aeb5b9" stroke-width="0.8"/>
+    <rect x="214.0" y="152" width="40" height="41" rx="6" fill="#f7f6f1" stroke="#ffffff" stroke-width="0.8"/>
+    <text x="234" y="177" font-size="13">W</text>
+    <rect x="260.0" y="154" width="44" height="44" rx="7" fill="#d8d8d1" stroke="#aeb5b9" stroke-width="0.8"/>
+    <rect x="262.0" y="152" width="40" height="41" rx="6" fill="#f7f6f1" stroke="#ffffff" stroke-width="0.8"/>
+    <text x="282" y="177" font-size="13">E</text>
+    <rect x="308.0" y="154" width="44" height="44" rx="7" fill="#d8d8d1" stroke="#aeb5b9" stroke-width="0.8"/>
+    <rect x="310.0" y="152" width="40" height="41" rx="6" fill="#f7f6f1" stroke="#ffffff" stroke-width="0.8"/>
+    <text x="330" y="177" font-size="13">R</text>
+    <rect x="356.0" y="154" width="44" height="44" rx="7" fill="#d8d8d1" stroke="#aeb5b9" stroke-width="0.8"/>
+    <rect x="358.0" y="152" width="40" height="41" rx="6" fill="#f7f6f1" stroke="#ffffff" stroke-width="0.8"/>
+    <text x="378" y="177" font-size="13">T</text>
+    <rect x="92" y="202" width="80.0" height="44" rx="7" fill="#d8d8d1" stroke="#aeb5b9" stroke-width="0.8"/>
+    <rect x="94" y="200" width="76.0" height="41" rx="6" fill="#f7f6f1" stroke="#ffffff" stroke-width="0.8"/>
+    <text x="132" y="225" font-size="10">caps</text>
+    <rect x="176.0" y="202" width="44" height="44" rx="7" fill="#d8d8d1" stroke="#aeb5b9" stroke-width="0.8"/>
+    <rect x="178.0" y="200" width="40" height="41" rx="6" fill="#f7f6f1" stroke="#ffffff" stroke-width="0.8"/>
+    <text x="198" y="225" font-size="13">A</text>
+    <rect x="224.0" y="202" width="44" height="44" rx="7" fill="#d8d8d1" stroke="#aeb5b9" stroke-width="0.8"/>
+    <rect x="226.0" y="200" width="40" height="41" rx="6" fill="#f7f6f1" stroke="#ffffff" stroke-width="0.8"/>
+    <text x="246" y="225" font-size="13">S</text>
+    <rect x="272.0" y="202" width="44" height="44" rx="7" fill="#d8d8d1" stroke="#aeb5b9" stroke-width="0.8"/>
+    <rect x="274.0" y="200" width="40" height="41" rx="6" fill="#f7f6f1" stroke="#ffffff" stroke-width="0.8"/>
+    <text x="294" y="225" font-size="13">D</text>
+    <rect x="320.0" y="202" width="44" height="44" rx="7" fill="#d8d8d1" stroke="#aeb5b9" stroke-width="0.8"/>
+    <rect x="322.0" y="200" width="40" height="41" rx="6" fill="#f7f6f1" stroke="#ffffff" stroke-width="0.8"/>
+    <text x="342" y="225" font-size="13">F</text>
+    <rect x="368.0" y="202" width="44" height="44" rx="7" fill="#d8d8d1" stroke="#aeb5b9" stroke-width="0.8"/>
+    <rect x="370.0" y="200" width="40" height="41" rx="6" fill="#f7f6f1" stroke="#ffffff" stroke-width="0.8"/>
+    <text x="390" y="225" font-size="13">G</text>
+    <rect x="92" y="250" width="104.0" height="44" rx="7" fill="#d8d8d1" stroke="#aeb5b9" stroke-width="0.8"/>
+    <rect x="94" y="248" width="100.0" height="41" rx="6" fill="#f7f6f1" stroke="#ffffff" stroke-width="0.8"/>
+    <text x="144" y="273" font-size="10">shift</text>
+    <rect x="200.0" y="250" width="44" height="44" rx="7" fill="#d8d8d1" stroke="#aeb5b9" stroke-width="0.8"/>
+    <rect x="202.0" y="248" width="40" height="41" rx="6" fill="#f7f6f1" stroke="#ffffff" stroke-width="0.8"/>
+    <text x="222" y="273" font-size="13">Z</text>
+    <rect x="248.0" y="250" width="44" height="44" rx="7" fill="#d8d8d1" stroke="#aeb5b9" stroke-width="0.8"/>
+    <rect x="250.0" y="248" width="40" height="41" rx="6" fill="#f7f6f1" stroke="#ffffff" stroke-width="0.8"/>
+    <text x="270" y="273" font-size="13">X</text>
+    <rect x="296.0" y="250" width="44" height="44" rx="7" fill="#d8d8d1" stroke="#aeb5b9" stroke-width="0.8"/>
+    <rect x="298.0" y="248" width="40" height="41" rx="6" fill="#f7f6f1" stroke="#ffffff" stroke-width="0.8"/>
+    <text x="318" y="273" font-size="13">C</text>
+    <rect x="344.0" y="250" width="44" height="44" rx="7" fill="#d8d8d1" stroke="#aeb5b9" stroke-width="0.8"/>
+    <rect x="346.0" y="248" width="40" height="41" rx="6" fill="#f7f6f1" stroke="#ffffff" stroke-width="0.8"/>
+    <text x="366" y="273" font-size="13">V</text>
+    <rect x="392.0" y="250" width="44" height="44" rx="7" fill="#d8d8d1" stroke="#aeb5b9" stroke-width="0.8"/>
+    <rect x="394.0" y="248" width="40" height="41" rx="6" fill="#f7f6f1" stroke="#ffffff" stroke-width="0.8"/>
+    <text x="414" y="273" font-size="13">B</text>
+    <rect x="92" y="298" width="56.0" height="44" rx="7" fill="#d8d8d1" stroke="#aeb5b9" stroke-width="0.8"/>
+    <rect x="94" y="296" width="52.0" height="41" rx="6" fill="#f7f6f1" stroke="#ffffff" stroke-width="0.8"/>
+    <text x="120" y="321" font-size="13">fn</text>
+    <rect x="152.0" y="298" width="56.0" height="44" rx="7" fill="#d8d8d1" stroke="#aeb5b9" stroke-width="0.8"/>
+    <rect x="154.0" y="296" width="52.0" height="41" rx="6" fill="#f7f6f1" stroke="#ffffff" stroke-width="0.8"/>
+    <text x="180" y="321" font-size="10">ctrl</text>
+    <rect x="212.0" y="298" width="56.0" height="44" rx="7" fill="#d8d8d1" stroke="#aeb5b9" stroke-width="0.8"/>
+    <rect x="214.0" y="296" width="52.0" height="41" rx="6" fill="#f7f6f1" stroke="#ffffff" stroke-width="0.8"/>
+    <text x="240" y="321" font-size="10">option</text>
+    <rect x="272.0" y="298" width="56.0" height="44" rx="7" fill="#d8d8d1" stroke="#aeb5b9" stroke-width="0.8"/>
+    <rect x="274.0" y="296" width="52.0" height="41" rx="6" fill="#f7f6f1" stroke="#ffffff" stroke-width="0.8"/>
+    <text x="300" y="321" font-size="13">⌘</text>
+    <rect x="332.0" y="298" width="104.0" height="44" rx="7" fill="#d8d8d1" stroke="#aeb5b9" stroke-width="0.8"/>
+    <rect x="334.0" y="296" width="100.0" height="41" rx="6" fill="#f7f6f1" stroke="#ffffff" stroke-width="0.8"/>
+  </g>
+</svg>

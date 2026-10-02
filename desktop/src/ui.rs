@@ -1,13 +1,17 @@
 //! Presentation only. Discovery and backup decisions remain in the session.
-use std::{path::PathBuf, sync::Arc, time::Duration};
+use std::{
+    path::PathBuf,
+    sync::{Arc, OnceLock},
+    time::Duration,
+};
 
 use crate::{
     device::{self, Role},
     session::{Session, View},
 };
 use gpui::{
-    App, Context, FocusHandle, Focusable, FontWeight, InteractiveElement, IntoElement,
-    ParentElement, Render, StatefulInteractiveElement, Styled, Task, Window, div,
+    App, Context, FocusHandle, Focusable, FontWeight, Image, ImageFormat, InteractiveElement,
+    IntoElement, ParentElement, Render, StatefulInteractiveElement, Styled, Task, Window, div, img,
     prelude::FluentBuilder, px, rgb,
 };
 use gpuikit::{
@@ -311,55 +315,31 @@ impl Render for Companion {
     }
 }
 
-// An orientation drawing, deliberately separate from any simulated device status.
+// Photo-based orientation sketches; their appearance never represents device status.
 fn keyboard_picture(role: Option<Role>) -> impl IntoElement {
-    let rows: &[&[&str]] = match role {
-        Some(Role::Right) => &[
-            &["F7", "F8", "F9", "F10", "F11", "F12"],
-            &["7", "8", "9", "0", "−", "="],
-            &["Y", "U", "I", "O", "P", "["],
-            &["H", "J", "K", "L", ";", "Enter"],
-            &["N", "M", ",", ".", "/", "Shift"],
-        ],
-        _ => &[
-            &["Esc", "F1", "F2", "F3", "F4", "F5"],
-            &["`", "1", "2", "3", "4", "5"],
-            &["Tab", "Q", "W", "E", "R", "T"],
-            &["Caps", "A", "S", "D", "F", "G"],
-            &["Shift", "Z", "X", "C", "V", "B"],
-        ],
+    static LEFT: OnceLock<Arc<Image>> = OnceLock::new();
+    static RIGHT: OnceLock<Arc<Image>> = OnceLock::new();
+    let sketch = match role {
+        Some(Role::Right) => RIGHT.get_or_init(|| {
+            Arc::new(Image::from_bytes(
+                ImageFormat::Svg,
+                include_bytes!("../assets/nocfree-right.svg").to_vec(),
+            ))
+        }),
+        _ => LEFT.get_or_init(|| {
+            Arc::new(Image::from_bytes(
+                ImageFormat::Svg,
+                include_bytes!("../assets/nocfree-left.svg").to_vec(),
+            ))
+        }),
     };
     div()
         .flex()
         .flex_col()
         .items_center()
-        .gap(px(10.))
-        .py(px(12.))
-        .child(
-            div()
-                .bg(rgb(0xf1f3f5))
-                .rounded(px(14.))
-                .p(px(10.))
-                .flex()
-                .flex_col()
-                .gap(px(5.))
-                .children(rows.iter().map(|row| {
-                    div().flex().gap(px(5.)).children(row.iter().map(|key| {
-                        div()
-                            .w(px(36.))
-                            .h(px(25.))
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .bg(rgb(0xffffff))
-                            .border_1()
-                            .border_color(rgb(0xe3e6ea))
-                            .rounded(px(5.))
-                            .text_size(px(11.))
-                            .child(*key)
-                    }))
-                })),
-        )
+        .gap(px(8.))
+        .py(px(8.))
+        .child(img(sketch.clone()).w(px(320.)).h(px(230.)))
         .child(
             div()
                 .text_size(px(12.))
