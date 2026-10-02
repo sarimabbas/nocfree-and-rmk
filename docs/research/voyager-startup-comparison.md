@@ -1,0 +1,21 @@
+# Voyager RMK startup comparison
+
+Read-only source research, 2026-10-01. No candidate or device changes.
+
+The requested port is [jpds/rmk-zsa-voyager](https://github.com/jpds/rmk-zsa-voyager/tree/69527d634003f7e88fe4d7bfa84431ac5d8e4309), HEAD inspected through the GitHub API. Its [README](https://github.com/jpds/rmk-zsa-voyager/blob/69527d634003f7e88fe4d7bfa84431ac5d8e4309/README.md) identifies GD32F303CB with the STM32F303-compatible Embassy HAL. This is not an nRF52833/Nordic USB driver reference. Its [Cargo manifest](https://github.com/jpds/rmk-zsa-voyager/blob/69527d634003f7e88fe4d7bfa84431ac5d8e4309/Cargo.toml) uses RMK 0.9.0, Embassy STM32 0.6 and the RMK `zsa_voyager_bl` entry feature. Its [memory layout](https://github.com/jpds/rmk-zsa-voyager/blob/69527d634003f7e88fe4d7bfa84431ac5d8e4309/memory.x) reserves an 8-KiB low-flash bootloader and 4-KiB storage, linking application at 0x08002000. Do not transfer that address or its bootloader protection claims to NocFree.
+
+## Transferable lead
+
+The port's [pre-init hook](https://github.com/jpds/rmk-zsa-voyager/blob/69527d634003f7e88fe4d7bfa84431ac5d8e4309/src/main.rs#L96-L114) describes a warm bootloader jump and explicitly sets VTOR, clears BASEPRI, enables normal/fault interrupts, and clears eight NVIC enable/pending banks. This is source evidence of its chosen mitigation, not an independently reproduced NocFree defect or proof every operation is necessary.
+
+NocFree's observed bootloader identifies the Adafruit upstream revision 0147d71, although vendor equivalence is not proven. The matching upstream [handoff](https://github.com/adafruit/Adafruit_nRF52_Bootloader/blob/0147d71e73b9a2c217f56dbc9877d07bb45d6467/lib/sdk11/components/libraries/bootloader_dfu/bootloader_util.c#L66-L104) loads the application's MSP and reset vector and branches. Our earlier [source comparison](lower-layout-startup.md) found NVIC clearing and application VTOR setup, but no explicit normalization of every inherited CPU mask. It also found no source-backed reason to assert an inherited mask defect. The unreadable installed MBR and vendor modifications remain unknowns.
+
+The positive USB-reset callback result does not eliminate that hypothesis: the pinned [Embassy bus poll](https://github.com/embassy-rs/embassy/blob/3861d3088da30d40c777dc05d282352e68ec5511/embassy-nrf/src/usb/mod.rs#L233-L260) checks the latched USBRESET register directly. Later [EP0 setup/data waits](https://github.com/embassy-rs/embassy/blob/3861d3088da30d40c777dc05d282352e68ec5511/embassy-nrf/src/usb/mod.rs#L617-L725) depend on wakers after returning Pending. Reset-stage success is not proof of sustained USBD interrupt delivery.
+
+A second mitigation appears in [USB warm-boot detach](https://github.com/jpds/rmk-zsa-voyager/blob/69527d634003f7e88fe4d7bfa84431ac5d8e4309/src/main.rs#L464-L501): the author reports that the bootloader leaves D+ attached and that USB peripheral power-down/reset alone does not release it. The code gates the GD32 USB clock and temporarily drives PA12 low, holding detach through storage initialization before restoring USB. This addresses the host attempting enumeration before the application is ready. It is a separate source-reported workaround, not a verified Nordic defect. Never copy its GPIO, RCC registers or timing assumptions to nRF52833. The transferable question is whether the Nordic driver reliably removes a bootloader pull-up and prepares EP0 before host requests arrive; compare the pinned driver and bootloader teardown before adding delays or toggling pins.
+
+## Next discriminating comparison
+
+Prefer observing PRIMASK, BASEPRI, FAULTMASK, CONTROL, VTOR, USBD NVIC enable/pending and the first EP0 setup/DMA boundary before changing them. Compare boot-time values with Zephyr's explicit reset initialization and the existing higher-origin working USB diagnostic. Any future experiment should change one variable, retain the current recovery guard, and avoid persistent MBR/UICR changes. Blindly enabling interrupts before clearing inherited sources can introduce a fault; Voyager's exact order is not a generic Nordic recipe.
+
+The GPIO/matrix, animation and wired expander code can inspire framework integration later, but it does not explain this USB-only lower-layout failure. No need to implement those parts to test this lead.
