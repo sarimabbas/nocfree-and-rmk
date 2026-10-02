@@ -1,6 +1,6 @@
 # Full right RMK split trial candidate
 
-Prepared 2026-10-02. The owner approved the scoped trial and the one-shot host transfer completed after fresh right identity and exact baseline checks. Independent recovery/readback and split hardware validation remain pending. The left runs the verified full RMK USB candidate. The saved working right Mac diagnostic and factory backup remain available privately; current right application execution is not yet established.
+Prepared 2026-10-02. The owner approved the scoped trial and the one-shot host transfer completed after fresh right identity and exact baseline checks. Independent recovery/readback, basic split typing and cross-half Shift have passed. The full hardware acceptance remains pending. The left runs the verified full RMK USB candidate. The saved working right Mac diagnostic and factory backup remain available privately; current right application execution is not yet established.
 
 ## Exact candidate
 
@@ -35,3 +35,7 @@ The owner performed the requested OFF/USB-absent-five-seconds/reconnect-while-OF
 After owner-operated battery-first launch, the right remained USB-unplugged while the unchanged left stayed connected. The owner typed `hjkl` using only the right and confirmed it works. A read-only USB inventory verified the full left device present and the right device absent. This establishes the first basic right-to-left RMK BLE split input through left USB on macOS. Cross-half modifiers/layers, simultaneous input, held-key disconnect/rejoin, wake latency, exhaustive mapping and loss-free acceptance remain pending. No additional transfer or factory restoration was needed.
 
 The owner subsequently held Shift on the left while typing `HJKL` on the USB-unplugged right and confirmed it works. This verifies that cross-half Shift combination. Other modifiers/layers and the remaining acceptance conditions above are still pending.
+
+## Final retained-image readback
+
+After the split typing and Shift observations, the owner returned the right to recovery with OFF plus USB absent for five seconds, then reconnected USB while OFF. Fresh same-device identity and exact application/tail/protected-gap gates passed again. Independent offline review confirms the entire exposed readback is byte-identical to the first accepted full-right recovery snapshot. No additional storage changes occurred beyond the previously decoded schema and peer-address records. A final battery-first restart to leave the right running is pending; no further firmware transfer or restore is planned.
