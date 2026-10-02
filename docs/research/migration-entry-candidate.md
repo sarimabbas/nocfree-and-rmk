@@ -1,6 +1,6 @@
 # Left application-entry heartbeat candidate
 
-Prepared 2026-10-01. **Not installed; new hardware trial approval pending.** This first instrumented image tests the application entry stage only. It does not type, initialize clocks, start USB, or run radio tasks. The failed full USB startup remains undiagnosed; see [previous trial](left-migration-trial.md).
+Prepared and trialed 2026-10-01. **Original factory firmware restored and exact full readable restoration verified.** See [entry trial results](migration-entry-trial.md). This first instrumented image tests the application entry stage only. It does not type, initialize clocks, start USB, or run radio tasks. The failed full USB startup remains undiagnosed; see [previous trial](left-migration-trial.md).
 
 ## Single change and source evidence
 
