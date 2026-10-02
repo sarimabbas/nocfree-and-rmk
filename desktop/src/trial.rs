@@ -18,6 +18,7 @@ enum Step {
     BatteryFirst,
     FactoryReturn,
     Wait,
+    Paused,
     Finished,
 }
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
@@ -43,7 +44,11 @@ impl Request {
         }
         if matches!(
             self.step,
-            Step::EnterRecovery | Step::UsbFirst | Step::BatteryFirst | Step::FactoryReturn
+            Step::EnterRecovery
+                | Step::UsbFirst
+                | Step::BatteryFirst
+                | Step::FactoryReturn
+                | Step::Paused
         ) && self.location.is_none()
         {
             return Err("The controller must identify the left USB connection first.".into());
@@ -357,7 +362,7 @@ impl Trial {
                     phase => phase,
                 };
             }
-            Step::Wait => {}
+            Step::Wait | Step::Paused => {}
             Step::Finished => {
                 self.complete = true;
                 self.phase = Phase::Done;
@@ -407,6 +412,11 @@ impl Trial {
             (Step::Finished, _) => (
                 "Startup observation finished".into(),
                 "The controller has finished this trial.".into(),
+                None,
+            ),
+            (Step::Paused, _) => (
+                "Ready for the next test".into(),
+                "Leave the left connected. You do not need to send a message; the next physical step will appear here when ready.".into(),
                 None,
             ),
             (Step::Wait, _) | (_, Phase::Done) => (
@@ -768,5 +778,38 @@ mod tests {
         t.observe_at(Ok(normal()), now + Duration::from_secs(29));
         assert!(t.complete && t.absence_confirmed && t.switch_ack);
         assert_eq!(t.mode, Mode::Factory);
+    }
+    #[test]
+    fn paused_stays_live_without_completion_or_acknowledgment() {
+        let now = Instant::now();
+        let mut t = trial(Step::Paused);
+        t.observe_at(Ok(boot(true, false)), now);
+        assert!(t.fresh);
+        assert_eq!(t.mode, Mode::SerialBootloader);
+        assert!(!t.complete);
+        let view = t.view();
+        assert_eq!(view.title, "Ready for the next test");
+        assert!(!view.finished);
+        assert!(view.ack_label.is_none());
+        t.acknowledge_at(now + Duration::from_secs(100));
+        assert!(!t.complete && !t.switch_ack && !t.absence_confirmed);
+        t.accept_request(request(Step::BatteryFirst, 2)).unwrap();
+        assert!(!t.fresh && !t.complete);
+        assert!(matches!(t.phase, Phase::Initial));
+        t.observe_at(Err("USB unavailable".into()), now);
+        assert!(!t.fresh && !t.complete);
+    }
+    #[test]
+    fn paused_schema_requires_a_bound_connection_and_does_not_mean_finished() {
+        let parsed: Request = serde_json::from_str(
+            r#"{"schema":1,"session":"test","sequence":2,"step":"paused","location":7}"#,
+        )
+        .unwrap();
+        assert!(parsed.validate().is_ok());
+        assert_eq!(parsed.step, Step::Paused);
+        let missing: Request =
+            serde_json::from_str(r#"{"schema":1,"session":"test","sequence":2,"step":"paused"}"#)
+                .unwrap();
+        assert!(missing.validate().is_err());
     }
 }
