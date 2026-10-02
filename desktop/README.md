@@ -34,7 +34,9 @@ cargo fmt --check
 
 Replay tests cover stale/error observations, late mounts, ambiguous bootloaders, changed connections, removal during backup, restart, archive coverage and private saved files. These are host checks. Actual app launch, live observations, physical recovery/readback and device acceptance are separate evidence.
 
-Observed locally on 2026-10-01: the app built and launched, its native window rendered, and the initial UI observed the connected factory left automatically. The simplified UI then launched with a compact single-task layout; its subsequent automatic left-first flow removes role, Details and Save choices. Eleven replay/archive/return-guide tests, strict Clippy checks and formatting passed. Actual recovery-mode archiving through this app is still pending an owner-assisted physical run; previous firmware trial readbacks are separate evidence.
+Observed locally on 2026-10-01: the app built and launched with a compact single-task layout. Its automatic left-first flow removes role, Details and Save choices. Eleven replay/archive/return-guide tests, strict Clippy checks and formatting passed.
+
+The owner then completed the guided left and right copy flow and reported that it was smooth. Independent inspection confirmed that both private archives contain 1,728 valid UF2 blocks covering 0x1000–0x6d000, their hashes match their manifests, and their bytes match the previously verified left factory image and right Mac diagnostic respectively. Directory and file permissions were 0700 and 0600. A subsequent read-only USB inventory observed both normal-mode identities, no NocFree bootloader and no mounted recovery readback. This validates the copy flow on this Mac and these two firmware states. It does not validate firmware installation, restore compatibility, independent cold-start recovery or other operating systems; earlier guarded firmware trials remain separate evidence.
 
 The development bundle currently relies on debug asset loading from the local Cargo source directory. It is suitable on this Mac; a portable newcomer download needs embedded assets or a release build, signing/notarization and its own installation tests.
 
