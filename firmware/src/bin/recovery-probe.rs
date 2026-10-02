@@ -1,6 +1,38 @@
 #![no_std]
 #![no_main]
 
+// This variant observes application entry, not USB or typing behavior. The runtime
+// sets VTOR before calling __pre_init; this hook immediately returns to the existing
+// bootloader. Assembly avoids using Rust statics before data/BSS initialization.
+// nrf-pac 0.4.0: POWER.GPREGRET = 0x40000000 + 0x51c.
+// cortex-m 0.7.9 SCB::sys_reset: preserve AIRCR.PRIGROUP and surround reset with DSB.
+#[cfg(feature = "migration-entry-probe")]
+core::arch::global_asm!(
+    ".pushsection .text.__pre_init,\"ax\",%progbits",
+    ".balign 2",
+    ".global __pre_init",
+    ".type __pre_init,%function",
+    ".thumb_func",
+    "__pre_init:",
+    "ldr r0, =0x4000051c",
+    "movs r1, #0x57",
+    "str r1, [r0]",
+    "dsb",
+    "ldr r0, =0xe000ed0c",
+    "ldr r1, [r0]",
+    "ldr r2, =0x700",
+    "ands r1, r2",
+    "ldr r2, =0x05fa0004",
+    "orrs r1, r2",
+    "str r1, [r0]",
+    "dsb",
+    "1:",
+    "b 1b",
+    ".size __pre_init, .-__pre_init",
+    ".ltorg",
+    ".popsection",
+);
+
 #[cfg(all(
     not(feature = "migration-probe"),
     any(not(feature = "right"), feature = "left", feature = "receiver")

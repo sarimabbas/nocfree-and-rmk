@@ -33,5 +33,7 @@ cargo fmt --manifest-path firmware/Cargo.toml -- --check
     done
     cargo build --locked --release --bin recovery-probe --target thumbv7em-none-eabihf \
         --no-default-features --features left,migration-probe || failed=1
+    cargo build --locked --release --bin recovery-probe --target thumbv7em-none-eabihf \
+        --no-default-features --features left,migration-entry-probe || failed=1
     exit "$failed"
 )

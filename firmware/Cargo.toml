@@ -26,6 +26,8 @@ usb-recovery-first = []
 recovery-probe = ["dep:embassy-usb", "rmk/adafruit_bl"]
 # Left-only lower-layout trial, reusing the USB recovery probe without radio tasks.
 migration-probe = ["recovery-probe", "reclaimed-softdevice", "usb-recovery-first"]
+# Left-only reset-entry heartbeat; returns to existing DFU before RAM initialization.
+migration-entry-probe = ["migration-probe"]
 # Right-local USB typing diagnostic, with independent CDC update entry.
 input-probe = ["dep:embassy-usb", "rmk/adafruit_bl"]
 left = ["rmk/split", "rmk/dongle", "rmk/adafruit_bl"]
