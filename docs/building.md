@@ -14,7 +14,7 @@ For an individual role, run from `firmware/` so Cargo finds the target flags and
 
 ```sh
 cd firmware
-cargo build --locked --release --no-default-features --features right
+cargo build --locked --release --no-default-features --features defmt-logging,right
 ```
 
 Supported roles are `left`, `right`, and `receiver`; select exactly one. There is no Cargo flash runner. Builds use application flash `0x27000..0x65000`, settings `0x65000..0x6d000` and RAM `0x20008000..0x20020000`, preserving the inferred factory filesystem and bootloader plus the known warm-reset RAM location.
@@ -50,3 +50,9 @@ Development omits web/Vial remapping, custom message transport, combos, forks, M
 The host scanner tests validate I²C input configuration, polarity, mapping uniqueness, full snapshots, partial-read failure isolation and repeated electrical transitions. They do not exercise physical wiring, RMK debounce timing, radio reliability or OS HID behavior. See [acceptance](acceptance.md) for those gates.
 
 The harness also builds the separate right-only `input-probe` with features `right,input-probe,usb-recovery-first`. It adds RMK USB typing and the existing scanner while preserving the independent CDC updater, resident S140 and bootloader marker. See [its exact candidate and pending hardware trial](input-probe.md). When preparing a serial update, pass both its UF2 and ZIP to `scripts/image_guard.py --image PATH --serial-package ZIP`; this checks that the application-only legacy package matches the guarded payload and safe erase extent. Packaging and successful checks never authorize a device write.
+
+### Diagnostic logging
+
+Normal builds enable `defmt-logging` by default. Commands using `--no-default-features` must explicitly include `defmt-logging` to retain RTT logging. Earlier research build commands document their original revision. The optional left-only `usb-log` mode replaces RMK RTT logging with the framework CDC logger; use `--no-default-features` and include `usb-log` instead of `defmt-logging`. Warning-level captures are private: they can include device identities and cryptographic error values. The diagnostic omits Info/Debug/Trace events, including normal connection/encryption milestones and pairing-code prompts. This does not capture a panic after interrupts are disabled, and adding a logger is not hardware validation or approval to install an image.
+
+Changing RMK logging features changes its storage schema hash. On startup, RMK can erase/reinitialize its settings region, including split peer addresses and host bonds. This diagnostic is therefore not a settings-preserving update and is not approved for installation. Returning to the previous logging feature set can cause another schema reset.

@@ -20,24 +20,24 @@ cargo fmt --manifest-path firmware/Cargo.toml -- --check
     for keymap_features in "" ",mac-keymap"; do
         for role in left right receiver; do
             cargo build --locked --release --bin nocfree-rmk --target thumbv7em-none-eabihf \
-                --no-default-features --features "$role$layout_features$keymap_features" || failed=1
+                --no-default-features --features "defmt-logging,$role$layout_features$keymap_features" || failed=1
         done
     done
     cargo build --locked --release --bin recovery-probe --target thumbv7em-none-eabihf \
-        --no-default-features --features right,recovery-probe,usb-recovery-first || failed=1
+        --no-default-features --features defmt-logging,right,recovery-probe,usb-recovery-first || failed=1
     for probe_role in left right; do
         for keymap_features in "" ",mac-keymap"; do
             cargo build --locked --release --bin input-probe --target thumbv7em-none-eabihf \
-                --no-default-features --features "$probe_role,input-probe,usb-recovery-first$keymap_features" || failed=1
+                --no-default-features --features "defmt-logging,$probe_role,input-probe,usb-recovery-first$keymap_features" || failed=1
         done
     done
     cargo build --locked --release --bin recovery-probe --target thumbv7em-none-eabihf \
-        --no-default-features --features left,migration-probe || failed=1
+        --no-default-features --features defmt-logging,left,migration-probe || failed=1
     cargo build --locked --release --bin recovery-probe --target thumbv7em-none-eabihf \
-        --no-default-features --features left,migration-entry-probe || failed=1
+        --no-default-features --features defmt-logging,left,migration-entry-probe || failed=1
     for stage in runtime hal hal-serial usb-build-serial hal-neutral usb-enabled-serial usb-configured-serial usb-reset-serial usb-addressed-serial; do
         cargo build --locked --release --bin recovery-probe --target thumbv7em-none-eabihf \
-            --no-default-features --features "left,migration-$stage-probe" || failed=1
+            --no-default-features --features "defmt-logging,left,migration-$stage-probe" || failed=1
     done
     exit "$failed"
 )

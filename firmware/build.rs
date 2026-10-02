@@ -1,4 +1,15 @@
 fn main() {
+    if std::env::var_os("CARGO_FEATURE_USB_LOG").is_some() {
+        assert!(
+            std::env::var_os("CARGO_FEATURE_LEFT").is_some()
+                && std::env::var_os("CARGO_FEATURE_RIGHT").is_none()
+                && std::env::var_os("CARGO_FEATURE_RECEIVER").is_none(),
+            "The USB logging diagnostic requires only the left role"
+        );
+    }
+    for feature in ["USB_LOG", "LEFT", "RIGHT", "RECEIVER"] {
+        println!("cargo:rerun-if-env-changed=CARGO_FEATURE_{feature}");
+    }
     let out = std::path::PathBuf::from(std::env::var_os("OUT_DIR").unwrap());
     let layout = if std::env::var_os("CARGO_FEATURE_RECLAIMED_SOFTDEVICE").is_some() {
         println!(
