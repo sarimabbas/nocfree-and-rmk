@@ -19,7 +19,8 @@ const _: () = assert!(
         + cfg!(feature = "migration-usb-build-serial-probe") as usize
         + cfg!(feature = "migration-hal-neutral-probe") as usize
         + cfg!(feature = "migration-usb-enabled-serial-probe") as usize
-        + cfg!(feature = "migration-usb-configured-serial-probe") as usize)
+        + cfg!(feature = "migration-usb-configured-serial-probe") as usize
+        + cfg!(feature = "migration-usb-reset-serial-probe") as usize)
         <= 1,
     "Select at most one migration startup stage"
 );
@@ -121,7 +122,8 @@ bind_interrupts!(struct Irqs {
     feature = "migration-usb-build-serial-probe",
     feature = "migration-hal-neutral-probe",
     feature = "migration-usb-enabled-serial-probe",
-    feature = "migration-usb-configured-serial-probe"
+    feature = "migration-usb-configured-serial-probe",
+    feature = "migration-usb-reset-serial-probe"
 ))]
 fn return_to_bootloader(request: u32) -> ! {
     // nrf-pac 0.4.0: POWER.GPREGRET = 0x40000000 + 0x51c.
@@ -134,15 +136,22 @@ fn return_to_bootloader(request: u32) -> ! {
 // The handler lives in main's future for the same lifetime as the built device.
 #[cfg(any(
     feature = "migration-usb-enabled-serial-probe",
-    feature = "migration-usb-configured-serial-probe"
+    feature = "migration-usb-configured-serial-probe",
+    feature = "migration-usb-reset-serial-probe"
 ))]
 struct UsbStageHandler;
 
 #[cfg(any(
     feature = "migration-usb-enabled-serial-probe",
-    feature = "migration-usb-configured-serial-probe"
+    feature = "migration-usb-configured-serial-probe",
+    feature = "migration-usb-reset-serial-probe"
 ))]
 impl embassy_usb::Handler for UsbStageHandler {
+    #[cfg(feature = "migration-usb-reset-serial-probe")]
+    fn reset(&mut self) {
+        return_to_bootloader(0x4e);
+    }
+
     #[cfg(feature = "migration-usb-enabled-serial-probe")]
     fn enabled(&mut self, enabled: bool) {
         if enabled {
@@ -194,7 +203,8 @@ async fn main(_spawner: Spawner) {
     let mut state = State::new();
     #[cfg(any(
         feature = "migration-usb-enabled-serial-probe",
-        feature = "migration-usb-configured-serial-probe"
+        feature = "migration-usb-configured-serial-probe",
+        feature = "migration-usb-reset-serial-probe"
     ))]
     let mut stage_handler = UsbStageHandler;
     let mut builder = Builder::new(
@@ -207,7 +217,8 @@ async fn main(_spawner: Spawner) {
     );
     #[cfg(any(
         feature = "migration-usb-enabled-serial-probe",
-        feature = "migration-usb-configured-serial-probe"
+        feature = "migration-usb-configured-serial-probe",
+        feature = "migration-usb-reset-serial-probe"
     ))]
     builder.handler(&mut stage_handler);
     let cdc = CdcAcmClass::new(&mut builder, &mut state, 64);

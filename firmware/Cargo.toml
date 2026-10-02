@@ -38,6 +38,7 @@ migration-usb-build-serial-probe = ["migration-probe"]
 migration-hal-neutral-probe = ["migration-probe"]
 migration-usb-enabled-serial-probe = ["migration-probe"]
 migration-usb-configured-serial-probe = ["migration-probe"]
+migration-usb-reset-serial-probe = ["migration-probe"]
 # Right-local USB typing diagnostic, with independent CDC update entry.
 input-probe = ["dep:embassy-usb", "rmk/adafruit_bl"]
 left = ["rmk/split", "rmk/dongle", "rmk/adafruit_bl"]

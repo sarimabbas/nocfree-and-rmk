@@ -22,6 +22,7 @@ fn main() {
         || std::env::var_os("CARGO_FEATURE_MIGRATION_HAL_NEUTRAL_PROBE").is_some()
         || std::env::var_os("CARGO_FEATURE_MIGRATION_USB_ENABLED_SERIAL_PROBE").is_some()
         || std::env::var_os("CARGO_FEATURE_MIGRATION_USB_CONFIGURED_SERIAL_PROBE").is_some()
+        || std::env::var_os("CARGO_FEATURE_MIGRATION_USB_RESET_SERIAL_PROBE").is_some()
     {
         memory.push_str(&std::fs::read_to_string("migration-diagnostic.x").unwrap());
     }
@@ -38,6 +39,7 @@ fn main() {
     println!("cargo:rerun-if-env-changed=CARGO_FEATURE_MIGRATION_HAL_NEUTRAL_PROBE");
     println!("cargo:rerun-if-env-changed=CARGO_FEATURE_MIGRATION_USB_ENABLED_SERIAL_PROBE");
     println!("cargo:rerun-if-env-changed=CARGO_FEATURE_MIGRATION_USB_CONFIGURED_SERIAL_PROBE");
+    println!("cargo:rerun-if-env-changed=CARGO_FEATURE_MIGRATION_USB_RESET_SERIAL_PROBE");
     println!("cargo:rerun-if-env-changed=CARGO_FEATURE_USB_RECOVERY_FIRST");
     println!("cargo:rerun-if-env-changed=CARGO_FEATURE_RECLAIMED_SOFTDEVICE");
 }
