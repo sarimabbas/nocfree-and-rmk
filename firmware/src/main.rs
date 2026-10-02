@@ -129,7 +129,7 @@ async fn main(spawner: Spawner) {
         product_name: if cfg!(feature = "receiver") {
             "NocFree AND RMK Receiver"
         } else {
-            "NocFree AND RMK Left"
+            "NocFree RMK Left"
         },
         ..Default::default()
     };
