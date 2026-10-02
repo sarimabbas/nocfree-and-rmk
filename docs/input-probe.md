@@ -16,6 +16,10 @@ Independent implementation/review and before/after host harnesses passed: 39 hos
 - BIN: `dde9741ae4e52ccfc0b1b20a90ee97fd4cd626df1fc90aa9d5829babcd921946`.
 - Serial ZIP: `958b90df490ffa9e66795bdfdcd7563e306071ab96e3a3c2c1a271e635598ff5`.
 
+The clock-corrected candidate is now installed within the ongoing owner-authorized right trial. Its USB greeting passed, software update entry returned to the same bootloader, and exact readback verified the application, erased tail, unchanged S140 and unchanged readable flash above `0x36000`. Full readable UF2 SHA-256 is `a1c5eebc633016e5c36a7eeac5465ac893a09c25475631d466574c6b3824d7eb`. Battery-first startup and physical input are still pending.
+
+The initial short 1200-baud open/close did not trigger update mode. A deliberate sequence succeeded: open at 115200 with DTR high, wait 200 ms, change to 1200, deassert DTR, keep open 800 ms, then close. Embassy CDC notifications include both line coding and DTR changes but coalesce into the latest state; the failed short request does not establish a missing firmware handler. Use explicit host control sequencing for future trials. Private corrected-image records are in `.evidence/trial-input-right/hfclk/`.
+
 The original packaged diagnostic and restore artifacts remain unchanged for rollback. The following initial image hashes/results describe the earlier trial; clock-corrected hardware results will be recorded separately.
 
 ## Observed trial results
