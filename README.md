@@ -12,6 +12,8 @@ The nRF52833 boards read switches through PCA9555 I²C expanders. One small scan
 
 - A later [entry-only probe trial](docs/research/migration-entry-trial.md) returned to bootloader after controlled battery-first startup, consistent with early entry, though hook execution itself remains unproven and HAL/USB runtime remains unvalidated. A subsequent [runtime/HAL trial](docs/research/runtime-hal-trial.md) also observed bootloader reappearance after both controlled launch sequences, with exact readbacks; stage execution remains unproven. Exact complete factory restoration and final normal startup passed again. Current hardware: left factory firmware, right Mac USB diagnostic, receiver untouched.
 
+- Two [serial-mode stage candidates](docs/research/serial-stage-candidates.md) are prepared and independently reviewed: after HAL initialization and after USB construction. They seek a distinct CDC-only bootloader observation to improve the startup experiment. Both are limited to three pages; neither is installed or approved for a device trial. Full-left startup remains unresolved.
+
 - The left USB diagnostic passed identity/greeting, exact readback, physical USB-first recovery, battery-first startup, exact factory restoration and diagnostic reinstallation. Final startup and owner-reported typing, Shift, Space and Tab passed; the complete acceptance sweep remains pending; see [left trial](docs/left-input-probe.md).
 - Factory 1200-baud bootloader entry and return after reconnect verified without writing firmware. That entry exposed CDC serial, not a UF2 drive.
 - Factory Fn+5 entry exposes a UF2 drive; its SoftDevice/application readback is saved locally and hash-verified. It does not back up the bootloader or filesystem.
