@@ -8,6 +8,7 @@ use std::{
 use crate::{
     device::{self, Role},
     session::{Session, View},
+    trial::{Trial, TrialView},
 };
 use gpui::{
     App, Context, FocusHandle, Focusable, FontWeight, Image, ImageFormat, InteractiveElement,
@@ -25,6 +26,9 @@ pub struct Companion {
     view: View,
     role: Option<Role>,
     started: bool,
+    trial_available: bool,
+    trial: Option<Trial>,
+    trial_view: Option<TrialView>,
     busy: bool,
     left_backup: Option<PathBuf>,
     copies_folder: Option<PathBuf>,
@@ -54,16 +58,61 @@ impl Companion {
         let session = Session::new();
         let view = session.view();
         let poll = cx.spawn(async move |this, cx| {
+            let available = cx
+                .background_executor()
+                .spawn(async { Trial::available() })
+                .await;
+            if this
+                .update(cx, |this, cx| {
+                    this.trial_available = available;
+                    cx.notify();
+                })
+                .is_err()
+            {
+                return;
+            }
+
             loop {
-                let state = this.update(cx, |this, _| (this.started, this.completed));
-                match state {
-                    Ok((_, true)) | Err(_) => break,
-                    Ok((false, false)) => {
+                let state = this.update(cx, |this, cx| {
+                    let trial = this.trial.take();
+                    if trial.is_some() {
+                        cx.notify();
+                    }
+                    (
+                        this.started,
+                        this.completed,
+                        this.trial_view.is_some(),
+                        trial,
+                    )
+                });
+                let trial = match state {
+                    Ok((_, true, _, _)) | Err(_) => break,
+                    Ok((false, false, _, _)) | Ok((true, false, true, None)) => {
                         let timer = cx.background_executor().timer(Duration::from_secs(1));
                         timer.await;
                         continue;
                     }
-                    Ok((true, false)) => {}
+                    Ok((true, false, _, trial)) => trial,
+                };
+                if let Some(mut trial) = trial {
+                    let trial = cx
+                        .background_executor()
+                        .spawn(async move {
+                            trial.observe(device::discover());
+                            trial
+                        })
+                        .await;
+                    let running = this.update(cx, |this, cx| {
+                        this.accept_trial(trial);
+                        cx.notify();
+                        !this.completed
+                    });
+                    if !matches!(running, Ok(true)) {
+                        break;
+                    }
+                    let timer = cx.background_executor().timer(Duration::from_secs(1));
+                    timer.await;
+                    continue;
                 }
                 let result = cx
                     .background_executor()
@@ -97,6 +146,9 @@ impl Companion {
             view,
             role: None,
             started: false,
+            trial_available: false,
+            trial: None,
+            trial_view: None,
             busy: false,
             left_backup: None,
             copies_folder: None,
@@ -108,8 +160,61 @@ impl Companion {
         }
     }
 
+    fn accept_trial(&mut self, trial: Trial) {
+        let view = trial.view();
+        self.completed = view.finished;
+        self.trial_view = Some(view);
+        self.trial = Some(trial);
+    }
+
+    fn start_trial(&mut self, cx: &mut Context<Self>) {
+        if self.started || self.busy {
+            return;
+        }
+        self.busy = true;
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            let result = cx.background_executor().spawn(async { Trial::new() }).await;
+            let _ = this.update(cx, |this, cx| {
+                this.busy = false;
+                match result {
+                    Ok(trial) => {
+                        this.accept_trial(trial);
+                        this.role = Some(Role::Left);
+                        this.started = true;
+                        this.message = None;
+                    }
+                    Err(error) => this.message = Some(error),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    fn acknowledge_trial(&mut self, cx: &mut Context<Self>) {
+        let Some(mut trial) = self.trial.take() else {
+            return;
+        };
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            let trial = cx
+                .background_executor()
+                .spawn(async move {
+                    trial.acknowledge();
+                    trial
+                })
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                this.accept_trial(trial);
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
     fn start_copies(&mut self, cx: &mut Context<Self>) {
-        if self.started {
+        if self.started || self.busy {
             return;
         }
         let mut session = Session::new();
@@ -233,6 +338,12 @@ impl Focusable for Companion {
 
 impl Render for Companion {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let trial_view = self.trial_view.as_ref().map(|view| TrialView {
+            title: view.title.clone(),
+            instruction: view.instruction.clone(),
+            ack_label: view.ack_label,
+            finished: view.finished,
+        });
         let title = if self.completed {
             "Your firmware copies are saved".into()
         } else if self.stopped {
@@ -305,7 +416,7 @@ impl Render for Companion {
                                         .child("Copies may include custom firmware. Restore is not available yet."),
                                 )
                                 .child(div().flex().pt(px(4.)).child(
-                                    button("start-copies", "Save firmware copies").on_click(
+                                    button("start-copies", "Save firmware copies").disabled(self.busy).on_click(
                                         cx.listener(|this, _, _, cx| this.start_copies(cx)),
                                     ),
                                 )),
@@ -330,10 +441,21 @@ impl Render for Companion {
                                         .line_height(px(21.))
                                         .child("A factory backup comes first."),
                                 )
+                                .when(self.trial_available, |section| section.child(
+                                    div().text_size(px(13.)).line_height(px(19.)).text_color(rgb(0x626870))
+                                        .child("Developer test. Factory firmware is restored afterward.")))
                                 .child(div().flex().pt(px(4.)).child(
-                                    button("install-unavailable", "Coming soon").disabled(true),
+                                    if self.trial_available {
+                                        button("start-trial", "Run startup test").disabled(self.busy).on_click(
+                                            cx.listener(|this, _, _, cx| this.start_trial(cx)),
+                                        )
+                                    } else {
+                                        button("install-unavailable", "Coming soon").disabled(true)
+                                    },
                                 )),
                         )
+                        .when_some(self.message.clone(), |column, message| column.child(
+                            div().text_size(px(13.)).line_height(px(19.)).child(message)))
                         .child(
                             div()
                                 .text_size(px(12.))
@@ -342,7 +464,19 @@ impl Render for Companion {
                         ),
                 )
             })
-            .when(self.started, |root| {
+            .when_some(trial_view, |root, view| root.child(
+                div().w_full().max_w(px(500.)).p(px(32.)).flex().flex_col()
+                    .items_center().gap(px(16.))
+                    .child(div().text_size(px(14.)).font_weight(FontWeight::SEMIBOLD)
+                        .text_color(rgb(0x626870)).child("RMK startup test"))
+                    .child(keyboard_picture(Some(Role::Left)))
+                    .child(div().w_full().text_center().text_size(px(27.))
+                        .font_weight(FontWeight::SEMIBOLD).child(view.title))
+                    .child(div().w_full().text_center().line_height(px(23.)).child(view.instruction))
+                    .when_some(view.ack_label, |column, label| column.child(
+                        button("trial-acknowledge", label).disabled(self.trial.is_none())
+                            .on_click(cx.listener(|this, _, _, cx| this.acknowledge_trial(cx)))))))
+            .when(self.started && self.trial_view.is_none(), |root| {
                 root.child(
                     div()
                         .w_full()

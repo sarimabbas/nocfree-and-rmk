@@ -8,6 +8,8 @@ Photo-based SVG illustrations preserve each half's staggered outline, key widths
 
 The Dock icon uses an independently drawn white ampersand on blue, rather than the manufacturer's logo. The macOS build renders its SVG source into the standard ICNS sizes and bundles it before signing; generated icon files stay out of Git. Rendering uses Apple's Quick Look, Swift command-line tools, `sips` and `iconutil`.
 
+An owner-approved developer startup trial can expose **Run startup test** under the RMK journey. Its read-only guide shows one cable/switch action at a time, times waits from observed USB absence, and asks for switch acknowledgments that USB cannot detect. A private, session/sequence-bound host request selects the step; the app publishes private observation status. All discovery and file work runs off the UI thread. The app does not transfer firmware. The separate controller must independently validate device identity, approved images and readbacks, and confirm exact factory restoration before attesting completion. This local developer guide is not a production RMK installer.
+
 This version recognizes the ANSI factory left and this project's Mac USB diagnostic on the right. Receiver support, factory-right onboarding and Windows/Linux discovery are pending. The prescribed physical role and USB connection are correlated; identity alone does not prove the role, independent recovery, or restore compatibility. The app asks for the dongle to remain disconnected because it shares the factory left's identity.
 
 ## Run
@@ -39,6 +41,8 @@ cargo fmt --check
 ```
 
 Replay tests cover stale/error observations, late mounts, ambiguous bootloaders, changed connections, removal during backup, restart, archive coverage and private saved files. These are host checks. Actual app launch, live observations, physical recovery/readback and device acceptance are separate evidence.
+
+The developer guide adds seven replay/schema tests for switch acknowledgments, observed-absence deadlines, premature USB reconnection, wrong ports, observation errors and stale/restarted requests. All eighteen companion tests, strict Clippy checks and formatting passed; the new physical trial remains separate hardware work. The updated app was launched and its single-action startup screen was inspected on this Mac; no trial transfer has occurred.
 
 Observed locally on 2026-10-01: the app built and launched with a compact single-task layout. Its automatic left-first flow removes role, Details and Save choices. Eleven replay/archive/return-guide tests, strict Clippy checks and formatting passed.
 

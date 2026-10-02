@@ -1,0 +1,772 @@
+//! Owner-guided startup observations. The controller owns all approved transfers;
+//! this module only observes USB and writes private host-side status files.
+use crate::device::{self, Role, Snapshot};
+use serde::{Deserialize, Serialize};
+use std::{
+    fs,
+    io::Write,
+    path::{Path, PathBuf},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+};
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+enum Step {
+    ConnectLeft,
+    EnterRecovery,
+    UsbFirst,
+    BatteryFirst,
+    FactoryReturn,
+    Wait,
+    Finished,
+}
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+struct Request {
+    schema: u32,
+    session: String,
+    sequence: u64,
+    step: Step,
+    location: Option<u64>,
+}
+impl Request {
+    fn validate(&self) -> Result<(), String> {
+        if self.schema != 1
+            || self.session.is_empty()
+            || self.session.len() > 128
+            || !self
+                .session
+                .bytes()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, b'-' | b'_'))
+        {
+            return Err("The startup trial instructions are invalid. Wait for the controller to correct them.".into());
+        }
+        if matches!(
+            self.step,
+            Step::EnterRecovery | Step::UsbFirst | Step::BatteryFirst | Step::FactoryReturn
+        ) && self.location.is_none()
+        {
+            return Err("The controller must identify the left USB connection first.".into());
+        }
+        Ok(())
+    }
+}
+#[derive(Clone, Copy, Debug)]
+enum Phase {
+    Initial,
+    Unplug,
+    OffWait(Instant),
+    Bluetooth,
+    StartWait(Instant),
+    Reconnect,
+    Done,
+}
+#[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+enum Mode {
+    SerialBootloader,
+    MscBootloader,
+    Factory,
+    Other,
+    Absent,
+}
+#[derive(Serialize)]
+struct Status<'a> {
+    schema: u32,
+    session: &'a str,
+    sequence: u64,
+    step: Step,
+    complete: bool,
+    location: Option<u64>,
+    observed_mode: Mode,
+    usb_absence_confirmed: bool,
+    switch_ack: bool,
+    observed_at_unix_ms: u128,
+    observation_valid: bool,
+}
+pub struct TrialView {
+    pub title: String,
+    pub instruction: String,
+    pub ack_label: Option<&'static str>,
+    pub finished: bool,
+}
+pub struct Trial {
+    directory: PathBuf,
+    request: Request,
+    phase: Phase,
+    location: Option<u64>,
+    mode: Mode,
+    complete: bool,
+    absence_confirmed: bool,
+    switch_ack: bool,
+    fresh: bool,
+    problem: Option<String>,
+}
+impl Trial {
+    pub fn available() -> bool {
+        directory().is_ok_and(|path| path.join("request.json").is_file())
+    }
+    pub fn new() -> Result<Self, String> {
+        let directory = directory()?;
+        let request = read_request(&directory)?;
+        Ok(Self::from_request(directory, request))
+    }
+    fn from_request(directory: PathBuf, request: Request) -> Self {
+        Self {
+            location: request.location,
+            directory,
+            request,
+            phase: Phase::Initial,
+            mode: Mode::Absent,
+            complete: false,
+            absence_confirmed: false,
+            switch_ack: false,
+            fresh: false,
+            problem: None,
+        }
+    }
+    fn accept_request(&mut self, request: Request) -> Result<(), String> {
+        request.validate()?;
+        if request.session == self.request.session {
+            if request.sequence < self.request.sequence {
+                return Err(
+                    "Older startup instructions were received. Wait for the controller.".into(),
+                );
+            }
+            if request.sequence == self.request.sequence && request != self.request {
+                return Err(
+                    "Startup instructions changed without a new step. Wait for the controller."
+                        .into(),
+                );
+            }
+        }
+        if request != self.request {
+            *self = Self::from_request(self.directory.clone(), request);
+        }
+        Ok(())
+    }
+    pub fn observe(&mut self, snapshot: Result<Snapshot, String>) {
+        match read_request(&self.directory).and_then(|request| self.accept_request(request)) {
+            Ok(()) => self.observe_at(snapshot, Instant::now()),
+            Err(error) => self.invalidate(error),
+        }
+        self.publish_or_stop();
+    }
+    fn invalidate(&mut self, error: String) {
+        self.phase = Phase::Initial;
+        self.complete = false;
+        self.absence_confirmed = false;
+        self.switch_ack = false;
+        self.fresh = false;
+        self.problem = Some(error);
+    }
+    fn observe_at(&mut self, snapshot: Result<Snapshot, String>, now: Instant) {
+        self.fresh = false;
+        self.complete = false;
+        let snapshot = match snapshot {
+            Ok(snapshot) => snapshot,
+            Err(_) => {
+                self.invalidate(
+                    "USB could not be checked. Keep the keyboard connected while we retry.".into(),
+                );
+                return;
+            }
+        };
+        let bootloaders: Vec<_> = snapshot
+            .devices
+            .iter()
+            .filter(|d| d.vendor == 0x239a && matches!(d.product, 0x29 | 0x2a))
+            .collect();
+        if bootloaders.len() > 1 || snapshot.mounts.len() > 1 {
+            self.invalidate(
+                "More than one recovery device is connected. Leave only the left half connected."
+                    .into(),
+            );
+            return;
+        }
+        if self.request.step == Step::ConnectLeft {
+            let candidates: Vec<_> = snapshot
+                .devices
+                .iter()
+                .filter(|d| d.role() == Some(Role::Left))
+                .collect();
+            if candidates.len() > 1 {
+                self.invalidate(
+                    "Leave the dongle disconnected and connect only the left half.".into(),
+                );
+                return;
+            }
+            if let Some(candidate) = candidates
+                .first()
+                .filter(|_| bootloaders.is_empty() && snapshot.mounts.is_empty())
+            {
+                if self
+                    .request
+                    .location
+                    .is_some_and(|location| location != candidate.location)
+                {
+                    self.invalidate("Use the left half's original USB connection.".into());
+                    return;
+                }
+                self.location = Some(candidate.location);
+                self.mode = Mode::Factory;
+                self.fresh = true;
+                self.problem = None;
+                self.complete = true;
+                self.phase = Phase::Done;
+            } else {
+                self.mode = Mode::Absent;
+                self.fresh = true;
+                self.problem = None;
+                self.phase = Phase::Initial;
+            }
+            return;
+        }
+        if matches!(self.request.step, Step::Wait | Step::Finished) {
+            self.fresh = true;
+            self.problem = None;
+            self.complete = self.request.step == Step::Finished;
+            return;
+        }
+        if snapshot
+            .devices
+            .iter()
+            .any(|d| d.role() == Some(Role::Left) && Some(d.location) != self.location)
+        {
+            self.invalidate(
+                "The left half is on a different USB connection. Reconnect it where it was.".into(),
+            );
+            return;
+        }
+        if bootloaders
+            .first()
+            .is_some_and(|d| Some(d.location) != self.location)
+        {
+            self.invalidate("The recovery device moved to a different USB connection. Reconnect the left half where it was.".into());
+            return;
+        }
+        let present: Vec<_> = snapshot
+            .devices
+            .iter()
+            .filter(|d| Some(d.location) == self.location)
+            .collect();
+        if present.len() > 1 {
+            self.invalidate(
+                "The USB connection is ambiguous. Disconnect other recovery devices.".into(),
+            );
+            return;
+        }
+        self.mode = match present.first() {
+            Some(d) if d.vendor == 0x239a && d.product == 0x2a => Mode::SerialBootloader,
+            Some(d) if d.bootloader() => Mode::MscBootloader,
+            Some(d) if d.role() == Some(Role::Left) => Mode::Factory,
+            Some(_) => Mode::Other,
+            None => Mode::Absent,
+        };
+        let valid_mount = snapshot.mounts.len() == 1
+            && snapshot.mounts[0]
+                .info
+                .lines()
+                .map(str::trim)
+                .any(|line| line == "UF2 Bootloader 0.9.2-39-g0147d71")
+            && snapshot.mounts[0]
+                .info
+                .lines()
+                .map(str::trim)
+                .any(|line| line == "Model: NocFree &");
+        // An orphaned volume is not evidence that the selected USB device disappeared.
+        if self.mode == Mode::Absent && !snapshot.mounts.is_empty() {
+            self.invalidate(
+                "Waiting for the recovery drive to disappear completely. Check the left USB cable."
+                    .into(),
+            );
+            return;
+        }
+        self.fresh = true;
+        self.problem = None;
+        match self.request.step {
+            Step::EnterRecovery => {
+                self.complete = self.mode == Mode::MscBootloader && valid_mount;
+                self.phase = if self.complete {
+                    Phase::Done
+                } else {
+                    Phase::Initial
+                };
+                if self.mode == Mode::MscBootloader && !snapshot.mounts.is_empty() && !valid_mount {
+                    self.invalidate("The recovery drive has unfamiliar metadata. Wait for the controller to inspect it.".into());
+                }
+            }
+            Step::UsbFirst | Step::BatteryFirst | Step::FactoryReturn => {
+                self.phase = match self.phase {
+                    Phase::Unplug if self.mode == Mode::Absent => {
+                        self.absence_confirmed = true;
+                        Phase::OffWait(now)
+                    }
+                    Phase::OffWait(_) | Phase::Bluetooth | Phase::StartWait(_)
+                        if self.mode != Mode::Absent =>
+                    {
+                        self.absence_confirmed = false;
+                        self.switch_ack = false;
+                        self.problem = Some(
+                            "USB returned too soon. Start this switch-and-cable step again.".into(),
+                        );
+                        Phase::Initial
+                    }
+                    Phase::OffWait(since)
+                        if now.saturating_duration_since(since) >= Duration::from_secs(5) =>
+                    {
+                        if self.request.step == Step::BatteryFirst {
+                            Phase::Bluetooth
+                        } else {
+                            Phase::Reconnect
+                        }
+                    }
+                    Phase::StartWait(since)
+                        if now.saturating_duration_since(since) >= Duration::from_secs(10) =>
+                    {
+                        Phase::Reconnect
+                    }
+                    Phase::Reconnect | Phase::Done if self.mode != Mode::Absent => {
+                        if self.request.step == Step::BatteryFirst
+                            || self.request.step == Step::UsbFirst
+                                && self.mode == Mode::MscBootloader
+                                && valid_mount
+                            || self.request.step == Step::FactoryReturn
+                                && self.mode == Mode::Factory
+                                && snapshot.mounts.is_empty()
+                        {
+                            self.complete = true;
+                            Phase::Done
+                        } else if self.request.step == Step::UsbFirst
+                            && self.mode == Mode::MscBootloader
+                            && snapshot.mounts.is_empty()
+                        {
+                            Phase::Reconnect
+                        } else {
+                            self.problem = Some(if self.request.step == Step::FactoryReturn {
+                                "It did not return to normal operation. Start the switch-and-cable step again.".into()
+                            } else {
+                                "It did not return to the recovery drive. Start the switch-and-cable step again.".into()
+                            });
+                            self.absence_confirmed = false;
+                            self.switch_ack = false;
+                            Phase::Initial
+                        }
+                    }
+                    Phase::Done => Phase::Reconnect,
+                    phase => phase,
+                };
+            }
+            Step::Wait => {}
+            Step::Finished => {
+                self.complete = true;
+                self.phase = Phase::Done;
+            }
+            Step::ConnectLeft => unreachable!(),
+        }
+    }
+    pub fn acknowledge(&mut self) {
+        match read_request(&self.directory).and_then(|request| self.accept_request(request)) {
+            Ok(()) => self.acknowledge_at(Instant::now()),
+            Err(error) => self.invalidate(error),
+        }
+        self.publish_or_stop();
+    }
+    fn acknowledge_at(&mut self, now: Instant) {
+        if !self.fresh {
+            return;
+        }
+        match self.phase {
+            Phase::Initial
+                if matches!(
+                    self.request.step,
+                    Step::UsbFirst | Step::BatteryFirst | Step::FactoryReturn
+                ) =>
+            {
+                self.phase = Phase::Unplug;
+                self.complete = false;
+                self.absence_confirmed = false;
+                self.switch_ack = self.request.step != Step::BatteryFirst;
+                self.problem = None;
+            }
+            Phase::Bluetooth if self.mode == Mode::Absent => {
+                self.switch_ack = true;
+                self.phase = Phase::StartWait(now);
+            }
+            _ => {}
+        }
+    }
+    pub fn view(&self) -> TrialView {
+        let wait = |since: Instant, seconds: u64| {
+            Duration::from_secs(seconds)
+                .saturating_sub(Instant::now().saturating_duration_since(since))
+                .as_millis()
+                .div_ceil(1000)
+        };
+        let (title, instruction, ack_label) = match (self.request.step, self.phase) {
+            (Step::Finished, _) => (
+                "Startup observation finished".into(),
+                "The controller has finished this trial.".into(),
+                None,
+            ),
+            (Step::Wait, _) | (_, Phase::Done) => (
+                "Checking the keyboard".into(),
+                "Keep the USB cable connected. The controller is checking the result.".into(),
+                None,
+            ),
+            (Step::ConnectLeft, _) => (
+                "Connect the left half".into(),
+                "Connect it by USB in WIRED mode. Leave the dongle disconnected.".into(),
+                None,
+            ),
+            (Step::EnterRecovery, _) => (
+                "Hold Fn + 5".into(),
+                "Keep WIRED selected. Hold Fn + 5 for five seconds, then release.".into(),
+                None,
+            ),
+            (_, Phase::Initial) => (
+                "Set the switch to WIRED".into(),
+                "Use the middle position on the left half.".into(),
+                self.fresh.then_some("It's in WIRED"),
+            ),
+            (_, Phase::Unplug) => (
+                "Unplug the left half".into(),
+                "Leave its switch in WIRED.".into(),
+                None,
+            ),
+            (_, Phase::OffWait(since)) => (
+                "Keep USB unplugged".into(),
+                format!("Wait {} more seconds.", wait(since, 5)),
+                None,
+            ),
+            (_, Phase::Bluetooth) => (
+                "Switch to Bluetooth".into(),
+                "Keep USB unplugged. Move the left switch to Bluetooth.".into(),
+                (self.fresh && self.mode == Mode::Absent).then_some("It's in Bluetooth"),
+            ),
+            (_, Phase::StartWait(since)) => (
+                "Let it start".into(),
+                format!("Keep USB unplugged for {} more seconds.", wait(since, 10)),
+                None,
+            ),
+            (_, Phase::Reconnect)
+                if self.request.step == Step::UsbFirst && self.mode == Mode::MscBootloader =>
+            {
+                (
+                    "Waiting for the recovery drive".into(),
+                    "Keep USB connected while the drive appears.".into(),
+                    None,
+                )
+            }
+            (_, Phase::Reconnect) => (
+                "Reconnect the left half".into(),
+                "Plug its USB cable into the same connection on your Mac.".into(),
+                None,
+            ),
+        };
+        TrialView {
+            title,
+            instruction: self.problem.clone().unwrap_or(instruction),
+            ack_label,
+            finished: self.request.step == Step::Finished,
+        }
+    }
+    fn publish_or_stop(&mut self) {
+        if let Err(error) = self.publish() {
+            // Never leave a previous completed status available after a failed refresh.
+            let _ = fs::remove_file(self.directory.join("status.json"));
+            self.invalidate(error);
+        }
+    }
+    fn publish(&self) -> Result<(), String> {
+        let status = Status {
+            schema: 1,
+            session: &self.request.session,
+            sequence: self.request.sequence,
+            step: self.request.step,
+            complete: self.complete && self.fresh,
+            location: self.location,
+            observed_mode: self.mode,
+            usb_absence_confirmed: self.absence_confirmed,
+            switch_ack: self.switch_ack,
+            observation_valid: self.fresh,
+            observed_at_unix_ms: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map_err(|_| "Could not timestamp the observation.")?
+                .as_millis(),
+        };
+        let bytes =
+            serde_json::to_vec_pretty(&status).map_err(|_| "Could not record the observation.")?;
+        write_status(&self.directory, &bytes)
+    }
+}
+fn directory() -> Result<PathBuf, String> {
+    let home = std::env::var_os("HOME").ok_or("Could not find the local startup trial folder.")?;
+    Ok(PathBuf::from(home).join("Library/Application Support/NocFree Companion/startup-trial"))
+}
+fn read_request(directory: &Path) -> Result<Request, String> {
+    let bytes = device::read_bounded(&directory.join("request.json"), 8192)?;
+    let request: Request = serde_json::from_slice(&bytes)
+        .map_err(|_| "Could not read the controller's startup instructions.")?;
+    request.validate()?;
+    Ok(request)
+}
+fn write_status(directory: &Path, bytes: &[u8]) -> Result<(), String> {
+    if fs::symlink_metadata(directory)
+        .map_err(|_| "The local trial folder is unavailable.")?
+        .file_type()
+        .is_symlink()
+    {
+        return Err("The local trial folder must be a private directory.".into());
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(directory, fs::Permissions::from_mode(0o700))
+            .map_err(|_| "Could not make the trial folder private.")?;
+    }
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|_| "Could not timestamp the observation.")?
+        .as_nanos();
+    let temporary = directory.join(format!(".status-{}-{stamp}.partial", std::process::id()));
+    let mut options = fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file = options
+        .open(&temporary)
+        .map_err(|_| "Could not save the local startup observation.")?;
+    file.write_all(bytes)
+        .and_then(|_| file.sync_all())
+        .map_err(|_| "Could not finish saving the startup observation.")?;
+    fs::rename(&temporary, directory.join("status.json"))
+        .map_err(|_| "Could not finalize the startup observation.")?;
+    fs::File::open(directory)
+        .and_then(|directory| directory.sync_all())
+        .map_err(|_| "Could not flush the startup observation.")?;
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::device::{BootMount, Device};
+    fn request(step: Step, sequence: u64) -> Request {
+        Request {
+            schema: 1,
+            session: "test-session".into(),
+            sequence,
+            step,
+            location: if step == Step::ConnectLeft {
+                None
+            } else {
+                Some(7)
+            },
+        }
+    }
+    fn trial(step: Step) -> Trial {
+        Trial::from_request(PathBuf::from("/private/fixture"), request(step, 1))
+    }
+    fn normal() -> Snapshot {
+        Snapshot {
+            devices: vec![Device {
+                location: 7,
+                vendor: 0x2886,
+                product: 0x8029,
+                name: "NocFree & ANSI".into(),
+            }],
+            mounts: vec![],
+        }
+    }
+    fn boot(serial: bool, mounted: bool) -> Snapshot {
+        Snapshot {
+            devices: vec![Device {
+                location: 7,
+                vendor: 0x239a,
+                product: if serial { 0x2a } else { 0x29 },
+                name: "NocFree &".into(),
+            }],
+            mounts: if mounted {
+                vec![BootMount {
+                    path: PathBuf::from("/fixture/volume"),
+                    info: "UF2 Bootloader 0.9.2-39-g0147d71\nModel: NocFree &\n".into(),
+                }]
+            } else {
+                vec![]
+            },
+        }
+    }
+    #[test]
+    fn connect_binds_only_one_normal_candidate_and_recovery_waits_for_mount() {
+        let now = Instant::now();
+        let mut t = trial(Step::ConnectLeft);
+        t.observe_at(Ok(boot(false, true)), now);
+        assert!(!t.complete);
+        t.observe_at(Ok(normal()), now);
+        assert!(t.complete);
+        assert_eq!(t.location, Some(7));
+        t.accept_request(request(Step::EnterRecovery, 2)).unwrap();
+        assert!(!t.complete);
+        t.observe_at(Ok(boot(false, false)), now);
+        assert!(!t.complete);
+        t.observe_at(Ok(boot(false, true)), now);
+        assert!(t.complete);
+        let mut ambiguous = boot(false, true);
+        let mut other = ambiguous.devices[0].clone();
+        other.location = 9;
+        ambiguous.devices.push(other);
+        t.observe_at(Ok(ambiguous), now);
+        assert!(!t.complete);
+        assert!(!t.fresh);
+    }
+    #[test]
+    fn usb_first_counts_only_observed_absence_and_requires_msc() {
+        let now = Instant::now();
+        let mut t = trial(Step::UsbFirst);
+        t.acknowledge_at(now);
+        assert!(matches!(t.phase, Phase::Initial));
+        t.observe_at(Ok(normal()), now);
+        t.acknowledge_at(now);
+        t.observe_at(Ok(normal()), now + Duration::from_secs(100));
+        assert!(matches!(t.phase, Phase::Unplug));
+        assert!(!t.absence_confirmed);
+        t.observe_at(Ok(Snapshot::default()), now + Duration::from_secs(101));
+        t.observe_at(Ok(Snapshot::default()), now + Duration::from_secs(105));
+        assert!(matches!(t.phase, Phase::OffWait(_)));
+        t.observe_at(Ok(Snapshot::default()), now + Duration::from_secs(106));
+        assert!(matches!(t.phase, Phase::Reconnect));
+        t.observe_at(Ok(boot(false, false)), now + Duration::from_secs(107));
+        assert!(matches!(t.phase, Phase::Reconnect));
+        assert!(!t.complete);
+        t.observe_at(Ok(boot(false, true)), now + Duration::from_secs(108));
+        assert!(t.complete && t.absence_confirmed && t.switch_ack);
+        t.observe_at(Ok(Snapshot::default()), now + Duration::from_secs(109));
+        assert!(!t.complete);
+    }
+    #[test]
+    fn battery_start_requires_bluetooth_ack_then_full_ten_seconds() {
+        let now = Instant::now();
+        let mut t = trial(Step::BatteryFirst);
+        t.observe_at(Ok(boot(false, true)), now);
+        t.acknowledge_at(now);
+        t.observe_at(Ok(Snapshot::default()), now + Duration::from_secs(1));
+        t.observe_at(Ok(Snapshot::default()), now + Duration::from_secs(6));
+        assert!(matches!(t.phase, Phase::Bluetooth));
+        assert!(!t.switch_ack);
+        t.observe_at(Ok(Snapshot::default()), now + Duration::from_secs(100));
+        assert!(matches!(t.phase, Phase::Bluetooth));
+        t.acknowledge_at(now + Duration::from_secs(100));
+        t.observe_at(Ok(Snapshot::default()), now + Duration::from_secs(109));
+        assert!(matches!(t.phase, Phase::StartWait(_)));
+        t.observe_at(Ok(Snapshot::default()), now + Duration::from_secs(110));
+        assert!(matches!(t.phase, Phase::Reconnect));
+        t.observe_at(Ok(boot(true, false)), now + Duration::from_secs(111));
+        assert!(t.complete && t.switch_ack && t.absence_confirmed);
+        assert_eq!(t.mode, Mode::SerialBootloader);
+        // Completing the observation reports a mode, not whether the firmware passed.
+        let mut next = request(Step::BatteryFirst, 2);
+        next.session = "fresh-session".into();
+        t.accept_request(next).unwrap();
+        assert!(!t.complete && !t.absence_confirmed && !t.switch_ack);
+    }
+    #[test]
+    fn early_reconnect_wrong_connection_and_errors_reset_evidence() {
+        let now = Instant::now();
+        let mut t = trial(Step::BatteryFirst);
+        t.observe_at(Ok(normal()), now);
+        t.acknowledge_at(now);
+        t.observe_at(Ok(Snapshot::default()), now + Duration::from_secs(1));
+        t.observe_at(Ok(normal()), now + Duration::from_secs(2));
+        assert!(matches!(t.phase, Phase::Initial));
+        assert!(!t.absence_confirmed && !t.complete);
+        let mut wrong = boot(false, true);
+        wrong.devices[0].location = 99;
+        t.observe_at(Ok(wrong), now);
+        assert!(!t.fresh && !t.complete);
+        t.acknowledge_at(now);
+        assert!(matches!(t.phase, Phase::Initial));
+        t.observe_at(Ok(normal()), now);
+        t.acknowledge_at(now);
+        t.observe_at(Ok(Snapshot::default()), now);
+        t.observe_at(Err("unavailable".into()), now + Duration::from_secs(5));
+        assert!(!t.complete && !t.absence_confirmed && !t.fresh);
+    }
+    #[test]
+    fn restart_and_new_sequence_do_not_reuse_timers_and_old_sequences_reject() {
+        let now = Instant::now();
+        let mut t = trial(Step::UsbFirst);
+        t.observe_at(Ok(normal()), now);
+        t.acknowledge_at(now);
+        t.observe_at(Ok(Snapshot::default()), now);
+        t.accept_request(request(Step::UsbFirst, 2)).unwrap();
+        assert!(matches!(t.phase, Phase::Initial));
+        assert!(!t.fresh && !t.absence_confirmed);
+        assert!(t.accept_request(request(Step::UsbFirst, 1)).is_err());
+        assert_eq!(t.request.sequence, 2);
+        let restarted = Trial::from_request(PathBuf::from("/private/fixture"), t.request.clone());
+        assert!(matches!(restarted.phase, Phase::Initial));
+        assert!(!restarted.fresh && !restarted.complete);
+        let mut modified = t.request.clone();
+        modified.step = Step::Finished;
+        assert!(t.accept_request(modified).is_err());
+    }
+    #[test]
+    fn protocol_rejects_unknown_steps_missing_connection_and_instructions() {
+        assert!(
+            serde_json::from_str::<Request>(
+                r#"{"schema":1,"session":"test","sequence":1,"step":"flash","location":7}"#
+            )
+            .is_err()
+        );
+        assert!(serde_json::from_str::<Request>(r#"{"schema":1,"session":"test","sequence":1,"step":"wait","instruction":"run command"}"#).is_err());
+        let mut missing = request(Step::BatteryFirst, 1);
+        missing.location = None;
+        assert!(missing.validate().is_err());
+        let mut invalid = request(Step::ConnectLeft, 1);
+        invalid.session = "../escape".into();
+        assert!(invalid.validate().is_err());
+    }
+    #[test]
+    fn factory_return_requires_timed_absence_and_same_port_normal_without_mount() {
+        let now = Instant::now();
+        let mut t = trial(Step::FactoryReturn);
+        let mut invalid = request(Step::FactoryReturn, 1);
+        invalid.location = None;
+        assert!(invalid.validate().is_err());
+        t.observe_at(Ok(boot(false, true)), now);
+        t.acknowledge_at(now);
+        t.observe_at(Ok(Snapshot::default()), now + Duration::from_secs(1));
+        t.observe_at(Ok(Snapshot::default()), now + Duration::from_secs(5));
+        assert!(!t.complete);
+        t.observe_at(Ok(Snapshot::default()), now + Duration::from_secs(6));
+        assert!(matches!(t.phase, Phase::Reconnect));
+        t.observe_at(Ok(boot(false, true)), now + Duration::from_secs(7));
+        assert!(!t.complete);
+        assert!(matches!(t.phase, Phase::Initial));
+        t.acknowledge_at(now + Duration::from_secs(7));
+        t.observe_at(Ok(Snapshot::default()), now + Duration::from_secs(8));
+        t.observe_at(Ok(Snapshot::default()), now + Duration::from_secs(13));
+        let mut with_mount = normal();
+        with_mount.mounts = boot(false, true).mounts;
+        t.observe_at(Ok(with_mount), now + Duration::from_secs(14));
+        assert!(!t.complete);
+        t.acknowledge_at(now + Duration::from_secs(14));
+        t.observe_at(Ok(Snapshot::default()), now + Duration::from_secs(15));
+        t.observe_at(Ok(Snapshot::default()), now + Duration::from_secs(20));
+        let mut wrong = normal();
+        wrong.devices[0].location = 99;
+        t.observe_at(Ok(wrong), now + Duration::from_secs(21));
+        assert!(!t.complete && !t.fresh);
+        t.observe_at(Ok(normal()), now + Duration::from_secs(22));
+        t.acknowledge_at(now + Duration::from_secs(22));
+        t.observe_at(Ok(Snapshot::default()), now + Duration::from_secs(23));
+        t.observe_at(Ok(Snapshot::default()), now + Duration::from_secs(28));
+        t.observe_at(Ok(normal()), now + Duration::from_secs(29));
+        assert!(t.complete && t.absence_confirmed && t.switch_ack);
+        assert_eq!(t.mode, Mode::Factory);
+    }
+}

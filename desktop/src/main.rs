@@ -1,5 +1,6 @@
 mod device;
 mod session;
+mod trial;
 mod ui;
 
 use gpui::{
