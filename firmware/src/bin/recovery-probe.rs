@@ -153,7 +153,7 @@ struct UsbStageHandler;
 impl embassy_usb::Handler for UsbStageHandler {
     #[cfg(feature = "migration-usb-addressed-serial-probe")]
     fn addressed(&mut self, _addr: u8) {
-        // The framework dispatches SET_ADDRESS before acknowledging its status stage.
+        // Observe dispatch before the framework acceptance call; hardware owns status.
         return_to_bootloader(0x4e);
     }
 

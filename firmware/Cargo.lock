@@ -774,8 +774,7 @@ dependencies = [
 [[package]]
 name = "embassy-nrf"
 version = "0.11.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "82051f67e8a06a8faebd183f62cfade184c96be68126c5f064abb8223a591ff1"
+source = "git+https://github.com/sarimabbas/embassy-nrf-nocfree?rev=9640cd7af9d2e5f9fe9860aae7108e4a04f96c8c#9640cd7af9d2e5f9fe9860aae7108e4a04f96c8c"
 dependencies = [
  "bitflags 2.13.2",
  "cfg-if",
