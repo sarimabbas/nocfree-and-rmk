@@ -15,6 +15,7 @@ enum Step {
     ConnectLeft,
     EnterRecovery,
     UsbFirst,
+    DockFirst,
     BatteryFirst,
     FactoryReturn,
     Wait,
@@ -46,6 +47,7 @@ impl Request {
             self.step,
             Step::EnterRecovery
                 | Step::UsbFirst
+                | Step::DockFirst
                 | Step::BatteryFirst
                 | Step::FactoryReturn
                 | Step::Paused
@@ -86,6 +88,7 @@ struct Status<'a> {
     observed_mode: Mode,
     usb_absence_confirmed: bool,
     switch_ack: bool,
+    reconnect_ready: bool,
     observed_at_unix_ms: u128,
     observation_valid: bool,
 }
@@ -301,7 +304,7 @@ impl Trial {
                     self.invalidate("The recovery drive has unfamiliar metadata. Wait for the controller to inspect it.".into());
                 }
             }
-            Step::UsbFirst | Step::BatteryFirst | Step::FactoryReturn => {
+            Step::UsbFirst | Step::DockFirst | Step::BatteryFirst | Step::FactoryReturn => {
                 self.phase = match self.phase {
                     Phase::Unplug if self.mode == Mode::Absent => {
                         self.absence_confirmed = true;
@@ -333,7 +336,7 @@ impl Trial {
                     }
                     Phase::Reconnect | Phase::Done if self.mode != Mode::Absent => {
                         if self.request.step == Step::BatteryFirst
-                            || self.request.step == Step::UsbFirst
+                            || matches!(self.request.step, Step::UsbFirst | Step::DockFirst)
                                 && self.mode == Mode::MscBootloader
                                 && valid_mount
                             || self.request.step == Step::FactoryReturn
@@ -342,7 +345,7 @@ impl Trial {
                         {
                             self.complete = true;
                             Phase::Done
-                        } else if self.request.step == Step::UsbFirst
+                        } else if matches!(self.request.step, Step::UsbFirst | Step::DockFirst)
                             && self.mode == Mode::MscBootloader
                             && snapshot.mounts.is_empty()
                         {
@@ -385,7 +388,7 @@ impl Trial {
             Phase::Initial
                 if matches!(
                     self.request.step,
-                    Step::UsbFirst | Step::BatteryFirst | Step::FactoryReturn
+                    Step::UsbFirst | Step::DockFirst | Step::BatteryFirst | Step::FactoryReturn
                 ) =>
             {
                 self.phase = Phase::Unplug;
@@ -439,6 +442,12 @@ impl Trial {
                 "Use the middle position on the left half.".into(),
                 self.fresh.then_some("It's in WIRED"),
             ),
+            (Step::DockFirst, Phase::Unplug) => (
+                "Waiting for the USB port".into(), "Keep the USB cable connected. The port will cycle automatically.".into(), None
+            ),
+            (Step::DockFirst, Phase::OffWait(since)) => (
+                "The USB port is off".into(), format!("Keep the cable connected. Wait {} more seconds.", wait(since, 5)), None
+            ),
             (_, Phase::Unplug) => (
                 "Unplug the left half".into(),
                 "Leave its switch in WIRED.".into(),
@@ -460,7 +469,7 @@ impl Trial {
                 None,
             ),
             (_, Phase::Reconnect)
-                if self.request.step == Step::UsbFirst && self.mode == Mode::MscBootloader =>
+                if matches!(self.request.step, Step::UsbFirst | Step::DockFirst) && self.mode == Mode::MscBootloader =>
             {
                 (
                     "Waiting for the recovery drive".into(),
@@ -468,6 +477,9 @@ impl Trial {
                     None,
                 )
             }
+            (Step::DockFirst, Phase::Reconnect) => (
+                "The USB port will restart".into(), "Keep the cable connected. The port will restart automatically.".into(), None
+            ),
             (_, Phase::Reconnect) => (
                 "Reconnect the left half".into(),
                 "Plug its USB cable into the same connection on your Mac.".into(),
@@ -476,7 +488,11 @@ impl Trial {
         };
         TrialView {
             title,
-            instruction: self.problem.clone().unwrap_or(instruction),
+            instruction: if self.request.step == Step::DockFirst && self.problem.is_some() {
+                "Automatic USB cycling stopped. Keep the cable connected while the controller checks the USB state.".into()
+            } else {
+                self.problem.clone().unwrap_or(instruction)
+            },
             ack_label,
             finished: self.request.step == Step::Finished,
         }
@@ -487,6 +503,16 @@ impl Trial {
             let _ = fs::remove_file(self.directory.join("status.json"));
             self.invalidate(error);
         }
+    }
+    fn reconnect_ready(&self) -> bool {
+        matches!(
+            self.request.step,
+            Step::UsbFirst | Step::DockFirst | Step::BatteryFirst | Step::FactoryReturn
+        ) && (matches!(self.phase, Phase::Reconnect)
+            || matches!(self.phase, Phase::Done) && self.complete)
+            && self.fresh
+            && self.absence_confirmed
+            && self.switch_ack
     }
     fn publish(&self) -> Result<(), String> {
         let status = Status {
@@ -499,6 +525,7 @@ impl Trial {
             observed_mode: self.mode,
             usb_absence_confirmed: self.absence_confirmed,
             switch_ack: self.switch_ack,
+            reconnect_ready: self.reconnect_ready(),
             observation_valid: self.fresh,
             observed_at_unix_ms: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
@@ -811,5 +838,82 @@ mod tests {
             serde_json::from_str(r#"{"schema":1,"session":"test","sequence":2,"step":"paused"}"#)
                 .unwrap();
         assert!(missing.validate().is_err());
+    }
+    #[test]
+    fn reconnect_ready_requires_the_full_guide_not_just_usb_absence() {
+        let now = Instant::now();
+        for step in [Step::UsbFirst, Step::DockFirst, Step::FactoryReturn] {
+            let mut t = trial(step);
+            assert!(!t.reconnect_ready());
+            t.observe_at(Ok(normal()), now);
+            t.acknowledge_at(now);
+            t.observe_at(Ok(Snapshot::default()), now + Duration::from_secs(1));
+            assert!(t.absence_confirmed);
+            assert!(!t.reconnect_ready());
+            t.observe_at(Ok(Snapshot::default()), now + Duration::from_secs(5));
+            assert!(!t.reconnect_ready());
+            t.observe_at(Ok(Snapshot::default()), now + Duration::from_secs(6));
+            assert!(t.reconnect_ready());
+            t.observe_at(Err("USB unavailable".into()), now + Duration::from_secs(7));
+            assert!(!t.reconnect_ready());
+        }
+        let mut battery = trial(Step::BatteryFirst);
+        battery.observe_at(Ok(normal()), now);
+        battery.acknowledge_at(now);
+        battery.observe_at(Ok(Snapshot::default()), now + Duration::from_secs(1));
+        battery.observe_at(Ok(Snapshot::default()), now + Duration::from_secs(6));
+        assert!(!battery.reconnect_ready());
+        battery.acknowledge_at(now + Duration::from_secs(6));
+        battery.observe_at(Ok(Snapshot::default()), now + Duration::from_secs(15));
+        assert!(!battery.reconnect_ready());
+        battery.observe_at(Ok(Snapshot::default()), now + Duration::from_secs(16));
+        assert!(battery.reconnect_ready());
+        battery.observe_at(Ok(boot(true, false)), now + Duration::from_secs(17));
+        assert!(battery.complete && battery.reconnect_ready());
+        for step in [Step::Wait, Step::Paused] {
+            battery
+                .accept_request(request(step, battery.request.sequence + 1))
+                .unwrap();
+            battery.observe_at(Ok(boot(true, false)), now + Duration::from_secs(18));
+            assert!(!battery.reconnect_ready());
+        }
+    }
+    #[test]
+    fn dock_first_keeps_the_cable_connected_but_requires_real_timed_usb_absence() {
+        let now = Instant::now();
+        let mut t = trial(Step::DockFirst);
+        let mut unbound = request(Step::DockFirst, 1);
+        unbound.location = None;
+        assert!(unbound.validate().is_err());
+        t.observe_at(Ok(boot(false, true)), now);
+        t.acknowledge_at(now);
+        assert!(
+            t.view()
+                .instruction
+                .contains("Keep the USB cable connected")
+        );
+        t.observe_at(Ok(boot(false, true)), now + Duration::from_secs(100));
+        assert!(!t.absence_confirmed && !t.reconnect_ready() && !t.complete);
+        t.observe_at(Ok(Snapshot::default()), now + Duration::from_secs(101));
+        assert!(t.view().instruction.contains("Keep the cable connected"));
+        assert!(!t.reconnect_ready());
+        t.observe_at(Ok(Snapshot::default()), now + Duration::from_secs(106));
+        assert!(t.reconnect_ready());
+        assert!(t.view().instruction.contains("restart automatically"));
+        t.observe_at(Ok(boot(false, false)), now + Duration::from_secs(107));
+        assert!(!t.complete);
+        t.observe_at(Ok(boot(false, true)), now + Duration::from_secs(108));
+        assert!(t.complete && t.reconnect_ready());
+        t.observe_at(
+            Err("USB unavailable".into()),
+            now + Duration::from_secs(109),
+        );
+        assert!(!t.complete && !t.reconnect_ready());
+        assert!(t.view().instruction.contains("Keep the cable connected"));
+        let parsed: Request = serde_json::from_str(
+            r#"{"schema":1,"session":"test","sequence":2,"step":"dock_first","location":7}"#,
+        )
+        .unwrap();
+        assert!(parsed.validate().is_ok());
     }
 }

@@ -53,3 +53,5 @@ The owner then completed the guided left and right copy flow and reported that i
 The development bundle currently relies on debug asset loading from the local Cargo source directory. It is suitable on this Mac; a portable newcomer download needs embedded assets or a release build, signing/notarization and its own installation tests.
 
 The [installer design](../docs/research/guided-installer-app.md) describes the later guarded writer and cross-OS release work. This prototype has no Install or Restore action.
+
+The developer dock-cycle step keeps the cable connected while a separately approved controller cycles only the bound keyboard port pair. `reconnect_ready` requires the complete observed absence interval and switch acknowledgment; it does not claim that VBUS was measured. Twenty-two companion replay/archive tests, strict Clippy and formatting passed. The app remains read-only.
