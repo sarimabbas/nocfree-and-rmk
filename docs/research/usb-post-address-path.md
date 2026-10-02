@@ -50,3 +50,15 @@ The experiment pins [the published-crate patch](https://github.com/sarimabbas/em
 Independent byte comparison confirmed that source provenance and scope. Locked Cargo metadata resolves the patched commit; the lockfile changes only Embassy nRF's source. The repeated `./scripts/check.sh --reclaimed-softdevice` passed before and after the change: 42 Python tests, five scanner tests, two doctests, formatting, all six production role/keymap cross-builds and every existing diagnostic build. These are software checks, not hardware success. The two proposed control-pipe observer stages were saved as an ignored disposable spike and removed from the application source.
 
 The next guarded candidate reuses `left,migration-usb-configured-serial-probe`. It preserves the existing USB descriptors, clocks, memory layout, interrupt binding, scheduling, serial-only return and independent recovery route; the framework SET_ADDRESS correction is the functional variable. Hardware is unchanged pending exact artifact review and device-specific trial approval. Full RMK left hardware startup remains unverified.
+
+### Reviewed configuration-check image
+
+Clean source `b8e0a2bf41cb9804688f28d9090b6a730805d115`; framework patch `9640cd7af9d2e5f9fe9860aae7108e4a04f96c8c`. Local ignored package `dist/migration-usb-configured-serial-fixed-probe-left/`:
+
+| Artifact | SHA-256 |
+| --- | --- |
+| ELF | `14f62e35e500688d5d9ab74df63993909ecff851c3f1b304823e7f121840c9a6` |
+| BIN | `723d4f2146226239a1b0af89abd4ac1f9bf7ddb23f28258a3689119cc7b7f06d` |
+| UF2 | `b7e48f0fd796cb4b664b6ea59f961249bf0b21427fbe8d0d20dbaa5b6ecf7682` |
+
+BIN size 14,728 bytes through `0x4988`; 64 UF2 blocks cover `0x1000`–`0x5000` exclusive with 1,656 erased tail bytes. Family `0x621e937a`, SP `0x20020000`, Reset `0x1205`, USBD vector `0x12b9`, bootloader marker `0x87eeb07c` at `0x1200`. Independent artifact review reconstructed ELF load segments, checked every UF2 payload and tail, applied the canonical guard, and checked RAM bounds. Disassembly confirms the SET_ADDRESS path omits EP0STATUS, ordinary acceptance retains it, and configured(true) still reaches the serial-only reset route. Hardware validation is a separate owner-assisted trial; software review alone does not establish the fix.
