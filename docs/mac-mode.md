@@ -73,7 +73,7 @@ Primary implementation evidence at the pinned RMK revision:
 
 Software checkpoint `2f88122` passed the 39-test host harness, formatting, all three production roles with both keymap choices in the explicit migration layout, both input diagnostic roles with both keymap choices in the factory layout, and the recovery diagnostic. These are software checks, not Mac-row hardware results.
 
-Both packages preserve S140, the bootloader and the protected RAM floor, retain the existing recovery marker, and erase only `0x27000..0x36000`. Local files are in ignored `dist/input-probe-left-mac/` and `dist/input-probe-right-mac/`; existing working images remain available separately. No Mac update has been installed.
+Both packages preserve S140, the bootloader and the protected RAM floor, retain the existing recovery marker, and erase only `0x27000..0x36000`. Local files are in ignored `dist/input-probe-left-mac/` and `dist/input-probe-right-mac/`; existing working images remain available separately. At packaging time no Mac update had been installed; subsequent trial results are below.
 
 | Role | BIN bytes | BIN end exclusive | Serial ZIP SHA-256 |
 | --- | ---: | --- | --- |
@@ -81,3 +81,11 @@ Both packages preserve S140, the bootloader and the protected RAM floor, retain 
 | right | 57908 | `0x35234` | `bd893c61129f6e3ff930e2ee4f6b95e086a95cac8f5d1bcb02c9b52fe47b4628` |
 
 A proposed owner-authorized trial updates one identified half at a time, verifies exact readback and retained readable regions, and checks the distinct Mac greeting, startup and runtime update entry. Then test plain F1/F2 with Ctrl for the owner's external display, F3 Mission Control, F4 Spotlight, right media controls and Fn ordinary function keys. Do not count F5/F6 as backlight control. No radio migration or dongle write is part of this update.
+
+## Approved Mac update progress
+
+The owner explicitly approved both guarded Mac diagnostic updates. The left was identified through its normal role-specific USB identity/greeting, transitioned alone to MSC, and its full known-good readable hash was checked before transfer. The left Mac package installed successfully. Its distinct greeting and product name passed; the deliberate CDC update request returned to the existing bootloader.
+
+Left readback matches the exact Mac BIN, expected FF tail through `0x36000`, unchanged S140 below `0x27000` and unchanged readable flash above `0x36000`. INFO content matched. Complete readable UF2 SHA-256 is `17306f31b8715e3e2221c4d66e7af7b951fcf2f60ba57f756b594166ada598e7`. Final left startup is pending owner participation before the right update. Mac media-row behavior remains untested. Private logs/readbacks are in ignored `.evidence/mac-trial/`; existing working restore images remain available. The dongle has not been touched.
+
+The first reported post-update battery-first sequence left the left in MSC, rather than the expected Mac application. The readable image still matched `17306f31b8715e3e2221c4d66e7af7b951fcf2f60ba57f756b594166ada598e7`. This is a failed startup observation, not evidence of its cause. The right update has not started. Root requested a staged WIRED/USB-absent check followed by battery startup to isolate the sequence without another flash.
