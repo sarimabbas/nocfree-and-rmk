@@ -68,3 +68,16 @@ Primary implementation evidence at the pinned RMK revision:
 - [HID keycode mappings](https://github.com/rmk-rs/rmk/blob/9607aedf343b17dd6b27307583ae80c4f728fbbd/rmk-types/src/keycode/hid.rs)
 - [Light action limitations](https://github.com/rmk-rs/rmk/blob/9607aedf343b17dd6b27307583ae80c4f728fbbd/rmk-types/src/action/light.rs)
 - [Keyboard action handling](https://github.com/rmk-rs/rmk/blob/9607aedf343b17dd6b27307583ae80c4f728fbbd/rmk/src/keyboard.rs)
+
+## Guarded update candidates
+
+Software checkpoint `2f88122` passed the 39-test host harness, formatting, all three production roles with both keymap choices in the explicit migration layout, both input diagnostic roles with both keymap choices in the factory layout, and the recovery diagnostic. These are software checks, not Mac-row hardware results.
+
+Both packages preserve S140, the bootloader and the protected RAM floor, retain the existing recovery marker, and erase only `0x27000..0x36000`. Local files are in ignored `dist/input-probe-left-mac/` and `dist/input-probe-right-mac/`; existing working images remain available separately. No Mac update has been installed.
+
+| Role | BIN bytes | BIN end exclusive | Serial ZIP SHA-256 |
+| --- | ---: | --- | --- |
+| left | 60740 | `0x35d44` | `d41dea8009cf70fca2bfde42dbc5208234f83d145ab966873744d62ba6ee0f93` |
+| right | 57908 | `0x35234` | `bd893c61129f6e3ff930e2ee4f6b95e086a95cac8f5d1bcb02c9b52fe47b4628` |
+
+A proposed owner-authorized trial updates one identified half at a time, verifies exact readback and retained readable regions, and checks the distinct Mac greeting, startup and runtime update entry. Then test plain F1/F2 with Ctrl for the owner's external display, F3 Mission Control, F4 Spotlight, right media controls and Fn ordinary function keys. Do not count F5/F6 as backlight control. No radio migration or dongle write is part of this update.
