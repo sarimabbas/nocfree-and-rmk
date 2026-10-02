@@ -25,3 +25,7 @@ First acceptance is owner-confirmed right keys through the left USB keyboard, th
 ## Approved transfer checkpoint
 
 The owner explicitly approved the exact image and application/runtime-storage ranges above. Thirty independent offline helper checks passed, including wrong role, image, source, range, identity, pending approval, stale review, repeated transfer and corrupted readback rejection. These are host checks, not hardware acceptance. The candidate-bound one-shot transfer completed after another fresh same-device identity, exact metadata and full baseline readback. No automatic retry occurred. The owner-operated right OFF/USB-absent/reconnect-OFF recovery cycle is the next gate; no successful new-image recovery or split input is assumed. Companion remains paused because its existing physical startup text is left-specific.
+
+## Independent recovery observation
+
+The owner performed the requested OFF/USB-absent-five-seconds/reconnect-while-OFF sequence. Fresh right identity and bootloader metadata passed. Readback matches the exact candidate application and erased tail; the entire protected gap remains unchanged. Only 39 bytes differ in the approved storage interval, on page `0x65000`; both storage copies and the complete readback are saved privately. Storage record decoding is under independent review. This proves the candidate's right recovery/readback gate, not split input. The unchanged left full RMK device remains connected. The next owner step is a battery-first right launch, followed by right-key input through the left USB keyboard.
