@@ -62,3 +62,13 @@ Clean source `b8e0a2bf41cb9804688f28d9090b6a730805d115`; framework patch `9640cd
 | UF2 | `b7e48f0fd796cb4b664b6ea59f961249bf0b21427fbe8d0d20dbaa5b6ecf7682` |
 
 BIN size 14,728 bytes through `0x4988`; 64 UF2 blocks cover `0x1000`–`0x5000` exclusive with 1,656 erased tail bytes. Family `0x621e937a`, SP `0x20020000`, Reset `0x1205`, USBD vector `0x12b9`, bootloader marker `0x87eeb07c` at `0x1200`. Independent artifact review reconstructed ELF load segments, checked every UF2 payload and tail, applied the canonical guard, and checked RAM bounds. Disassembly confirms the SET_ADDRESS path omits EP0STATUS, ordinary acceptance retains it, and configured(true) still reaches the serial-only reset route. Hardware validation is a separate owner-assisted trial; software review alone does not establish the fix.
+
+### Owner-assisted fix trial: configuration still not reached
+
+The controlled same-page trial completed on 2026-10-02. Fresh device identity and exact addressed-diagnostic baseline passed before its one-shot transfer. Initial independent recovery and final retained-checkpoint recovery both passed: candidate binary and erased page tail matched exactly, and all remaining exposed original bytes were unchanged. The manual guide ended paused with the configured-check image retained. No factory restore, right/receiver write, dock power action, serial-port open or heartbeat recreation occurred.
+
+Battery-first startup did **not** produce the expected serial-only callback return. All three settled observations failed the expected mode check and exposed no matching serial-only interface classes. This rejects the claim that the SET_ADDRESS correction alone resolves this startup failure. It does not invalidate the primary-source mismatch or show precisely whether subsequent setup, descriptor DMA, or configuration dispatch stalled. Do not report USB configuration or full RMK hardware success.
+
+The full left Mac RMK build with `left,reclaimed-softdevice,usb-recovery-first,mac-keymap` also cross-built successfully with the corrected dependency, but was not installed or hardware validated. Its actual scanner/radio/storage startup differs from this small USB-only diagnostic. A full-image trial would also expand application coverage and exercise RMK storage, requiring its own reviewed image and acceptance policy; the tiny-image retained-range policy cannot be reused unchanged.
+
+Next observation should distinguish a subsequent addressed descriptor setup from the descriptor data path, with explicit reset-aware correlation, rather than another global cleanup or dependency upgrade. A disposable pass-through control-pipe spike exists privately; it is not part of production firmware or approved as a tested image.
