@@ -1,6 +1,6 @@
 # Distinguishable startup stages through the existing bootloader
 
-Proposal, 2026-10-01. No candidate was installed and no device commands were sent for this research. The runtime/HAL trial's MSC observations remain consistent with stage execution, rather than independent proof. This proposal changes the observation channel; it does not replace the bootloader or establish a production update route.
+Proposal, 2026-10-01. No candidate was installed during preparation of this research. The subsequently approved pair was tested and the original factory image restored exactly; see [serial-stage-trial.md](serial-stage-trial.md). The runtime/HAL trial's MSC observations remain consistent with stage execution, rather than independent proof. This proposal changes the observation channel; it does not replace the bootloader or establish a production update route.
 
 ## Smallest useful next pair
 
