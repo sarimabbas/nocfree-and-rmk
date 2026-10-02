@@ -45,25 +45,41 @@ const KEY_COUNT: usize = 47;
 const KEY_START: usize = 0;
 #[cfg(not(feature = "left"))]
 const KEY_START: usize = 37;
-#[cfg(feature = "left")]
+#[cfg(all(feature = "left", not(feature = "mac-keymap")))]
 const PRODUCT: &str = "NocFree Input Probe Left";
-#[cfg(not(feature = "left"))]
+#[cfg(all(not(feature = "left"), not(feature = "mac-keymap")))]
 const PRODUCT: &str = "NocFree Input Probe Right";
+#[cfg(all(feature = "left", feature = "mac-keymap"))]
+const PRODUCT: &str = "NocFree Input Probe Left Mac";
+#[cfg(all(not(feature = "left"), feature = "mac-keymap"))]
+const PRODUCT: &str = "NocFree Input Probe Right Mac";
 #[cfg(feature = "left")]
 const PID: u16 = 0x4652;
 #[cfg(not(feature = "left"))]
 const PID: u16 = 0x4651;
-#[cfg(feature = "left")]
+#[cfg(all(feature = "left", not(feature = "mac-keymap")))]
 const GREETING: &str = concat!(
     "NocFree input probe ",
     env!("CARGO_PKG_VERSION"),
     " left factory\r\n"
 );
-#[cfg(not(feature = "left"))]
+#[cfg(all(not(feature = "left"), not(feature = "mac-keymap")))]
 const GREETING: &str = concat!(
     "NocFree input probe ",
     env!("CARGO_PKG_VERSION"),
     " right factory\r\n"
+);
+#[cfg(all(feature = "left", feature = "mac-keymap"))]
+const GREETING: &str = concat!(
+    "NocFree input probe ",
+    env!("CARGO_PKG_VERSION"),
+    " left factory mac-mode\r\n"
+);
+#[cfg(all(not(feature = "left"), feature = "mac-keymap"))]
+const GREETING: &str = concat!(
+    "NocFree input probe ",
+    env!("CARGO_PKG_VERSION"),
+    " right factory mac-mode\r\n"
 );
 
 bind_interrupts!(struct Irqs {

@@ -17,15 +17,19 @@ cargo fmt --manifest-path firmware/Cargo.toml -- --check
 (
     cd firmware
     failed=0
-    for role in left right receiver; do
-        cargo build --locked --release --bin nocfree-rmk --target thumbv7em-none-eabihf \
-            --no-default-features --features "$role$layout_features" || failed=1
+    for keymap_features in "" ",mac-keymap"; do
+        for role in left right receiver; do
+            cargo build --locked --release --bin nocfree-rmk --target thumbv7em-none-eabihf \
+                --no-default-features --features "$role$layout_features$keymap_features" || failed=1
+        done
     done
     cargo build --locked --release --bin recovery-probe --target thumbv7em-none-eabihf \
         --no-default-features --features right,recovery-probe,usb-recovery-first || failed=1
     for probe_role in left right; do
-        cargo build --locked --release --bin input-probe --target thumbv7em-none-eabihf \
-            --no-default-features --features "$probe_role,input-probe,usb-recovery-first" || failed=1
+        for keymap_features in "" ",mac-keymap"; do
+            cargo build --locked --release --bin input-probe --target thumbv7em-none-eabihf \
+                --no-default-features --features "$probe_role,input-probe,usb-recovery-first$keymap_features" || failed=1
+        done
     done
     exit "$failed"
 )

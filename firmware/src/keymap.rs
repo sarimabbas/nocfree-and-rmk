@@ -108,5 +108,34 @@ pub fn default_keymap() -> [[[KeyAction; 84]; 1]; 2] {
     function[48] = KeyAction::Single(Action::User(7)); // Clear current BLE bond (Fn+0).
     function[31] = KeyAction::Single(Action::User(8)); // Toggle USB/BLE preference (Fn+B).
     function[54] = KeyAction::Single(Action::User(10)); // Select/pair RMK receiver (Fn+U).
+    #[cfg(feature = "mac-keymap")]
+    let base = {
+        let mut base = base;
+        // Standard consumer usages; RMK owns report generation and modifiers.
+        base[1] = k!(BrightnessDown);
+        base[2] = k!(BrightnessUp);
+        base[3] = k!(MissionControl);
+        base[4] = k!(WwwSearch);
+        // F5/F6 retain function keys until RMK supports keyboard backlight control.
+        base[37] = k!(MediaPrevTrack);
+        base[38] = k!(MediaPlayPause);
+        base[39] = k!(MediaNextTrack);
+        base[40] = k!(AudioMute);
+        base[41] = k!(AudioVolDown);
+        base[42] = k!(AudioVolUp);
+        function[1] = k!(F1);
+        function[2] = k!(F2);
+        function[3] = k!(F3);
+        function[4] = k!(F4);
+        function[5] = k!(F5);
+        function[6] = k!(F6);
+        function[37] = k!(F7);
+        function[38] = k!(F8);
+        function[39] = k!(F9);
+        function[40] = k!(F10);
+        function[41] = k!(F11);
+        function[42] = k!(F12);
+        base
+    };
     [[base], [function]]
 }

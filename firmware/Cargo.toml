@@ -16,6 +16,8 @@ path = "src/bin/input-probe.rs"
 required-features = ["input-probe"]
 [features]
 default = []
+# Interim compile-time Mac media row; runtime OS profiles are a later milestone.
+mac-keymap = []
 # Explicit migration: replaces resident S140; never a normal update.
 reclaimed-softdevice = []
 # Optional existing-bootloader recovery window; changes USB cold-start UX.
