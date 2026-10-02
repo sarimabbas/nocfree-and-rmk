@@ -1,8 +1,12 @@
 #![no_std]
 #![no_main]
 
-#[cfg(any(not(feature = "right"), feature = "left", feature = "receiver"))]
-compile_error!("The input probe supports only the right half");
+#[cfg(any(
+    not(any(feature = "left", feature = "right")),
+    all(feature = "left", feature = "right"),
+    feature = "receiver"
+))]
+compile_error!("The input probe requires exactly one left or right role");
 #[cfg(feature = "reclaimed-softdevice")]
 compile_error!("The input probe must preserve the resident SoftDevice");
 #[cfg(not(feature = "usb-recovery-first"))]
@@ -33,6 +37,35 @@ use rmk::{
 };
 use static_cell::StaticCell;
 
+#[cfg(feature = "left")]
+const KEY_COUNT: usize = 37;
+#[cfg(not(feature = "left"))]
+const KEY_COUNT: usize = 47;
+#[cfg(feature = "left")]
+const KEY_START: usize = 0;
+#[cfg(not(feature = "left"))]
+const KEY_START: usize = 37;
+#[cfg(feature = "left")]
+const PRODUCT: &str = "NocFree Input Probe Left";
+#[cfg(not(feature = "left"))]
+const PRODUCT: &str = "NocFree Input Probe Right";
+#[cfg(feature = "left")]
+const PID: u16 = 0x4652;
+#[cfg(not(feature = "left"))]
+const PID: u16 = 0x4651;
+#[cfg(feature = "left")]
+const GREETING: &str = concat!(
+    "NocFree input probe ",
+    env!("CARGO_PKG_VERSION"),
+    " left factory\r\n"
+);
+#[cfg(not(feature = "left"))]
+const GREETING: &str = concat!(
+    "NocFree input probe ",
+    env!("CARGO_PKG_VERSION"),
+    " right factory\r\n"
+);
+
 bind_interrupts!(struct Irqs {
     USBD => usb::InterruptHandler<USBD>;
     CLOCK_POWER => usb::vbus_detect::InterruptHandler;
@@ -54,13 +87,17 @@ async fn main(_spawner: Spawner) {
         twim::Config::default(),
         &mut twim_buffer,
     );
-    let mut matrix = scanner::Scanner::new(bus, &nocfree_input::RIGHT_BITS);
+    #[cfg(feature = "left")]
+    let bits = &nocfree_input::LEFT_BITS;
+    #[cfg(not(feature = "left"))]
+    let bits = &nocfree_input::RIGHT_BITS;
+    let mut matrix = scanner::Scanner::new(bus, bits);
 
-    // Preserve the shared electrical order; right-local indices start at zero.
+    // Preserve the shared electrical order; each half's local indices start at zero.
     let complete = keymap::default_keymap();
-    let mut local = [[[KeyAction::No; 47]; 1]; 2];
+    let mut local = [[[KeyAction::No; KEY_COUNT]; 1]; 2];
     for layer in 0..2 {
-        local[layer][0].copy_from_slice(&complete[layer][0][37..]);
+        local[layer][0].copy_from_slice(&complete[layer][0][KEY_START..KEY_START + KEY_COUNT]);
     }
     // No BLE controller/profile task exists in this USB-only diagnostic.
     for action in &mut local[1][0] {
@@ -68,8 +105,11 @@ async fn main(_spawner: Spawner) {
             *action = rmk::a!(Transparent);
         }
     }
-    // Hold right Fn, press/release main-row 0, then release Fn to enter DFU.
-    local[1][0][11] = rmk::kbctrl!(Bootloader);
+    // Left retains shared Fn+Escape; right Fn+0 requests the same Adafruit DFU.
+    #[cfg(feature = "right")]
+    {
+        local[1][0][11] = rmk::kbctrl!(Bootloader);
+    }
     let mut data = KeymapData::new(local);
     let mut behavior = BehaviorConfig::default();
     let positional = PositionalConfig::default();
@@ -77,16 +117,16 @@ async fn main(_spawner: Spawner) {
     let mut keyboard = Keyboard::new(&keymap);
 
     let driver = Driver::new(p.USBD, Irqs, HardwareVbusDetect::new(Irqs));
-    let mut builder = UsbTransport::builder(
-        driver,
-        DeviceConfig {
-            vid: 0x4c4b,
-            pid: 0x4651,
-            manufacturer: "NocFree RMK community",
-            product_name: "NocFree Input Probe Right",
-            ..Default::default()
-        },
-    );
+    let device_config = DeviceConfig {
+        vid: 0x4c4b,
+        pid: PID,
+        manufacturer: "NocFree RMK community",
+        product_name: PRODUCT,
+        ..Default::default()
+    };
+    // Production left's dongle feature adds RMK vendor + reset-only DFU interfaces.
+    // RMK's builder reserves room for CDC; no radio or application DFU writer is started.
+    let mut builder = UsbTransport::builder(driver, device_config);
     static CDC_STATE: StaticCell<State> = StaticCell::new();
     let cdc = CdcAcmClass::new(builder.usb_builder(), CDC_STATE.init(State::new()), 64);
     let mut usb = builder.build();
@@ -97,16 +137,7 @@ async fn main(_spawner: Spawner) {
             while !sender.dtr() {
                 Timer::after_millis(20).await;
             }
-            let _ = sender
-                .write_packet(
-                    concat!(
-                        "NocFree input probe ",
-                        env!("CARGO_PKG_VERSION"),
-                        " right factory\r\n"
-                    )
-                    .as_bytes(),
-                )
-                .await;
+            let _ = sender.write_packet(GREETING.as_bytes()).await;
             while sender.dtr() {
                 Timer::after_millis(20).await;
             }
