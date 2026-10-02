@@ -1,6 +1,12 @@
 # Right-half USB input bring-up candidate
 
-Status: independently reviewed and packaged software candidate; **not installed or hardware validated**. The right currently runs the tested USB-only recovery probe described in [recovery-probe](recovery-probe.md). Left and receiver remain factory firmware. This document does not authorize flashing.
+Status: installed in an owner-authorized right-only trial on 2026-10-01. USB identity, version greeting, keyboard HID enumeration, software update entry and exact application readback passed on macOS. Physical typing, key mapping, cold recovery of this candidate and wake/disconnect acceptance remain pending. Left and receiver remain factory firmware. The right is temporarily in MSC bootloader mode for the recovery checks.
+
+## Observed trial results
+
+The prior running recovery probe matched its saved complete readable flash hash before installation. The input diagnostic was then transferred through the tested application-only serial DFU route. It enumerated as `NocFree Input Probe Right`, returned the expected version greeting and exposed a keyboard HID interface. macOS showed Keyboard Setup Assistant; that is enumeration evidence, not a completed key test.
+
+The candidate's 1200-baud CDC request successfully returned to the same MSC bootloader. Readback matched the exact application BIN, unchanged resident S140, unchanged readable flash above `0x36000` and the expected erased tail within the 15 application pages. Full readable UF2 SHA-256 is `1cf20d737280712a5edae5dc50e4946874db35b8f146a83fb3d9bb1e080eaff0`. Bootloader INFO remained identical; this is not a bootloader binary readback. Private records and readbacks are stored outside Git in `.evidence/trial-input-right/`.
 
 ## Build and exact candidate
 

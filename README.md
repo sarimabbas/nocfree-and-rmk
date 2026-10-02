@@ -12,8 +12,8 @@ The nRF52833 boards read switches through PCA9555 I²C expanders. One small scan
 - Factory 1200-baud bootloader entry and return after reconnect verified without writing firmware. That entry exposed CDC serial, not a UF2 drive.
 - Factory Fn+5 entry exposes a UF2 drive; its SoftDevice/application readback is saved locally and hash-verified. It does not back up the bootloader or filesystem.
 - Seven Rust input-driver tests and 32 Python safety tests (UF2 and serial packages) pass.
-- A separate right-only USB typing diagnostic is reviewed, cross-built and packaged, preserving the tested update foundation. It has not been installed or hardware tested.
-- Right-half probe installation, USB identity, software update entry, cold USB recovery, factory restore and reinstallation passed on the owner's hardware. The right currently runs that diagnostic, with no keyboard functionality; left and receiver remain factory firmware.
+- The right-only USB typing diagnostic is installed. Its version, keyboard interface, software update entry and exact application readback passed on macOS; physical key mapping, typing and this candidate's cold recovery remain pending.
+- Earlier right-half recovery-probe installation, USB identity, software update entry, cold USB recovery, factory restore and reinstallation passed on the owner's hardware. The right now has the newer input diagnostic and is temporarily in its bootloader for recovery checks; left and receiver remain factory firmware.
 - Right and receiver firmware cross-build within the preserved flash/RAM ranges.
 - Left fails the protected linker limit; the whole build harness correctly fails until this is resolved.
 - Separately selected `reclaimed-softdevice` builds fit all three roles by replacing S140 with current RMK's radio stack. They preserve the MBR, filesystem and bootloader address regions. The conservative image guard still rejects this layout; no migration image is approved for flashing.
