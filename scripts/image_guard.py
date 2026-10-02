@@ -1,10 +1,14 @@
 #!/usr/bin/env python3
 """Read-only validation of application-only nRF52833 UF2 images."""
 import argparse
+import binascii
 import hashlib
+import io
 import json
 from pathlib import Path
 import struct
+import zipfile
+import zlib
 
 FAMILY = 0x621E937A
 # Preserve factory SoftDevice, inferred filesystem, bootloader and UICR.
@@ -53,14 +57,78 @@ def inspect(data, require_recovery_marker=False):
                 status='structurally valid; device compatibility and recovery NOT verified')
 
 
+def inspect_serial_package(package, image):
+    """Bind an application-only legacy DFU package to a guarded recovery UF2.
+
+    START erases application pages before DATA, so validate the actual ZIP,
+    not just a companion image. This does not establish the connected role.
+    """
+    guarded = inspect(image, require_recovery_marker=True)
+    try:
+        with zipfile.ZipFile(io.BytesIO(package)) as archive:
+            names = archive.namelist()
+            if len(names) != 3 or len(set(names)) != 3 or 'manifest.json' not in names:
+                raise ValueError('serial package must contain exactly three unique application files')
+            if any('/' in name or '\\' in name for name in names):
+                raise ValueError('serial package paths are not allowed')
+            if any(info.file_size > END - START for info in archive.infolist()):
+                raise ValueError('serial package member exceeds the application slot')
+            if any(info.flag_bits & 1 for info in archive.infolist()):
+                raise ValueError('encrypted serial package members are not allowed')
+            document = json.loads(archive.read('manifest.json'))
+            manifest = document['manifest']
+            if set(document) != {'manifest'} or set(manifest) != {'application', 'dfu_version'} or manifest['dfu_version'] != 0.5:
+                raise ValueError('requires a legacy application-only manifest')
+            application = manifest['application']
+            if set(application) != {'bin_file', 'dat_file', 'init_packet_data'}:
+                raise ValueError('unexpected application manifest fields')
+            binary_name, dat_name = application['bin_file'], application['dat_file']
+            if binary_name == dat_name or set(names) != {'manifest.json', binary_name, dat_name}:
+                raise ValueError('manifest must identify distinct BIN and DAT files')
+            binary, packet = archive.read(binary_name), archive.read(dat_name)
+            if not binary or len(binary) % 4 or len(packet) != 14:
+                raise ValueError('requires a four-byte aligned application and 14-byte init packet')
+            crc = binascii.crc_hqx(binary, 0xffff)
+            expected = (0x52, 0xffff, 0xffffffff, 1, 0x123, crc)
+            if struct.unpack('<HHIHHH', packet) != expected:
+                raise ValueError('init packet does not match the preserved S140 application policy or CRC')
+            metadata = dict(device_type=0x52, device_revision=0xffff,
+                            application_version=0xffffffff, softdevice_req=[0x123], firmware_crc16=crc)
+            if application['init_packet_data'] != metadata:
+                raise ValueError('manifest metadata disagrees with the application init packet')
+    except (zipfile.BadZipFile, KeyError, TypeError, AttributeError, NotImplementedError,
+            RuntimeError, EOFError, zlib.error, json.JSONDecodeError, UnicodeDecodeError) as error:
+        raise ValueError('invalid serial application package') from error
+    payloads = sorted((struct.unpack_from('<I', image, offset + 12)[0],
+                       image[offset + 32:offset + 288]) for offset in range(0, len(image), 512))
+    payload = b''.join(data for _, data in payloads)
+    padded_size = (len(binary) + 255) // 256 * 256
+    if len(payload) != padded_size or payload != binary + b'\xff' * (padded_size - len(binary)):
+        raise ValueError('serial application does not match the exact guarded UF2 payload')
+    if int(guarded['reset_vector'], 16) & ~1 >= START + len(binary):
+        raise ValueError('reset vector points outside the exact serial application')
+    erase_end = START + (len(binary) + 4095) // 4096 * 4096
+    if erase_end > END:
+        raise ValueError('serial application erase would touch protected memory')
+    return dict(package_sha256=hashlib.sha256(package).hexdigest(),
+                binary_sha256=hashlib.sha256(binary).hexdigest(), binary_size=len(binary),
+                erase_start=hex(START), erase_end_exclusive=hex(erase_end), uf2=guarded,
+                status='application-only package matches guarded UF2; device role and approval NOT verified')
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--image', '-i', type=Path, required=True, help='Application UF2 to inspect; never written to a device')
     parser.add_argument('--require-recovery-marker', '-r', action='store_true',
                         help='Also require the recovery-first marker; does not verify installed bootloader behavior')
+    parser.add_argument('--serial-package', '-p', type=Path,
+                        help='Also validate a legacy application-only DFU ZIP against this recovery-marked UF2; never flashes')
     args = parser.parse_args()
     try:
-        print(json.dumps(inspect(args.image.read_bytes(), args.require_recovery_marker), indent=2))
+        data = args.image.read_bytes()
+        result = (inspect_serial_package(args.serial_package.read_bytes(), data) if args.serial_package
+                  else inspect(data, args.require_recovery_marker))
+        print(json.dumps(result, indent=2))
     except (OSError, ValueError) as error:
         parser.exit(1, f'Rejected: {error}\n')
 
