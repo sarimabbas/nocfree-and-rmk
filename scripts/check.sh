@@ -31,5 +31,7 @@ cargo fmt --manifest-path firmware/Cargo.toml -- --check
                 --no-default-features --features "$probe_role,input-probe,usb-recovery-first$keymap_features" || failed=1
         done
     done
+    cargo build --locked --release --bin recovery-probe --target thumbv7em-none-eabihf \
+        --no-default-features --features left,migration-probe || failed=1
     exit "$failed"
 )
