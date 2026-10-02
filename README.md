@@ -28,6 +28,7 @@ Backlighting, indicators, physical mode-switch handling, factory web configurati
 
 ## Build, research and recovery
 
+- [Read-only macOS companion prototype](desktop/README.md)
 - [Guided GPUI/gpuikit installer proposal](docs/research/guided-installer-app.md)
 - [Runtime/HAL observations and exact factory restoration](docs/research/runtime-hal-trial.md)
 - [Left migration recovery, failed startup and exact factory restoration](docs/research/left-migration-trial.md)

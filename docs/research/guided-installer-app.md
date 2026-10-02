@@ -2,6 +2,8 @@
 
 Research and proposal, 2026-10-01. No application was built, no devices were accessed and no firmware was written for this research. This extends [newcomer installation](newcomer-installation.md); it does not establish a production installation route or broaden any approved hardware trial.
 
+Subsequent implementation: the [read-only macOS companion](../../desktop/README.md) now builds and launches locally. Its narrower implemented scope and validation are recorded there; guarded firmware installation and cross-OS distribution remain planned.
+
 ## Decision
 
 Yes: a GPUI application with **iamnbutler/gpuikit** can replace the repeated chat instructions with one illustrated step at a time, automatic observation of USB removal/reappearance, local backup handling and clear verification results. The benefit comes from an installer session that tracks evidence. GPU rendering is incidental to that benefit. The person still moves cables and switches; host USB observations cannot directly prove a mechanical switch position or battery power state.
