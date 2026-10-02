@@ -2,6 +2,8 @@
 
 An experimental Rust port for the **ANSI NocFree AND**, using current RMK and a conventional left-central/right-peripheral split. **Both halves have passed USB diagnostic recovery and factory restoration trials.** The complete keyboard port is not hardware-ready: all three roles cross-build in an explicit migration layout, but complete split/radio operation, receiver recovery and recovery after flash-layout migration remain unverified.
 
+Both halves now run the opt-in [Mac USB diagnostics](docs/mac-mode.md); exact readback and battery-first startup passed, while the Mac media-row checks remain pending. Keyboard backlight is still unimplemented.
+
 The target is USB or Bluetooth HID from the left half, Bluetooth split communication from the right, separate battery reporting, and a reflashed RMK Bluetooth-to-USB receiver. The factory receiver protocol is proprietary; an unchanged receiver is incompatible with this design. Host behavior still needs macOS, Windows and Linux testing.
 
 The nRF52833 boards read switches through PCA9555 I²C expanders. One small scanner hides that wiring; RMK owns debounce, key behavior, persistent bonds and transports. Three role-specific builds avoid compiling receiver behavior into the right half. We have not adopted an unconventional cross-half processing protocol.

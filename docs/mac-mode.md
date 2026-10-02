@@ -1,4 +1,6 @@
-# Mac function row candidate
+# Mac function row
+
+Status: both Mac USB diagnostics are installed with exact readback and battery-first startup verified on macOS. The requested media-row hardware checks remain pending owner feedback; F5/F6 backlight support is not implemented.
 
 The optional `mac-keymap` Cargo feature selects the user's Mac function row in the
 shared electrical default keymap. Both USB input diagnostics and the production left
@@ -89,3 +91,11 @@ The owner explicitly approved both guarded Mac diagnostic updates. The left was 
 Left readback matches the exact Mac BIN, expected FF tail through `0x36000`, unchanged S140 below `0x27000` and unchanged readable flash above `0x36000`. INFO content matched. Complete readable UF2 SHA-256 is `17306f31b8715e3e2221c4d66e7af7b951fcf2f60ba57f756b594166ada598e7`. Final left startup is pending owner participation before the right update. Mac media-row behavior remains untested. Private logs/readbacks are in ignored `.evidence/mac-trial/`; existing working restore images remain available. The dongle has not been touched.
 
 The first reported post-update battery-first sequence left the left in MSC, rather than the expected Mac application. The readable image still matched `17306f31b8715e3e2221c4d66e7af7b951fcf2f60ba57f756b594166ada598e7`. This is a failed startup observation, not evidence of its cause. The right update has not started. Root requested a staged WIRED/USB-absent check followed by battery startup to isolate the sequence without another flash.
+
+The staged left restart subsequently passed without another firmware write: root confirmed USB absence in middle WIRED, then the owner selected Bluetooth while unplugged, waited ten seconds and reattached USB. The left Mac product and exact greeting returned. The earlier failed observation is retained; its cause was not established.
+
+The right was then correlated from its role-specific normal identity/greeting to a unique bootloader, and its full known-good readable hash `a1c5eebc633016e5c36a7eeac5465ac893a09c25475631d466574c6b3824d7eb` was checked before transfer. The guarded right Mac package installed successfully. Mac product/greeting and software update entry passed. Readback matched the exact candidate BIN and FF tail through `0x36000`, with S140 and readable flash outside the application erase extent unchanged. INFO content matched. Complete right readable UF2 SHA-256 is `3c18ec8d9287a2d7c97994f59753c4557ca982d59baa5fb9b691a89544432366`.
+
+The right is currently in its existing bootloader awaiting owner-operated battery-first startup. The left is running its Mac diagnostic. Both media rows remain hardware-test pending; F5/F6 remain ordinary function keys because backlight support is still pending. The dongle remains untouched.
+
+The owner then performed the right OFF/USB-absent five seconds, ON/battery-first ten seconds, USB-reattach sequence. The exact right Mac greeting passed, and the left Mac diagnostic remained enumerated. Both halves are now running the Mac diagnostics. Owner-assisted brightness, Mission Control, Spotlight, playback/volume and Fn-function-row checks have been requested; no results are assumed. Independent review verified both installed readbacks and preserved readable ranges.
