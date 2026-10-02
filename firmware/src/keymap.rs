@@ -111,9 +111,9 @@ pub fn default_keymap() -> [[[KeyAction; 84]; 1]; 2] {
     #[cfg(feature = "mac-keymap")]
     let base = {
         let mut base = base;
-        // Standard consumer usages; RMK owns report generation and modifiers.
-        base[1] = k!(BrightnessDown);
-        base[2] = k!(BrightnessUp);
+        // Match the captured NuPhy Mac brightness keys: F14/F15.
+        base[1] = k!(F14);
+        base[2] = k!(F15);
         base[3] = k!(MissionControl);
         base[4] = k!(WwwSearch);
         // F5/F6 retain function keys until RMK supports keyboard backlight control.

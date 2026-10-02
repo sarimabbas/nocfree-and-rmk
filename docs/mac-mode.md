@@ -12,8 +12,8 @@ existing keymap and diagnostic USB names/greetings remain unchanged.
 
 | Key | Plain press with `mac-keymap` | Fn held |
 | --- | --- | --- |
-| F1 | Display brightness down | F1 |
-| F2 | Display brightness up | F2 |
+| F1 | F14, intended for display brightness down | F1 |
+| F2 | F15, intended for display brightness up | F2 |
 | F3 | Mission Control | F3 |
 | F4 | AC Search, intended for Spotlight | F4 |
 | F5 | F5; keyboard backlight down pending | F5 |
@@ -38,11 +38,11 @@ consumer AC Search (`0x0221`); `MissionControl` maps to Desktop Show All Windows
 expected view remains a macOS hardware acceptance check. Building a candidate
 does not confirm those host behaviors.
 
-In the existing left diagnostic, the owner verified that Control plus the
-brightness action controls their external Apple display; the brightness action
-alone did not. This candidate keeps the standard brightness usages. Hold Ctrl
-with plain F1/F2 when the display requires it. It does not inject Ctrl into every
-brightness press, which could change behavior for other displays.
+The currently installed Mac diagnostic uses standard consumer brightness usages,
+which require Ctrl on the owner's external display. The next source candidate uses
+F14/F15 after capturing the owner's working NuPhy brightness keys. This new mapping
+has not yet been installed or tested on NocFree. It leaves Fn+F1/F2 as ordinary
+F1/F2 and does not inject Ctrl.
 
 The local diagnostics keep left Fn+Escape and right Fn+0 for the existing
 bootloader entry. They still filter BLE profile actions because these USB-only
@@ -105,3 +105,9 @@ The owner then performed the right OFF/USB-absent five seconds, ON/battery-first
 The owner reported that all requested Mac-row checks worked: external display brightness with Ctrl+F1/F2, Mission Control, Spotlight, playback/volume controls and Fn ordinary function keys. This is an owner-assisted functional pass, not raw HID capture, an exhaustive key sweep or numerical reliability validation. Keyboard backlight was explicitly excluded.
 
 The owner asked why their Magic Keyboard changes display brightness without Ctrl. The current firmware emits standard consumer brightness usages `0x0070`/`0x006f`; [Apple documents Control+brightness for supported external displays](https://support.apple.com/en-us/102650). The exact Magic Keyboard report/driver-routing difference has not been captured, so Apple-specific routing remains an inference rather than a measured explanation. A future external-display preference could map F1/F2 to the already tested Ctrl+brightness chord using RMK modifiers; do not inject Ctrl into every display/profile without making that choice explicit.
+
+## NuPhy comparison and next brightness candidate
+
+A read-only input listener matched only the connected NuPhy Air75 V3. The owner pressed brightness down and up without Ctrl. Captured keyboard-page (`0x07`) events were F14 (`0x69`) press/release followed by F15 (`0x6a`) press/release; no Ctrl events were observed. The owner previously reported this keyboard controls their external display brightness. Capture proves the emitted keys; it did not measure display luminance or capture a Magic Keyboard.
+
+The next Mac default maps plain F1/F2 to those exact F14/F15 keys through RMK. Fn+F1/F2 remains ordinary F1/F2, and feature-off generic behavior is unchanged. The installed candidate still uses consumer brightness; do not describe this two-line source change as a flashed or hardware-validated fix. The raw capture and decoded result are local ignored evidence. No further keyboard or firmware changes were needed to obtain the comparison.
