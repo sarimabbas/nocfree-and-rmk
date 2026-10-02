@@ -10,6 +10,14 @@ The pinned nRF driver's reset event path consumes USBRESET and initializes endpo
 
 The proposed separately approved trial can start from the current verified diagnostic, without rewriting factory first. Require fresh device identity and exact current readback before the transfer, the new image's own independent recovery/readback, and a guide-confirmed startup observation. Preserve the original factory restore throughout. Reuse the existing neutral-control observation for this controlled investigation; do not silently generalize it to another board or bootloader. A failed mode result stops further installs.
 
+## Exact local artifact
+
+Clean source: `589128bd9084c2872bcdbdc8607b8cafa98cdf1b`. BIN size 14,768 bytes, end `0x49b0`, SHA-256 `618e65704c38a79f9b93aae99bdafcb2b92198d2505a3e6b9c6b492385e06318`. UF2 SHA-256 `06f4ab87a74e173aa0dd84d54ba6a8a24c6419af9d1eddec6ec18a891aec45de`, 64 blocks, exact page-padded interval `0x1000..0x5000`. Family `0x621e937a`, stack `0x20020000`, reset vector `0x1205`, retained recovery marker at `0x1200`.
+
+Canonical migration address/vector/family and exact BIN/padding guards passed, as did the original factory restore guard. The reclaimed-layout repeatable harness passed before and after changes: 42 Python tests, five scanner tests, two doctests, all six role/keymap builds and all diagnostic stages. Eight invalid pairs with the new stage and four wrong-role combinations failed for the intended guard reason. These are software checks. The full factory-preserving left RMK image's previously recorded size failure remains unresolved. Artifacts stay local under ignored `dist/`; no device writes occurred.
+
+Independent source and artifact review passed: ELF load reconstruction equals the exact BIN, all UF2 payload/padding bytes match, optimized reset callback occupies the expected Handler vtable slot and calls the retained volatile-request/DSB/reset helper. The ordinary enabled handler, asynchronous bus/control/reset dispatch and executor paths remain linked. Data and BSS stay within the guarded RAM bounds. No actionable review findings remained.
+
 ## Reducing physical work
 
 The app exposes a deliberate paused state, and a thread heartbeat is configured in standby to process fresh completed physical steps without chat acknowledgments. Activate it when the next physical phase begins. It is polling, not an immediate callback, and the scheduled handoff still needs end-to-end validation.
