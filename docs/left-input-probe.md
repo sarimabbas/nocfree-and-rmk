@@ -1,6 +1,6 @@
 # Left USB input diagnostic
 
-Status: installed in an explicitly owner-approved left-only trial on 2026-10-01. Initial USB identity, version greeting, software update entry and exact application readback passed. Application-independent marker recovery and battery-first diagnostic startup remain pending. The left is currently in its existing bootloader for those checks. See [left reset evidence](research/left-reset-evidence.md) for the separate recovery gate.
+Status: ongoing owner-approved left-only trial on 2026-10-01. Diagnostic identity, greeting, update entry, exact readback, physical USB-first recovery and battery-first startup passed. Factory restoration and diagnostic reinstallation both passed exact readback. The left is currently in its existing bootloader awaiting one final battery-first startup; physical typing remains untested. See [left reset evidence](research/left-reset-evidence.md) for the separate recovery gate.
 
 The existing input diagnostic now selects exactly one half. The left uses the same PCA9555 scanner seam, explicit external crystal startup, RMK debounce, shared keymap and USB transport as the tested right. Its 37 positions are the first slice of the shared ANSI map; the right remains the last 47. No new debounce, HID processing or split protocol was introduced.
 
@@ -51,3 +51,17 @@ The factory serial update request did not expose MSC; the owner entered the exis
 Application-only serial DFU completed. `NocFree Input Probe Left`, VID/PID `4c4b:4652`, enumerated and returned its expected greeting. The deliberate 115200/DTR-high → 1200/DTR-low sequence returned to the existing MSC bootloader. Readback matched every candidate BIN byte, the expected FF tail through `0x36000`, unchanged resident S140 below `0x27000`, and unchanged readable flash above `0x36000`. Full readable UF2 SHA-256 is `2ce6efa1e82adff1be74e359163f61ac21a6d67037e57813b8d4665baed7a023`. Bootloader INFO content remained identical; it is not a bootloader binary readback. The right diagnostic stayed enumerated.
 
 Private logs and evidence are in ignored `.evidence/left-bringup/trial/`. At this checkpoint, physical marker recovery, diagnostic battery-first startup, factory restoration, input mapping and disconnect/wake acceptance remain untested. No successful transfer or readback is counted as a key or latency test.
+
+## Physical recovery, startup and restore progress
+
+With the diagnostic marker installed, the owner selected middle WIRED, unplugged only the left USB for five seconds, then reattached it without pressing keys. The existing MSC bootloader appeared; full readable image SHA-256 still matched `2ce6efa1e82adff1be74e359163f61ac21a6d67037e57813b8d4665baed7a023`, and bootloader INFO content matched. Together with the earlier factory comparison, this is observed USB-first recovery evidence for this specific left. It is not a rail-voltage measurement, an interrupted-update test or evidence for migration/receiver recovery.
+
+The owner then selected WIRED, disconnected USB for five seconds, selected Bluetooth while still disconnected, waited five seconds, and reattached USB. The diagnostic enumerated, returned the exact left greeting and exposed keyboard HID usage page 1/usage 6. This verifies one battery-first diagnostic startup on macOS, not a latency or stress test.
+
+The diagnostic's deliberate CDC update sequence returned to MSC again. Before restoration, the image hash still matched the diagnostic; the exact local factory restore ZIP/BIN/UF2, metadata, CRC and equality to the saved factory slot were rechecked. Approved serial restoration of the application slot `0x27000..0x65000` completed, and factory `NocFree & ANSI`, VID/PID `2886:8029`, enumerated. Factory readback and diagnostic reinstallation are pending owner-operated Fn+5 entry. The right diagnostic remained enumerated throughout; the dongle was not touched.
+
+## Verified factory restoration and reinstallation
+
+The owner entered the restored factory bootloader with Fn+5 in middle WIRED. Its entire readable `CURRENT.UF2` was byte-identical to the original pre-trial backup, SHA-256 `88cb768f452682cb12025f2296ee151442349079405a7a11f454f752153e4100`; INFO content also matched. This is an observed application rollback, not merely a prepared restore package.
+
+With the required recovery/startup/restore checks passing, the same approved diagnostic ZIP was revalidated and reinstalled. Its expected greeting passed, the software update route returned to MSC, and the complete readable image matched the first diagnostic installation byte-for-byte, SHA-256 `2ce6efa1e82adff1be74e359163f61ac21a6d67037e57813b8d4665baed7a023`. Final battery-first startup remains pending owner participation. No S140/bootloader migration, dongle update, left key sweep or transport acceptance is implied by this trial.

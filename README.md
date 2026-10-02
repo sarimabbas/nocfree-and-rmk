@@ -1,6 +1,6 @@
 # NocFree AND + RMK
 
-An experimental Rust port for the **ANSI NocFree AND**, using current RMK and a conventional left-central/right-peripheral split. **The right-half USB update foundation is installed and tested.** The complete keyboard port is not hardware-ready: all three roles cross-build in an explicit migration layout, but keyboard/radio operation and the left/receiver recovery workflows remain unverified.
+An experimental Rust port for the **ANSI NocFree AND**, using current RMK and a conventional left-central/right-peripheral split. **Both halves have passed USB diagnostic recovery and factory restoration trials.** The complete keyboard port is not hardware-ready: all three roles cross-build in an explicit migration layout, but complete split/radio operation, receiver recovery and recovery after flash-layout migration remain unverified.
 
 The target is USB or Bluetooth HID from the left half, Bluetooth split communication from the right, separate battery reporting, and a reflashed RMK Bluetooth-to-USB receiver. The factory receiver protocol is proprietary; an unchanged receiver is incompatible with this design. Host behavior still needs macOS, Windows and Linux testing.
 
@@ -8,12 +8,12 @@ The nRF52833 boards read switches through PCA9555 I²C expanders. One small scan
 
 ## Current evidence
 
-- ANSI left-half USB identity confirmed on the owner's board.
+- The left USB diagnostic passed identity/greeting, exact readback, physical USB-first recovery, battery-first startup, exact factory restoration and diagnostic reinstallation. Final startup and physical left typing remain pending; see [left trial](docs/left-input-probe.md).
 - Factory 1200-baud bootloader entry and return after reconnect verified without writing firmware. That entry exposed CDC serial, not a UF2 drive.
 - Factory Fn+5 entry exposes a UF2 drive; its SoftDevice/application readback is saved locally and hash-verified. It does not back up the bootloader or filesystem.
 - Seven Rust input-driver tests and 32 Python safety tests (UF2 and serial packages) pass.
 - The right-only USB typing diagnostic is installed. Its version, keyboard interface, software update entry, exact application readback and initial cold recovery passed on macOS. A USB-clock initialization correction resolved the observed battery-first enumeration failure; its subsequent startup, greeting and owner-reported basic typing passed. The complete key sweep and wake/disconnect tests remain pending.
-- Earlier right-half recovery-probe installation, USB identity, software update entry, cold USB recovery, factory restore and reinstallation passed on the owner's hardware. The right now runs the newer clock-corrected input diagnostic; left and receiver remain factory firmware.
+- Earlier right-half recovery-probe installation, USB identity, software update entry, cold USB recovery, factory restore and reinstallation passed on the owner's hardware. The right now runs the newer clock-corrected input diagnostic; the receiver remains factory firmware.
 - Right and receiver firmware cross-build within the preserved flash/RAM ranges.
 - Left fails the protected linker limit; the whole build harness correctly fails until this is resolved.
 - Separately selected `reclaimed-softdevice` builds fit all three roles by replacing S140 with current RMK's radio stack. They preserve the MBR, filesystem and bootloader address regions. The conservative image guard still rejects this layout; no migration image is approved for flashing.
