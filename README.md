@@ -8,7 +8,7 @@ The nRF52833 boards read switches through PCA9555 I²C expanders. One small scan
 
 ## Current evidence
 
-- The left USB diagnostic passed identity/greeting, exact readback, physical USB-first recovery, battery-first startup, exact factory restoration and diagnostic reinstallation. Final startup and physical left typing remain pending; see [left trial](docs/left-input-probe.md).
+- The left USB diagnostic passed identity/greeting, exact readback, physical USB-first recovery, battery-first startup, exact factory restoration and diagnostic reinstallation. Final startup and owner-reported typing, Shift, Space and Tab passed; the complete acceptance sweep remains pending; see [left trial](docs/left-input-probe.md).
 - Factory 1200-baud bootloader entry and return after reconnect verified without writing firmware. That entry exposed CDC serial, not a UF2 drive.
 - Factory Fn+5 entry exposes a UF2 drive; its SoftDevice/application readback is saved locally and hash-verified. It does not back up the bootloader or filesystem.
 - Seven Rust input-driver tests and 32 Python safety tests (UF2 and serial packages) pass.

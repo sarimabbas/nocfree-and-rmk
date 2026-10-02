@@ -1,6 +1,6 @@
 # Left USB input diagnostic
 
-Status: ongoing owner-approved left-only trial on 2026-10-01. Diagnostic identity, greeting, update entry, exact readback, physical USB-first recovery and battery-first startup passed. Factory restoration and diagnostic reinstallation both passed exact readback. The left is currently in its existing bootloader awaiting one final battery-first startup; physical typing remains untested. See [left reset evidence](research/left-reset-evidence.md) for the separate recovery gate.
+Status: ongoing owner-approved left-only trial on 2026-10-01. Diagnostic identity, greeting, update entry, exact readback, physical USB-first recovery and battery-first startup passed. Factory restoration and diagnostic reinstallation both passed exact readback. Final battery-first startup passed; the owner reported that the requested left typing, Shift, Space and Tab checks all worked. The left is running the diagnostic; the complete key sweep and disconnect/wake acceptance remain pending. See [left reset evidence](research/left-reset-evidence.md) for the separate recovery gate.
 
 The existing input diagnostic now selects exactly one half. The left uses the same PCA9555 scanner seam, explicit external crystal startup, RMK debounce, shared keymap and USB transport as the tested right. Its 37 positions are the first slice of the shared ANSI map; the right remains the last 47. No new debounce, HID processing or split protocol was introduced.
 
@@ -65,3 +65,13 @@ The diagnostic's deliberate CDC update sequence returned to MSC again. Before re
 The owner entered the restored factory bootloader with Fn+5 in middle WIRED. Its entire readable `CURRENT.UF2` was byte-identical to the original pre-trial backup, SHA-256 `88cb768f452682cb12025f2296ee151442349079405a7a11f454f752153e4100`; INFO content also matched. This is an observed application rollback, not merely a prepared restore package.
 
 With the required recovery/startup/restore checks passing, the same approved diagnostic ZIP was revalidated and reinstalled. Its expected greeting passed, the software update route returned to MSC, and the complete readable image matched the first diagnostic installation byte-for-byte, SHA-256 `2ce6efa1e82adff1be74e359163f61ac21a6d67037e57813b8d4665baed7a023`. Final battery-first startup remains pending owner participation. No S140/bootloader migration, dongle update, left key sweep or transport acceptance is implied by this trial.
+
+## Final startup and owner-assisted typing
+
+After reinstallation/readback, the owner repeated the battery-first sequence. The left returned its exact expected greeting again, with the right diagnostic still enumerated. The owner then reported “everything works perfectly” for the requested `123456 qwert asdfg zxcvb`, left-Shift uppercase text, Space and Tab check. This is an owner-assisted functional pass without raw HID capture; it is not a complete key/modifier sweep or latency/no-loss validation. The owner subsequently confirmed Ctrl+Fn+F1/F2 changes the external display brightness; Fn+F1/F2 alone did not on this setup.
+
+## External display brightness and next Mission Control mapping
+
+The owner reported no brightness change from Fn+F1/F2 alone on their Apple external display, while another keyboard worked. Holding left Ctrl+Fn and tapping F1/F2 then worked. This matches [Apple's external-display Control+brightness shortcut](https://support.apple.com/en-us/102650); the existing standard consumer brightness mapping remains unchanged. No raw HID capture was required after the physical shortcut succeeded.
+
+The next source candidate maps left Fn+F3 to RMK's native `MissionControl` keycode, which the pinned framework translates to consumer usage `0x029f` (Desktop Show All Windows). Plain F3 remains F3. This mapping has not yet been installed or hardware-tested; the running left still has transparent Fn+F3. Do not count framework naming as macOS validation. The documented initial-trial hashes above remain the installed checkpoint.

@@ -93,6 +93,7 @@ pub fn default_keymap() -> [[[KeyAction; 84]; 1]; 2] {
     function[0] = kbctrl!(Bootloader);
     function[1] = k!(BrightnessDown);
     function[2] = k!(BrightnessUp);
+    function[3] = k!(MissionControl);
     function[37] = k!(MediaPrevTrack);
     function[38] = k!(MediaPlayPause);
     function[39] = k!(MediaNextTrack);
