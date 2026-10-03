@@ -16,10 +16,13 @@ reaches its intact application entry. It cannot survive corruption of itself,
 the vector table, or the factory bootloader, nor detect keys before that
 bootloader chooses to launch the application.
 
-With USB present, complete scans must contain left Fn+Escape or right
+At each keyboard startup, complete scans must contain left Fn+Escape or right
 Fn+Backspace for 60 ms. Other held keys are allowed. An absent chord adds only
-initialization and one scan; no USB bypasses the bus entirely. Initialization,
-NACK, incomplete transfer, key release, USB removal, deadline and stalled-clock
+initialization and one scan. Recovery does not depend on USB detection: the
+first diagnostic observed `boot:noUSB` during a USB-connected held-key startup,
+so an early VBUS status check cannot decide whether to scan. USB supply status
+remains recorded for diagnosis, but neither starts nor aborts the chord check.
+Initialization, NACK, incomplete transfer, key release, deadline and stalled-clock
 failure all return to the application if the bus stops cleanly. A fatal bus that
 does not acknowledge STOP enters factory recovery instead: continuing would
 leave EasyDMA ownership of stack buffers uncertain. The scanner remains RMK's scanner after
@@ -45,6 +48,10 @@ integration; exported hook symbols and image marker handling are root-owned.
 
 Recovery sets the factory bootloader's already observed GPREGRET request 0x57,
 then resets through AIRCR with DSB. It writes no bootloader pages or UICR.
+The factory bootloader's analyzed path uses a three-second USB enumeration
+timeout for this request. With no USB host, it may return to the application;
+continuing to hold the startup chord can request recovery again. Connect USB
+for the recovery drive rather than expecting untimed battery-only DFU.
 
 Repeatable host policy tests (fault injection and timer wraparound):
 
@@ -79,3 +86,6 @@ not measured, so that result does not isolate the scanner from the power path.
 existing device configuration. The product name and transport implementation
 stay the same. This is temporary instrumentation, not a completed recovery route.
 It changes neither the factory bootloader nor UICR, and adds no USB interface.
+The next diagnostic trial observed `boot:noUSB` after the owner held the chord
+during wired USB reconnection. The current implementation therefore scans on
+battery and USB startup alike; the recovery request still needs hardware testing.

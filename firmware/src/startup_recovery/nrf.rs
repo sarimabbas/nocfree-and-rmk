@@ -171,9 +171,6 @@ impl Inputs for Bus {
     fn first_snapshot(&mut self, bits: u64) {
         super::trace::snapshot(bits);
     }
-    fn usb(&self) -> bool {
-        unsafe { read(0x40000438) & 1 != 0 }
-    }
     fn now_us(&mut self) -> u32 {
         self.ticks()
     }
@@ -224,11 +221,6 @@ pub unsafe fn check(right: bool) {
         pins: [0; 2],
         active: false,
     };
-    if !bus.usb() {
-        #[cfg(feature = "startup-recovery-diagnostic")]
-        super::trace::outcome(gate::Outcome::NoUsb);
-        return;
-    }
     if !unsafe { bus.begin() } {
         #[cfg(feature = "startup-recovery-diagnostic")]
         super::trace::outcome(gate::Outcome::PeripheralOwned);

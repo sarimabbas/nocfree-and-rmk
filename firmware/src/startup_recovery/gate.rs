@@ -7,23 +7,22 @@ pub enum Role {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u32)]
 pub enum Outcome {
+    // Values 2 and 10 were USB gate outcomes in the first diagnostic image.
+    // Keep other values stable when reading previously saved trace records.
     Entered = 1,
-    NoUsb,
-    PeripheralOwned,
+    PeripheralOwned = 3,
     InitFailed,
     ScanFailed,
     MissingFn,
     MissingOther,
     MissingBoth,
     Released,
-    UsbLost,
-    Deadline,
+    Deadline = 11,
     TimerFailed,
     Held,
     StopFailed,
 }
 pub trait Inputs {
-    fn usb(&self) -> bool;
     fn now_us(&mut self) -> u32;
     fn initialize(&mut self) -> bool;
     fn snapshot(&mut self) -> Option<u64>;
@@ -31,12 +30,9 @@ pub trait Inputs {
     fn outcome(&mut self, _outcome: Outcome) {}
     fn first_snapshot(&mut self, _bits: u64) {}
 }
-/// Errors and incomplete snapshots always launch the application.
+/// Rejected chords and incomplete snapshots return to the application.
+/// An adapter unable to stop an active DMA transfer must reset without returning.
 pub fn held<I: Inputs>(io: &mut I, role: Role) -> bool {
-    if !io.usb() {
-        io.outcome(Outcome::NoUsb);
-        return false;
-    }
     let deadline = io.now_us();
     if !io.initialize() {
         io.outcome(Outcome::InitFailed);
@@ -49,10 +45,6 @@ pub fn held<I: Inputs>(io: &mut I, role: Role) -> bool {
     let start = io.now_us();
     // The cap also terminates with a broken/stalled timer.
     for scan in 0..128 {
-        if !io.usb() {
-            io.outcome(Outcome::UsbLost);
-            return false;
-        }
         if io.now_us().wrapping_sub(deadline) >= 200_000 {
             io.outcome(Outcome::Deadline);
             return false;
@@ -110,9 +102,8 @@ mod tests {
         scans: usize,
         fail_at: usize,
         release_at: usize,
-        usb: bool,
-        unplug_at: usize,
         init: bool,
+        init_us: u32,
         frozen: bool,
         reason: Option<Outcome>,
         first: Option<u64>,
@@ -124,13 +115,11 @@ mod tests {
         fn first_snapshot(&mut self, bits: u64) {
             self.first = Some(bits);
         }
-        fn usb(&self) -> bool {
-            self.usb && self.scans < self.unplug_at
-        }
         fn now_us(&mut self) -> u32 {
             self.time
         }
         fn initialize(&mut self) -> bool {
+            self.time = self.time.wrapping_add(self.init_us);
             self.init
         }
         fn snapshot(&mut self) -> Option<u64> {
@@ -160,9 +149,8 @@ mod tests {
             scans: 0,
             fail_at: usize::MAX,
             release_at: usize::MAX,
-            usb: true,
-            unplug_at: usize::MAX,
             init: true,
+            init_us: 0,
             frozen: false,
             reason: None,
             first: None,
@@ -179,10 +167,6 @@ mod tests {
         let mut b = bus(0);
         assert!(!held(&mut b, Role::Left));
         assert_eq!(b.scans, 1);
-        b.usb = false;
-        b.scans = 0;
-        assert!(!held(&mut b, Role::Left));
-        assert_eq!(b.scans, 0);
     }
     #[test]
     fn every_snapshot_failure_rejects_recovery() {
@@ -210,11 +194,12 @@ mod tests {
         assert!(b.scans <= 128);
     }
     #[test]
-    fn unplug_during_hold_rejects() {
+    fn initialization_time_counts_toward_deadline() {
         let mut b = bus((1 << 40) | 1);
-        b.unplug_at = 10;
+        b.init_us = 200_000;
         assert!(!held(&mut b, Role::Left));
-        assert_eq!(b.scans, 10);
+        assert_eq!(b.scans, 0);
+        assert_eq!(b.reason, Some(Outcome::Deadline));
     }
     #[test]
     fn wraparound_and_other_keys() {
@@ -248,9 +233,5 @@ mod tests {
         b.init = false;
         assert!(!held(&mut b, Role::Left));
         assert_eq!(b.reason, Some(Outcome::InitFailed));
-        b = bus((1 << 40) | 1);
-        b.usb = false;
-        assert!(!held(&mut b, Role::Left));
-        assert_eq!(b.reason, Some(Outcome::NoUsb));
     }
 }

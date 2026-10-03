@@ -50,7 +50,6 @@ pub fn transfer_error(address: u8, error: u32, tx: u32, rx: u32) {
 fn label(reason: u32, error: u32) -> &'static str {
     match reason {
         1 => "boot:entered",
-        2 => "boot:noUSB",
         3 => "boot:owned",
         4 if error & 6 != 0 => "boot:initNACK",
         4 => "boot:initFail",
@@ -60,7 +59,6 @@ fn label(reason: u32, error: u32) -> &'static str {
         7 => "boot:noKey",
         8 => "boot:noChord",
         9 => "boot:released",
-        10 => "boot:usbLost",
         11 => "boot:deadline",
         12 => "boot:timerFail",
         13 => "boot:held",

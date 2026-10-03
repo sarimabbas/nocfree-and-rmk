@@ -32,9 +32,10 @@ is an explicit exceptional behavior, now accurately documented.
   Exclusive TIMER1/TWIM0 ownership and already-masked interrupts are prerequisites.
 - PCA9555 configuration6/7=ff and polarity4/5=0 match the working scanner's input
   assumptions; input0/1 reads combine active-low bits into the role-local chords.
-- Policy rejects noUSB, first scan without chord, incomplete/NACK scans, release,
-  USB loss and time/iteration cap. Hold timing uses wrapping subtraction. Extra
-  simultaneous held keys are intentionally allowed. USB absence avoids setup.
+- Policy rejects first scan without chord, incomplete/NACK scans, release and
+  time/iteration cap. Hold timing uses wrapping subtraction. Extra simultaneous
+  held keys are intentionally allowed. Every keyboard startup now scans once;
+  USB detection is recorded only as diagnostic metadata.
 
 ## Repeatable verification
 
@@ -115,12 +116,39 @@ overrun bit0 alone remains a generic failure. These diagnostics do not establish
 which electrical fault occurred or prove held-key recovery. Actual installed
 readback and physical startup/typing/recovery checks remain separate.
 
+## USB-independent startup correction
+
+The diagnostic hardware observation `boot:noUSB` established that early VBUS
+sampling skipped the held-key scanner. This revision removes both the initial
+VBUS condition and the policy's repeated USB checks. Every keyboard startup
+initializes and reads one complete snapshot; absent/partial chord returns to
+RMK immediately after that snapshot. A continuously held local chord for60ms
+requests factory recovery. Release, incomplete scan, initialization failure,
+200ms policy deadline and128-iteration cap still reject; fatal STOP handling is
+unchanged. Ten host tests independently passed, including initialization time
+counting against the deadline. Physical acceptance remains pending.
+
+Final left ELF SHA256 is
+`fca216edd9e0cb3628a3a3eeb3302eee859be5ba64de0fedf8df32389496e103`.
+Its thirteen early reachable functions were inspected again. USBREGSTATUS is
+read once into the initialized trace and no longer controls startup. Correct
+left chord bits40/0, the erased reserve, pre-BSS hook and trace NOLOAD placement
+remain intact; allocated ELF sections match the guarded binary exactly.
+
+The original factory bootloader binary reads GPREGRET at0x745a6 and accepts
+0x57 at0x745e0..0x745e2 without a VBUS requirement. The matching0x57 timeout
+path at0x7480c..0x7481c passes3000ms; upstream check_dfu_mode documents return
+to the application when USB fails to enumerate. A battery-start held chord can
+therefore repeat recovery after each timeout until released or USB connects.
+This is not permanent battery-only recovery, and the new shim's electrical
+behavior is not established by that bootloader analysis.
+
 ## Reviewed source hashes
 
 - `firmware/src/startup_recovery/mod.rs`: `dc7cc24656d9c6513e15de8c8851d17581a676312dbbbd1e4b057e207b42ebda`
-- `firmware/src/startup_recovery/nrf.rs`: `e7d0136026e66992fcbaad48894e7ebc40710c41bff3478d64202473a49db798`
-- `firmware/src/startup_recovery/gate.rs`: `879e92436f2ef5e2e8109167c3282d6705dd3ff01736ffb6f5c110f26c26d0a6`
-- `firmware/src/startup_recovery/trace.rs`: `0fa6ef145ac995f534a9033591d3c1d9b0b0af44fb87ce5541c415116c179661`
+- `firmware/src/startup_recovery/nrf.rs`: `d1f7496ea60929fea04e38b7ef26087bdb206eb1d1903b59896f4e00fe8c54d7`
+- `firmware/src/startup_recovery/gate.rs`: `d5f41bff73dc05a4203ea0a31df7e131ae6f86d8a9e4b920728f365a8077f8b4`
+- `firmware/src/startup_recovery/trace.rs`: `b38ab8efbaa490e9bb196d12f684bd2f6a4bdb5065ce9d1fb8e3e37194713742`
 - `firmware/src/main.rs`: `ad8f3e637243ac7166c35f37fefd914d9dd9b2f8401ff705d73341b816959a06`
 - `firmware/build.rs`: `01cc94d81c43f24554ba0c999c64bc81f62f599d8de827d9ed5bd3a2bb23d91d`
 - `firmware/startup-recovery.x`: `668fc290392f2d58f66405356a4d926ae1330a1fda4ec2a7bfbad546756c0790`
@@ -128,5 +156,5 @@ readback and physical startup/typing/recovery checks remain separate.
 - `scripts/migration_guard.py`: `9a20028c4f6dd4ecd35d50caa90ca7b4fcd8380444a71e0e4f55d1ef1384d009`
 - `tests/test_application_shim_guard.py`: `5a2b86b79b1f4efc033fab83566502c2e802c46298e6477d3ed2f666a76c60ff`
 - `experiments/application-recovery-shim/lib.rs`: `697b6090490545d6749ad48284b4c341b896834227b64870e6a618ebcb1aa732`
-- `experiments/application-recovery-shim/README.md`: `33be7b486e1fd7195c9f74efbe4cf0ad801263f9f46af73004ad2b5bd6a64744`
+- `experiments/application-recovery-shim/README.md`: `4da75a67c64d55ba782a9054dc6029229574d6df019fbb59312ca779c44c4abb`
 - `experiments/application-recovery-shim/check.sh`: `be8a14c867e2e52a16977e4326fc8126cdf834db6e62c7c1a2aaba5df7e2d02e`
