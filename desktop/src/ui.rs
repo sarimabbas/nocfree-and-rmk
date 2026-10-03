@@ -431,72 +431,46 @@ impl Render for Companion {
                                 .flex()
                                 .justify_center()
                                 .gap(px(12.))
-                                .child(img(keyboard_image(Role::Left)).w(px(140.)).h(px(100.)))
-                                .child(img(keyboard_image(Role::Right)).w(px(140.)).h(px(100.))),
+                                .child(img(keyboard_image(Role::Left)).w(px(100.)).h(px(70.)))
+                                .child(img(keyboard_image(Role::Right)).w(px(100.)).h(px(70.))),
                         )
+                        .child(journey_card(
+                            "install-unavailable",
+                            "Install RMK",
+                            "Replace factory firmware. A factory backup is saved first.",
+                        ))
+                        .child(journey_card(
+                            "restore-unavailable",
+                            "Restore factory firmware",
+                            "Use a verified factory backup or provide Left, Right and Dongle UF2 files.",
+                        ))
+                        .child(journey_card(
+                            "update-unavailable",
+                            "Update RMK",
+                            "Install a newer release. Your current RMK firmware is saved first.",
+                        ))
                         .child(
-                            div()
-                                .flex()
-                                .flex_col()
-                                .gap(px(8.))
-                                .child(
-                                    div()
-                                        .text_size(px(20.))
-                                        .font_weight(FontWeight::SEMIBOLD)
-                                        .child("Back up your firmware"),
-                                )
-                                .child(
-                                    div()
-                                        .text_size(px(14.))
-                                        .line_height(px(21.))
-                                        .child("Save the firmware currently on each half."),
-                                )
-                                .child(
-                                    div()
-                                        .text_size(px(13.))
-                                        .text_color(rgb(0x626870))
-                                        .child("Copies may include custom firmware. Restore is not available yet."),
-                                )
-                                .child(div().flex().pt(px(4.)).child(
+                            div().border_t_1().border_color(rgb(0xe3e6ea)).pt(px(16.))
+                                .flex().flex_col().gap(px(8.))
+                                .child(div().text_size(px(14.)).text_color(rgb(0x626870))
+                                    .child("Just want a copy of your current firmware?"))
+                                .child(div().flex().child(
                                     button("start-copies", "Save firmware copies").disabled(self.busy).on_click(
                                         cx.listener(|this, _, _, cx| this.start_copies(cx)),
                                     ),
                                 )),
                         )
-                        .child(
-                            div()
-                                .border_t_1()
-                                .border_color(rgb(0xe3e6ea))
-                                .pt(px(16.))
-                                .flex()
-                                .flex_col()
-                                .gap(px(8.))
-                                .child(
-                                    div()
-                                        .text_size(px(20.))
-                                        .font_weight(FontWeight::SEMIBOLD)
-                                        .child("Install RMK firmware"),
-                                )
-                                .child(
-                                    div()
-                                        .text_size(px(14.))
-                                        .line_height(px(21.))
-                                        .child("A factory backup comes first."),
-                                )
-                                .child(div().flex().pt(px(4.)).child(
-                                    button("install-unavailable", "Coming soon").disabled(true),
-                                ))
-                                .when(self.trial_available, |section| section.child(
-                                    div().pt(px(12.)).flex().flex_col().gap(px(8.))
-                                        .child(div().text_size(px(13.)).text_color(rgb(0x626870))
-                                            .child("Developer startup test"))
-                                        .child(div().flex().child(
-                                            button("start-trial", "Open test guide").disabled(self.busy).on_click(
-                                                cx.listener(|this, _, _, cx| this.start_trial(cx)),
-                                            ),
-                                        )),
+                        .when(self.trial_available, |section| section.child(
+                            div().border_t_1().border_color(rgb(0xe3e6ea)).pt(px(16.))
+                                .flex().flex_col().gap(px(8.))
+                                .child(div().text_size(px(13.)).text_color(rgb(0x626870))
+                                    .child("Developer startup test"))
+                                .child(div().flex().child(
+                                    button("start-trial", "Open test guide").disabled(self.busy).on_click(
+                                        cx.listener(|this, _, _, cx| this.start_trial(cx)),
+                                    ),
                                 )),
-                        )
+                        ))
                         .when_some(self.message.clone(), |column, message| column.child(
                             div().text_size(px(13.)).line_height(px(19.)).child(message)))
                         .child(
@@ -594,6 +568,48 @@ impl Render for Companion {
                 )
             })
     }
+}
+
+fn journey_card(
+    id: &'static str,
+    title: &'static str,
+    description: &'static str,
+) -> impl IntoElement {
+    div()
+        .w_full()
+        .bg(rgb(0xf7f8fa))
+        .rounded(px(12.))
+        .p(px(12.))
+        .flex()
+        .items_center()
+        .gap(px(12.))
+        .child(
+            div()
+                .flex_1()
+                .min_w(px(0.))
+                .flex()
+                .flex_col()
+                .gap(px(6.))
+                .child(
+                    div()
+                        .w_full()
+                        .text_size(px(18.))
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .child(title),
+                )
+                .child(
+                    div()
+                        .w_full()
+                        .text_size(px(14.))
+                        .line_height(px(20.))
+                        .child(description),
+                ),
+        )
+        .child(
+            div()
+                .flex_shrink_0()
+                .child(button(id, "Coming soon").disabled(true)),
+        )
 }
 
 // Photo-based orientation sketches; their appearance never represents device status.

@@ -2,9 +2,27 @@
 
 Implementation plan, 2026-10-02. This records the smallest next integration; it does not enable installation or declare the existing read-only app a finished installer.
 
-## Start with an existing RMK keyboard
+## Three explicit journeys
 
-Keep the two clearly named journeys: **Back up & restore** and **Install RMK**. An existing RMK keyboard should automatically see **Update RMK**, with “Your current firmware will be saved first.” A factory keyboard sees **Install RMK**, with “Your factory firmware will be saved first.” A current readback must never be relabeled a factory backup. Keep installation policy and diagnostics behind Details; the main screen shows one pictured component, one physical action and its result.
+Owner-directed UX, 2026-10-02: the home screen presents three stable choices, rather than changing the meaning of one Install button according to the current device. Detection can recommend a choice, but must not hide or rename the others.
+
+| Journey | Plain-language promise | Preparation | Final confirmation |
+| --- | --- | --- | --- |
+| **Install RMK** | Replace factory firmware with RMK | Identify the keyboard and applicable recovery routes; save and verify eligible factory copies; validate the bundled RMK release for the required components | Show the pictured components, target release and the saved factory recovery location; one explicit Install action |
+| **Restore factory firmware** | Return to the original firmware | Prefer an eligible factory backup from this keyboard; otherwise accept separate user-provided Left, Right and Dongle UF2 files and validate each required component | Show the pictured components, the verified source for each and any missing requirement; one explicit Restore action |
+| **Update RMK** | Move an existing RMK keyboard to a newer release | Identify the installed release; save current RMK for rollback; validate the new release and split/receiver compatibility; update only required components | Show old → new release, affected components, rollback copy and whether pairing will reset; one explicit Update action |
+
+No official firmware bytes are bundled, published, or downloaded automatically by the app. Official firmware must come from the owner's eligible backup or files they supply. RMK artifacts may be bundled with their pinned release manifest and compatible role metadata. Keeping old images on the host is a recovery copy, not automatic onboard rollback.
+
+Factory restoration starts with one recommended source: **Use your saved factory backup** when an eligible matching archive exists. Otherwise it opens **Provide factory firmware**, with three pictured drop spots labelled **Left half**, **Right half**, and **USB dongle**. Keep these source options within the restoration journey, not as another top-level decision. Also allow a file picker so dragging is optional. A component already running verified factory firmware can be skipped explicitly; required files must not be silently omitted.
+
+A drop spot accepts a UF2 for inspection, not authorization to copy it. Validate container coverage, addresses, vector, family, supported factory release/role/layout metadata, hashes and device/recovery binding through the canonical policies. A filename, user-selected slot, shared bootloader product or nRF family alone cannot establish compatibility. Wrong or unsupported files remain unconfirmed; explain the correction beside the pictured slot. The final source summary cross-checks each accepted file with the actual component immediately before the one-shot transfer.
+
+A backup is offered as factory restoration only when its provenance and bytes establish an eligible factory image for this device. A copy taken after RMK installation is **Previous RMK firmware**, never a factory backup. Some CURRENT.UF2 archives omit chip regions; validate that the archive contains all required restore ranges, including S140 where the migration replaced it. Never imply that an arbitrary saved UF2 is a full-chip or proven factory restore image. Restore policy remains device- and layout-specific.
+
+Inside each journey, automatically advance through **Connect → Prepare recovery copy → Confirm → Install/Restore/Update → Verify → Done**. Show one pictured component and one physical instruction at a time, advance from fresh observable USB/mount/readback state, and ask for acknowledgment only for unobservable switch actions or the final consequential action. Preserve exact readback and applicable recovery gates. Fold technical diagnostics behind Details; never expose flash addresses or developer trial sequences as normal decisions. Reconcile an interrupted write before continuing, never automatically replay it.
+
+The current implementation shows all three intents but keeps unsupported write actions disabled. Saving firmware copies remains a secondary read-only tool. The developer startup test is separately named and does not masquerade as installation or restoration. The following implementation checkpoints are required before these journeys can actually transfer firmware.
 
 The working keyboard now has macOS evidence for USB, direct Bluetooth, the split link, shared modifiers and the original dongle. Both halves have owner-observed brightness steps, hold-to-repeat, release stopping, right restart synchronization and left restart persistence. These observations do not establish Windows/Linux acceptance, measured input latency, release recovery after radio loss or newcomer installation. Battery integration is a separate checkpoint; the root has inspected its current app display, while battery calibration and reporting acceptance remain separate from installation readiness.
 
@@ -33,7 +51,7 @@ Reuse `Session` for the user-facing progression and the current off-UI observati
 
 A successful host copy is not a successful installation. An uncertain transfer must stop at reconciliation, with no automatic retry. An app restart returns to observation and reconciliation rather than replaying the write. Countdowns begin from observed USB absence; they cannot certify battery power or switch position. No dock power control is part of this plan.
 
-The current Home card labeled Install RMK still routes to a developer startup test, whose finish copy describes factory restoration. Do not expose that as the production installation journey by default. Keep the developer guide separately named and hidden from ordinary onboarding; no writer is being enabled in this checkpoint.
+The home screen now shows separate Install RMK, Restore factory firmware and Update RMK choices. Their unsupported write actions remain disabled. The read-only developer guide is separately named below the normal journeys; no writer is being enabled in this checkpoint.
 
 Replace indefinite “Checking” with a bounded service operation and its actual result. USB polling can remain once per second initially. When the app has the expected evidence it advances in-process, without a Codex heartbeat, chat callback or a typed “done.” If evidence is missing, show the single needed cable/switch action; if verification fails, preserve the image and explain the concrete next step. Details can expose the journal and diagnostic reason.
 
