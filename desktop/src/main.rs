@@ -1,5 +1,6 @@
 mod battery;
 mod device;
+mod home;
 mod session;
 mod trial;
 mod ui;

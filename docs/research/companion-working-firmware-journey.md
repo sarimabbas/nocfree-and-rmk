@@ -4,7 +4,18 @@ Implementation plan, 2026-10-02. This records the smallest next integration; it 
 
 ## Three explicit journeys
 
-Owner-directed UX, 2026-10-02: the home screen presents three stable choices, rather than changing the meaning of one Install button according to the current device. Detection can recommend a choice, but must not hide or rename the others.
+Owner-directed UX, 2026-10-02: there are three supported intents, but the home screen shows only the one that applies. Do not ask a newcomer to decide whether their keyboard needs installation or an update.
+
+- No recognized keyboard: **Connect your keyboard**, with one cable instruction.
+- Factory firmware: **Switch to RMK**.
+- RMK with a verified newer compatible port release: **Update RMK**.
+- RMK with a verified matching current release: **You’re up to date**, with neither installation nor update action.
+- RMK without sufficient release information: **Your keyboard is running RMK**, with neither installation nor update action and no claim that it is current.
+- Recovery mode: show a recovery-specific status without inferring which half is connected.
+
+**Go back to factory** belongs under **More options** only when RMK is recognized. Saving firmware copies and developer tools are secondary options. The main view uses one paired-board illustration, one headline, short supporting copy and at most one primary action. Use GPUI Kit components and restrained native motion; keep release internals, backup eligibility rules and diagnostics out of the everyday view.
+
+Current normal USB descriptors identify factory versus RMK, not the exact NocFree firmware release. Rynk's `GetVersion` is the wire protocol version; `GetDeviceInfo.rmk_version` is the RMK library version. Neither may stand in for a port release/version or justify “up to date.” Production release assessment stays unknown until an installed port identity and compatible release catalog are available. Ambiguous or failed discovery clears the inferred home state; the receiver's shared VID/PID does not identify it as the left. These read-only UI observations do not grant installation authorization.
 
 | Journey | Plain-language promise | Preparation | Final confirmation |
 | --- | --- | --- | --- |
@@ -22,7 +33,7 @@ A backup is offered as factory restoration only when its provenance and bytes es
 
 Inside each journey, automatically advance through **Connect → Prepare recovery copy → Confirm → Install/Restore/Update → Verify → Done**. Show one pictured component and one physical instruction at a time, advance from fresh observable USB/mount/readback state, and ask for acknowledgment only for unobservable switch actions or the final consequential action. Preserve exact readback and applicable recovery gates. Fold technical diagnostics behind Details; never expose flash addresses or developer trial sequences as normal decisions. Reconcile an interrupted write before continuing, never automatically replay it.
 
-The current implementation shows all three intents but keeps unsupported write actions disabled. Saving firmware copies remains a secondary read-only tool. The developer startup test is separately named and does not masquerade as installation or restoration. The following implementation checkpoints are required before these journeys can actually transfer firmware.
+The current implementation selects the relevant intent from fresh device observations and keeps unsupported write actions disabled. Saving firmware copies remains a secondary read-only tool. The developer startup test is separately named and does not masquerade as installation or restoration. The following implementation checkpoints are required before these journeys can actually transfer firmware.
 
 The working keyboard now has macOS evidence for USB, direct Bluetooth, the split link, shared modifiers and the original dongle. Both halves have owner-observed brightness steps, hold-to-repeat, release stopping, right restart synchronization and left restart persistence. These observations do not establish Windows/Linux acceptance, measured input latency, release recovery after radio loss or newcomer installation. Battery integration is a separate checkpoint; the root has inspected its current app display, while battery calibration and reporting acceptance remain separate from installation readiness.
 
@@ -51,7 +62,7 @@ Reuse `Session` for the user-facing progression and the current off-UI observati
 
 A successful host copy is not a successful installation. An uncertain transfer must stop at reconciliation, with no automatic retry. An app restart returns to observation and reconciliation rather than replaying the write. Countdowns begin from observed USB absence; they cannot certify battery power or switch position. No dock power control is part of this plan.
 
-The home screen now shows separate Install RMK, Restore factory firmware and Update RMK choices. Their unsupported write actions remain disabled. The read-only developer guide is separately named below the normal journeys; no writer is being enabled in this checkpoint.
+The home screen now shows only the relevant primary journey. Restoration, firmware copies and the read-only developer guide are secondary options; no writer is being enabled in this checkpoint.
 
 Replace indefinite “Checking” with a bounded service operation and its actual result. USB polling can remain once per second initially. When the app has the expected evidence it advances in-process, without a Codex heartbeat, chat callback or a typed “done.” If evidence is missing, show the single needed cable/switch action; if verification fails, preserve the image and explain the concrete next step. Details can expose the journal and diagnostic reason.
 
@@ -94,3 +105,9 @@ The current bundle is a macOS development app, not a notarized portable release.
 - [Earlier installer architecture](guided-installer-app.md), [newcomer route research](newcomer-installation.md), [prototype limitations](../../desktop/README.md).
 
 Host tests and cross-builds remain software evidence. The next installation checkpoint still needs its own device-specific approval and hardware verification.
+
+### Home composition
+
+Treat the home as an accessory overview, not a welcome page or a dashboard. At the 640 × 580 default window, a 460px column with 24px horizontal insets holds a small connection header, paired-board artwork, a 20px status and 15px supporting copy. The surface is white, foreground #23262b, secondary text #626870 and interaction accent #007aff. Ordinary secondary rows are 44px high; they expand below a separator. Developer tools are disclosed separately. The 400ms one-shot artwork reveal respects GPUI reduced motion.
+
+GPUKit supplies separators, icons and primary buttons. Its virtualized List is unnecessary for these few rows; its current Collapsible does not provide the keyboard/accessibility behavior needed here, so the small disclosure uses explicit GPUI semantics. This component choice keeps the layout simple while preserving named controls and visible focus.

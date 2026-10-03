@@ -8,17 +8,19 @@ use std::{
 use crate::{
     battery,
     device::{self, Role},
+    home::{Home, UpdateAssessment},
     session::{Session, View},
     trial::{Trial, TrialView},
 };
 use gpui::{
-    App, Context, FocusHandle, Focusable, FontWeight, Image, ImageFormat, InteractiveElement,
-    IntoElement, ParentElement, Render, StatefulInteractiveElement, Styled, Task, Window, div, img,
-    prelude::FluentBuilder, px, rgb,
+    Animation, AnimationExt, App, Context, FocusHandle, Focusable, FontWeight, Image, ImageFormat,
+    InteractiveElement, IntoElement, ParentElement, Render, StatefulInteractiveElement, Styled,
+    Task, Window, div, img, prelude::FluentBuilder, px, rgb,
 };
 use gpuikit::{
     a11y::FocusNavigation,
-    elements::button::button,
+    elements::{button::button, separator::separator},
+    icons::Icons,
     theme::{GlobalTheme, Theme, ThemeVariant},
 };
 
@@ -37,7 +39,13 @@ pub struct Companion {
     stopped: bool,
     message: Option<String>,
     battery_text: Option<String>,
+    home: Home,
+    more_options: bool,
     focus_handle: FocusHandle,
+    options_focus: FocusHandle,
+    save_focus: FocusHandle,
+    developer_focus: FocusHandle,
+    developer_options: bool,
     _poll: Task<()>,
 }
 
@@ -77,7 +85,34 @@ impl Companion {
             let mut battery_checked = None;
             loop {
                 let idle = this.update(cx, |this, _| !this.started);
-                if matches!(idle, Ok(true))
+                if matches!(idle, Ok(true)) {
+                    let observation = cx
+                        .background_executor()
+                        .spawn(async { device::discover() })
+                        .await;
+                    if this
+                        .update(cx, |this, cx| {
+                            if !this.started {
+                                let next = Home::observe(
+                                    observation,
+                                    UpdateAssessment::compare(None, None, false),
+                                );
+                                if next != this.home {
+                                    this.battery_text = None;
+                                }
+                                this.home = next;
+                                cx.notify();
+                            }
+                        })
+                        .is_err()
+                    {
+                        return;
+                    }
+                }
+                let battery_idle = this.update(cx, |this, _| {
+                    !this.started && matches!(this.home, Home::Rmk(_))
+                });
+                if matches!(battery_idle, Ok(true))
                     && battery_checked
                         .is_none_or(|last: Instant| last.elapsed() >= Duration::from_secs(30))
                 {
@@ -90,18 +125,20 @@ impl Companion {
                         .update(cx, |this, cx| {
                             if !this.started {
                                 this.battery_text = readings.ok().map(|r| {
-                                    let level = |v: Option<u8>| {
-                                        v.map_or("Unavailable".into(), |v| format!("{v}%"))
-                                    };
-                                    let right = if r.right_connected {
-                                        level(r.right)
+                                    let mut parts = Vec::new();
+                                    if let Some(left) = r.left {
+                                        parts.push(format!("Left {left}%"));
+                                    }
+                                    if r.right_connected
+                                        && let Some(right) = r.right
+                                    {
+                                        parts.push(format!("Right {right}%"));
+                                    }
+                                    if parts.is_empty() {
+                                        String::new()
                                     } else {
-                                        "Disconnected".into()
-                                    };
-                                    format!(
-                                        "Estimated battery · Left {} · Right {right}",
-                                        level(r.left)
-                                    )
+                                        format!("{} · Estimated", parts.join(" · "))
+                                    }
                                 });
                                 cx.notify();
                             }
@@ -194,7 +231,13 @@ impl Companion {
             stopped: false,
             message: None,
             battery_text: None,
+            home: Home::default(),
+            more_options: false,
             focus_handle: cx.focus_handle(),
+            options_focus: cx.focus_handle().tab_stop(true),
+            save_focus: cx.focus_handle().tab_stop(true),
+            developer_focus: cx.focus_handle().tab_stop(true),
+            developer_options: false,
             _poll: poll,
         }
     }
@@ -377,6 +420,98 @@ impl Focusable for Companion {
 
 impl Render for Companion {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let options_rows = div()
+            .flex()
+            .flex_col()
+            .when(self.home.can_restore(), |rows| {
+                rows.child(
+                    div()
+                        .id("restore-unavailable")
+                        .h(px(44.))
+                        .flex()
+                        .items_center()
+                        .justify_between()
+                        .px(px(12.))
+                        .role(gpui::Role::Button)
+                        .aria_label("Go back to factory")
+                        .aria_description("Not available yet. Firmware restoration is disabled.")
+                        .text_size(px(13.))
+                        .text_color(rgb(0x92969c))
+                        .child("Go back to factory")
+                        .child(div().text_size(px(12.)).child("Not available yet")),
+                )
+            })
+            .child(
+                div()
+                    .id("save-copy-control")
+                    .track_focus(&self.save_focus)
+                    .tab_stop(true)
+                    .moves_focus_on_tab()
+                    .role(gpui::Role::Button)
+                    .aria_label("Save firmware copies")
+                    .aria_description(if self.busy {
+                        "Saving is currently busy"
+                    } else {
+                        "Save a private copy without changing firmware"
+                    })
+                    .h(px(44.))
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .px(px(12.))
+                    .rounded(px(6.))
+                    .text_size(px(13.))
+                    .text_color(rgb(0x23262b))
+                    .cursor_pointer()
+                    .hover(|s| s.bg(rgb(0xf1f3f5)))
+                    .focus(|s| s.bg(rgb(0xf1f3f5)).text_color(rgb(0x007aff)))
+                    .child("Save firmware copies")
+                    .child(Icons::arrow_down().size(px(15.)).text_color(rgb(0x626870)))
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        window.focus(&this.save_focus, cx);
+                        if !this.busy {
+                            this.start_copies(cx);
+                        }
+                    })),
+            )
+            .when(self.trial_available, |rows| {
+                rows.child(
+                    div()
+                        .id("developer-options-control")
+                        .track_focus(&self.developer_focus)
+                        .tab_stop(true)
+                        .moves_focus_on_tab()
+                        .role(gpui::Role::Button)
+                        .aria_label("Developer tools")
+                        .aria_expanded(self.developer_options)
+                        .h(px(44.))
+                        .flex()
+                        .items_center()
+                        .justify_between()
+                        .px(px(12.))
+                        .rounded(px(6.))
+                        .text_size(px(13.))
+                        .text_color(rgb(0x626870))
+                        .cursor_pointer()
+                        .hover(|s| s.bg(rgb(0xf1f3f5)))
+                        .focus(|s| s.bg(rgb(0xf1f3f5)).text_color(rgb(0x007aff)))
+                        .child("Developer tools")
+                        .child(
+                            if self.developer_options {
+                                Icons::chevron_down()
+                            } else {
+                                Icons::chevron_right()
+                            }
+                            .size(px(15.))
+                            .text_color(rgb(0x626870)),
+                        )
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            window.focus(&this.developer_focus, cx);
+                            this.developer_options = !this.developer_options;
+                            cx.notify();
+                        })),
+                )
+            });
         let trial_view = self.trial_view.as_ref().map(|view| TrialView {
             title: view.title.clone(),
             instruction: view.instruction.clone(),
@@ -418,81 +553,206 @@ impl Render for Companion {
                 root.child(
                     div()
                         .w_full()
-                        .max_w(px(500.))
-                        .p(px(20.))
+                        .max_w(px(460.))
+                        .px(px(24.))
+                        .pt(px(28.))
+                        .pb(px(24.))
                         .flex()
                         .flex_col()
-                        .gap(px(16.))
-                        .child(div().text_size(px(13.)).text_color(rgb(0x626870)).child(
-                            self.battery_text.clone().unwrap_or_else(|| "Connect the left half by USB to see battery levels.".into())
-                        ))
+                        .gap(px(12.))
                         .child(
                             div()
                                 .flex()
-                                .justify_center()
-                                .gap(px(12.))
-                                .child(img(keyboard_image(Role::Left)).w(px(100.)).h(px(70.)))
-                                .child(img(keyboard_image(Role::Right)).w(px(100.)).h(px(70.))),
+                                .items_center()
+                                .justify_between()
+                                .child(
+                                    div()
+                                        .text_size(px(14.))
+                                        .font_weight(FontWeight::SEMIBOLD)
+                                        .child("Your keyboard"),
+                                )
+                                .when_some(self.home.connection_label(), |row, label| {
+                                    row.child(
+                                        div()
+                                            .text_size(px(12.))
+                                            .text_color(rgb(0x626870))
+                                            .child(label),
+                                    )
+                                }),
                         )
-                        .child(journey_card(
-                            "install-unavailable",
-                            "Install RMK",
-                            "Replace factory firmware. A factory backup is saved first.",
-                        ))
-                        .child(journey_card(
-                            "restore-unavailable",
-                            "Restore factory firmware",
-                            "Use a verified factory backup or provide Left, Right and Dongle UF2 files.",
-                        ))
-                        .child(journey_card(
-                            "update-unavailable",
-                            "Update RMK",
-                            "Install a newer release. Your current RMK firmware is saved first.",
-                        ))
-                        .child(
-                            div().border_t_1().border_color(rgb(0xe3e6ea)).pt(px(16.))
-                                .flex().flex_col().gap(px(8.))
-                                .child(div().text_size(px(14.)).text_color(rgb(0x626870))
-                                    .child("Just want a copy of your current firmware?"))
-                                .child(div().flex().child(
-                                    button("start-copies", "Save firmware copies").disabled(self.busy).on_click(
-                                        cx.listener(|this, _, _, cx| this.start_copies(cx)),
-                                    ),
-                                )),
-                        )
-                        .when(self.trial_available, |section| section.child(
-                            div().border_t_1().border_color(rgb(0xe3e6ea)).pt(px(16.))
-                                .flex().flex_col().gap(px(8.))
-                                .child(div().text_size(px(13.)).text_color(rgb(0x626870))
-                                    .child("Developer startup test"))
-                                .child(div().flex().child(
-                                    button("start-trial", "Open test guide").disabled(self.busy).on_click(
-                                        cx.listener(|this, _, _, cx| this.start_trial(cx)),
-                                    ),
-                                )),
-                        ))
-                        .when_some(self.message.clone(), |column, message| column.child(
-                            div().text_size(px(13.)).line_height(px(19.)).child(message)))
+                        .child(separator())
                         .child(
                             div()
-                                .text_size(px(12.))
+                                .w_full()
+                                .pt(px(12.))
+                                .pb(px(4.))
+                                .flex()
+                                .justify_center()
+                                .gap(px(12.))
+                                .child(img(keyboard_image(Role::Left)).w(px(166.)).h(px(119.)))
+                                .child(img(keyboard_image(Role::Right)).w(px(166.)).h(px(119.)))
+                                .with_animation(
+                                    "keyboard-reveal",
+                                    Animation::new(Duration::from_millis(400))
+                                        .with_easing(|t| 1. - (1. - t).powi(3)),
+                                    |stage, t| stage.opacity(0.75 + 0.25 * t),
+                                ),
+                        )
+                        .child(
+                            div()
+                                .text_center()
+                                .text_size(px(20.))
+                                .font_weight(FontWeight::SEMIBOLD)
+                                .child(self.home.title()),
+                        )
+                        .child(
+                            div()
+                                .text_center()
+                                .text_size(px(15.))
+                                .line_height(px(23.))
                                 .text_color(rgb(0x626870))
-                                .child("Saving copies won’t change your keyboard."),
-                        ),
+                                .child(self.home.description()),
+                        )
+                        .when_some(
+                            if matches!(self.home, Home::Rmk(_)) {
+                                self.battery_text.clone()
+                            } else {
+                                None
+                            },
+                            |column, text| {
+                                column.child(
+                                    div()
+                                        .text_center()
+                                        .text_size(px(12.))
+                                        .text_color(rgb(0x626870))
+                                        .child(text),
+                                )
+                            },
+                        )
+                        .when_some(self.home.action(), |column, label| {
+                            column.child(
+                                div()
+                                    .flex()
+                                    .justify_center()
+                                    .child(button("home-action", label).disabled(true)),
+                            )
+                        })
+                        .child(
+                            div().flex().justify_center().pt(px(12.)).child(
+                                div()
+                                    .id("more-options")
+                                    .role(gpui::Role::Button)
+                                    .aria_label("More options")
+                                    .aria_expanded(self.more_options)
+                                    .track_focus(&self.options_focus)
+                                    .tab_stop(true)
+                                    .moves_focus_on_tab()
+                                    .flex()
+                                    .items_center()
+                                    .gap(px(6.))
+                                    .px(px(12.))
+                                    .py(px(8.))
+                                    .rounded(px(6.))
+                                    .cursor_pointer()
+                                    .text_size(px(13.))
+                                    .text_color(rgb(0x626870))
+                                    .hover(|style| {
+                                        style.bg(rgb(0xf1f3f5)).text_color(rgb(0x23262b))
+                                    })
+                                    .focus(|style| {
+                                        style.bg(rgb(0xf1f3f5)).text_color(rgb(0x007aff))
+                                    })
+                                    .child("More options")
+                                    .child(
+                                        if self.more_options {
+                                            Icons::chevron_up()
+                                        } else {
+                                            Icons::chevron_down()
+                                        }
+                                        .size(px(12.))
+                                        .text_color(rgb(0x626870)),
+                                    )
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        window.focus(&this.options_focus, cx);
+                                        this.more_options = !this.more_options;
+                                        cx.notify();
+                                    })),
+                            ),
+                        )
+                        .when(self.more_options, |column| {
+                            column.child(
+                                div()
+                                    .flex()
+                                    .flex_col()
+                                    .gap(px(8.))
+                                    .child(separator())
+                                    .child(options_rows)
+                                    .when(
+                                        self.developer_options && self.trial_available,
+                                        |tools| {
+                                            tools.child(
+                                                div().pt(px(8.)).child(
+                                                    button("start-trial", "Open startup test")
+                                                        .disabled(self.busy)
+                                                        .on_click(cx.listener(|this, _, _, cx| {
+                                                            this.start_trial(cx)
+                                                        })),
+                                                ),
+                                            )
+                                        },
+                                    ),
+                            )
+                        })
+                        .when_some(self.message.clone(), |column, message| {
+                            column
+                                .child(div().text_size(px(13.)).line_height(px(19.)).child(message))
+                        }),
                 )
             })
-            .when_some(trial_view, |root, view| root.child(
-                div().w_full().max_w(px(500.)).p(px(32.)).flex().flex_col()
-                    .items_center().gap(px(16.))
-                    .child(div().text_size(px(14.)).font_weight(FontWeight::SEMIBOLD)
-                        .text_color(rgb(0x626870)).child("RMK startup test"))
-                    .child(keyboard_picture(Some(Role::Left)))
-                    .child(div().w_full().text_center().text_size(px(27.))
-                        .font_weight(FontWeight::SEMIBOLD).child(view.title))
-                    .child(div().w_full().text_center().line_height(px(23.)).child(view.instruction))
-                    .when_some(view.ack_label, |column, label| column.child(
-                        button("trial-acknowledge", label).disabled(self.trial.is_none())
-                            .on_click(cx.listener(|this, _, _, cx| this.acknowledge_trial(cx)))))))
+            .when_some(trial_view, |root, view| {
+                root.child(
+                    div()
+                        .w_full()
+                        .max_w(px(500.))
+                        .p(px(32.))
+                        .flex()
+                        .flex_col()
+                        .items_center()
+                        .gap(px(16.))
+                        .child(
+                            div()
+                                .text_size(px(14.))
+                                .font_weight(FontWeight::SEMIBOLD)
+                                .text_color(rgb(0x626870))
+                                .child("RMK startup test"),
+                        )
+                        .child(keyboard_picture(Some(Role::Left)))
+                        .child(
+                            div()
+                                .w_full()
+                                .text_center()
+                                .text_size(px(27.))
+                                .font_weight(FontWeight::SEMIBOLD)
+                                .child(view.title),
+                        )
+                        .child(
+                            div()
+                                .w_full()
+                                .text_center()
+                                .line_height(px(23.))
+                                .child(view.instruction),
+                        )
+                        .when_some(view.ack_label, |column, label| {
+                            column.child(
+                                button("trial-acknowledge", label)
+                                    .disabled(self.trial.is_none())
+                                    .on_click(
+                                        cx.listener(|this, _, _, cx| this.acknowledge_trial(cx)),
+                                    ),
+                            )
+                        }),
+                )
+            })
             .when(self.started && self.trial_view.is_none(), |root| {
                 root.child(
                     div()
@@ -568,48 +828,6 @@ impl Render for Companion {
                 )
             })
     }
-}
-
-fn journey_card(
-    id: &'static str,
-    title: &'static str,
-    description: &'static str,
-) -> impl IntoElement {
-    div()
-        .w_full()
-        .bg(rgb(0xf7f8fa))
-        .rounded(px(12.))
-        .p(px(12.))
-        .flex()
-        .items_center()
-        .gap(px(12.))
-        .child(
-            div()
-                .flex_1()
-                .min_w(px(0.))
-                .flex()
-                .flex_col()
-                .gap(px(6.))
-                .child(
-                    div()
-                        .w_full()
-                        .text_size(px(18.))
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .child(title),
-                )
-                .child(
-                    div()
-                        .w_full()
-                        .text_size(px(14.))
-                        .line_height(px(20.))
-                        .child(description),
-                ),
-        )
-        .child(
-            div()
-                .flex_shrink_0()
-                .child(button(id, "Coming soon").disabled(true)),
-        )
 }
 
 // Photo-based orientation sketches; their appearance never represents device status.
