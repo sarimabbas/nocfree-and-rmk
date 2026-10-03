@@ -169,12 +169,31 @@ does not prove the new right startup chord. Local right startup acceptance and
 left ordinary Fn+Escape behavior remain physical trial checks. No reviewer
 commands accessed or changed either device.
 
+## Symmetric local Fn+Shift revision
+
+The final local chord is Fn+that half's Shift on either half. Left raw inputs40
+and32 match LEFT_BITS entries32(Fn) and26(LShift) in the tested scanner/keymap;
+right inputs42 and37 match global keys79(Fn) and74(RShift), with37left-key offset.
+The final linked left high-word mask is0x101; right is0x420. No low-word key is
+required. Timing, bounded rejection and DMA ownership/STOP behavior are unchanged.
+Twelve independent host tests passed, including rejection of old Escape/Backspace
+chords, lone keys, wrong-half Shift, and right release/scan/init failures.
+
+Final left ELF is
+`17e16979782e5815ec62c2db141c8b237d46389adc770413bbe690d8c5efab8e`;
+right is `a7d817218367b9d63c4366690943780c3af8602fdfd9fcea279247d287259266`.
+Their13/12 early reachable integer-only functions, pre-BSS hook and erased marker
+were rechecked. No trace is linked. All allocated sections match their guarded
+binaries. Guarded write bounds remain0x1000..0x5f000(left) and0x1000..0x37000(right).
+The previous asymmetric right image's exact device readback is separate root
+evidence; it does not establish this revision's physical chord acceptance.
+
 ## Reviewed source hashes
 
 - `firmware/src/startup_recovery/mod.rs`: `dc7cc24656d9c6513e15de8c8851d17581a676312dbbbd1e4b057e207b42ebda`
-- `firmware/src/startup_recovery/nrf.rs`: `d1f7496ea60929fea04e38b7ef26087bdb206eb1d1903b59896f4e00fe8c54d7`
-- `firmware/src/startup_recovery/gate.rs`: `d5f41bff73dc05a4203ea0a31df7e131ae6f86d8a9e4b920728f365a8077f8b4`
-- `firmware/src/startup_recovery/trace.rs`: `b38ab8efbaa490e9bb196d12f684bd2f6a4bdb5065ce9d1fb8e3e37194713742`
+- `firmware/src/startup_recovery/nrf.rs`: `98714fec3890362a610c7d8cfc9645aff9c6235c89864dc409ad96beddbd0bd6`
+- `firmware/src/startup_recovery/gate.rs`: `4e64d674d729af571d4f4c6406046031e5be158601475c7595460627b1c4863e`
+- `firmware/src/startup_recovery/trace.rs`: `b73f73c8f28dbfe278638ac49443827ddf1a36c89ad9cf17d2edb7f4783af01f`
 - `firmware/src/main.rs`: `ad8f3e637243ac7166c35f37fefd914d9dd9b2f8401ff705d73341b816959a06`
 - `firmware/build.rs`: `01cc94d81c43f24554ba0c999c64bc81f62f599d8de827d9ed5bd3a2bb23d91d`
 - `firmware/startup-recovery.x`: `668fc290392f2d58f66405356a4d926ae1330a1fda4ec2a7bfbad546756c0790`
@@ -182,6 +201,7 @@ commands accessed or changed either device.
 - `scripts/migration_guard.py`: `95acbc736d6f8ba3019e054a8f14c6be82dbe8339e818b7ac03fb96bba05079d`
 - `tests/test_application_shim_guard.py`: `5949a92920b998a6578c7db07a46c8d7799cd3e8fb73f4c6477f0b19ddecfd0c`
 - `experiments/application-recovery-shim/lib.rs`: `697b6090490545d6749ad48284b4c341b896834227b64870e6a618ebcb1aa732`
-- `experiments/application-recovery-shim/README.md`: `4da75a67c64d55ba782a9054dc6029229574d6df019fbb59312ca779c44c4abb`
+- `experiments/application-recovery-shim/README.md`: `ccc0c1771c8496012a5b21a2f6b9c5ed4f059c97081c4b91b1a31e3f7ba07951`
 - `experiments/application-recovery-shim/check.sh`: `be8a14c867e2e52a16977e4326fc8126cdf834db6e62c7c1a2aaba5df7e2d02e`
 - `firmware/src/keymap.rs`: `388bb572397a5f0340578a5f38defceac913d5971ef7b19eb81a78246fd6b320`
+- `crates/nocfree-input/src/lib.rs`: `964bccc7cfb08bc188755267b558f61bf2f641be945414548d5a934c7b832066`

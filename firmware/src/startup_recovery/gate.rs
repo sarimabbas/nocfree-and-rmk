@@ -39,8 +39,8 @@ pub fn held<I: Inputs>(io: &mut I, role: Role) -> bool {
         return false;
     }
     let chord = match role {
-        Role::Left => (1 << 40) | 1,
-        Role::Right => (1 << 42) | (1 << 14),
+        Role::Left => (1 << 40) | (1 << 32),
+        Role::Right => (1 << 42) | (1 << 37),
     };
     let start = io.now_us();
     // The cap also terminates with a broken/stalled timer.
@@ -60,8 +60,8 @@ pub fn held<I: Inputs>(io: &mut I, role: Role) -> bool {
                         Role::Right => 42,
                     };
                     let other_bit = match role {
-                        Role::Left => 0,
-                        Role::Right => 14,
+                        Role::Left => 32,
+                        Role::Right => 37,
                     };
                     io.outcome(if scan != 0 {
                         Outcome::Released
@@ -158,9 +158,42 @@ mod tests {
     }
     #[test]
     fn both_local_chords() {
-        assert!(held(&mut bus((1 << 40) | 1), Role::Left));
-        assert!(held(&mut bus((1 << 42) | (1 << 14)), Role::Right));
-        assert!(!held(&mut bus((1 << 40) | 1), Role::Right));
+        assert!(held(&mut bus((1 << 40) | (1 << 32)), Role::Left));
+        assert!(held(&mut bus((1 << 42) | (1 << 37)), Role::Right));
+        assert!(!held(&mut bus((1 << 40) | (1 << 32)), Role::Right));
+    }
+    #[test]
+    fn only_the_same_halfs_shift_and_fn_recover() {
+        for (role, bits) in [
+            (Role::Left, (1 << 40) | 1),          // Prior Escape chord.
+            (Role::Right, (1 << 42) | (1 << 14)), // Prior Backspace chord.
+            (Role::Left, 1 << 40),
+            (Role::Left, 1 << 32),
+            (Role::Right, 1 << 42),
+            (Role::Right, 1 << 37),
+            (Role::Left, (1 << 40) | (1 << 37)),
+            (Role::Right, (1 << 42) | (1 << 32)),
+        ] {
+            let mut b = bus(bits);
+            assert!(!held(&mut b, role));
+            assert_eq!(b.scans, 1);
+        }
+    }
+    #[test]
+    fn right_local_chord_rejects_release_and_bus_faults() {
+        for fail in 1..=25 {
+            let mut b = bus((1 << 42) | (1 << 37));
+            b.fail_at = fail;
+            assert!(!held(&mut b, Role::Right));
+        }
+        let mut b = bus((1 << 42) | (1 << 37));
+        b.release_at = 2;
+        assert!(!held(&mut b, Role::Right));
+        assert_eq!(b.reason, Some(Outcome::Released));
+        b = bus((1 << 42) | (1 << 37));
+        b.init = false;
+        assert!(!held(&mut b, Role::Right));
+        assert_eq!(b.scans, 0);
     }
     #[test]
     fn ordinary_startup_does_not_wait_for_hold() {
@@ -171,31 +204,31 @@ mod tests {
     #[test]
     fn every_snapshot_failure_rejects_recovery() {
         for fail in 1..=25 {
-            let mut b = bus((1 << 40) | 1);
+            let mut b = bus((1 << 40) | (1 << 32));
             b.fail_at = fail;
             assert!(!held(&mut b, Role::Left));
         }
     }
     #[test]
     fn release_and_init_error_reject() {
-        let mut b = bus((1 << 40) | 1);
+        let mut b = bus((1 << 40) | (1 << 32));
         b.release_at = 15;
         assert!(!held(&mut b, Role::Left));
-        b = bus((1 << 40) | 1);
+        b = bus((1 << 40) | (1 << 32));
         b.init = false;
         assert!(!held(&mut b, Role::Left));
         assert_eq!(b.scans, 0);
     }
     #[test]
     fn stalled_clock_terminates() {
-        let mut b = bus((1 << 40) | 1);
+        let mut b = bus((1 << 40) | (1 << 32));
         b.frozen = true;
         assert!(!held(&mut b, Role::Left));
         assert!(b.scans <= 128);
     }
     #[test]
     fn initialization_time_counts_toward_deadline() {
-        let mut b = bus((1 << 40) | 1);
+        let mut b = bus((1 << 40) | (1 << 32));
         b.init_us = 200_000;
         assert!(!held(&mut b, Role::Left));
         assert_eq!(b.scans, 0);
@@ -211,7 +244,7 @@ mod tests {
     fn distinguishes_diagnostic_failures_without_changing_policy() {
         for (bits, reason) in [
             (0, Outcome::MissingBoth),
-            (1, Outcome::MissingFn),
+            (1 << 32, Outcome::MissingFn),
             (1 << 40, Outcome::MissingOther),
         ] {
             let mut b = bus(bits);
@@ -219,17 +252,17 @@ mod tests {
             assert_eq!(b.reason, Some(reason));
             assert_eq!(b.first, Some(bits));
         }
-        let mut b = bus((1 << 40) | 1);
+        let mut b = bus((1 << 40) | (1 << 32));
         b.fail_at = 1;
         assert!(!held(&mut b, Role::Left));
         assert_eq!(b.reason, Some(Outcome::ScanFailed));
         assert_eq!(b.first, None);
-        b = bus((1 << 40) | 1);
+        b = bus((1 << 40) | (1 << 32));
         b.release_at = 2;
         assert!(!held(&mut b, Role::Left));
         assert_eq!(b.reason, Some(Outcome::Released));
-        assert_eq!(b.first, Some((1 << 40) | 1));
-        b = bus((1 << 40) | 1);
+        assert_eq!(b.first, Some((1 << 40) | (1 << 32)));
+        b = bus((1 << 40) | (1 << 32));
         b.init = false;
         assert!(!held(&mut b, Role::Left));
         assert_eq!(b.reason, Some(Outcome::InitFailed));

@@ -209,7 +209,7 @@ impl Inputs for Bus {
     }
 }
 /// Caller must be before HAL/RMK initialization and before interrupts are enabled.
-/// `right=false` is left Fn+Escape; `true` is right Fn+Backspace.
+/// `right=false` is left Fn+left Shift; `true` is right Fn+right Shift.
 pub unsafe fn check(right: bool) {
     #[cfg(feature = "startup-recovery-diagnostic")]
     unsafe {

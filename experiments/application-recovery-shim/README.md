@@ -16,8 +16,8 @@ reaches its intact application entry. It cannot survive corruption of itself,
 the vector table, or the factory bootloader, nor detect keys before that
 bootloader chooses to launch the application.
 
-At each keyboard startup, complete scans must contain left Fn+Escape or right
-Fn+Backspace for 60 ms. Other held keys are allowed. An absent chord adds only
+At each keyboard startup, complete scans must contain Fn and the same half’s
+Shift key for 60 ms (left Fn+left Shift; right Fn+right Shift). Other held keys are allowed. An absent chord adds only
 initialization and one scan. Recovery does not depend on USB detection: the
 first diagnostic observed `boot:noUSB` during a USB-connected held-key startup,
 so an early VBUS status check cannot decide whether to scan. USB supply status

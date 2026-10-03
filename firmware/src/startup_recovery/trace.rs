@@ -56,7 +56,7 @@ fn label(reason: u32, error: u32) -> &'static str {
         5 if error & 6 != 0 => "boot:scanNACK",
         5 => "boot:scanFail",
         6 => "boot:noFn",
-        7 => "boot:noKey",
+        7 => "boot:noShift",
         8 => "boot:noChord",
         9 => "boot:released",
         11 => "boot:deadline",
@@ -96,13 +96,13 @@ mod tests {
             initialize(0x1234, 3, 0);
         }
         assert_eq!(manufacturer(), "boot:entered");
-        snapshot((1 << 40) | 1);
+        snapshot((1 << 40) | (1 << 32));
         transfer_error(0x22, 2, 1, 0);
         outcome(Outcome::ScanFailed);
         unsafe {
             assert_eq!(get(0), MAGIC);
             assert_eq!([get(2), get(3), get(4)], [0x1234, 3, 0]);
-            assert_eq!([get(5), get(6), get(7)], [1, 256, 1]);
+            assert_eq!([get(5), get(6), get(7)], [0, 257, 1]);
             assert_eq!([get(8), get(9), get(10), get(11)], [0x22, 2, 1, 0]);
         }
         assert_eq!(manufacturer(), "boot:scanNACK");
