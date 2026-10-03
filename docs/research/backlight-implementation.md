@@ -1,14 +1,14 @@
 # Optional RMK backlight
 
-First left-only hardware trial, 2026-10-02: USB typing, initial lights off, off control and logical brightness steps were owner-confirmed. All nonzero levels appeared full brightness; visible dimming failed. The right half and receiver remain unchanged. See [PWM diagnosis](backlight-pwm-diagnosis.md) for the factory-matched follow-up candidate.
+Left-only hardware result, 2026-10-02: the factory-matched 400 Hz active-high image passed owner-observed off control, three visible brightness steps in each direction and USB typing. The earlier 8 kHz image passed logical step counting but appeared full brightness at every nonzero level. The right half and receiver remain unchanged. All 15 nonzero levels, electrical waveforms, split lighting and persistence have not been individually validated. See [PWM diagnosis](backlight-pwm-diagnosis.md).
 
-The framework extension is pinned to [RMK fork `e4d359c0`](https://github.com/sarimabbas/rmk-nocfree/commit/e4d359c0d89713b5d310e7bc4116bc4f7c221bbe), based on upstream `9607aed`. A separate small fix rejects macro splices when zero macros are configured; the board configuration exposed a constant-underflow lint in local source builds. Dependencies are locked; no uncommitted Cargo-cache patch or floating branch dependency is used.
+The framework extension is pinned to [RMK fork `b41bd7ca`](https://github.com/sarimabbas/rmk-nocfree/commit/b41bd7caa7de67a47f6e7380519b730630f16152), based on upstream `9607aed`. A separate small fix rejects macro splices when zero macros are configured; the board configuration exposed a constant-underflow lint in local source builds. Dependencies are locked; no uncommitted Cargo-cache patch or floating branch dependency is used.
 
 ## Behavior
 
 - Sixteen brightness levels including off; saturating up/down, on/off/toggle and cycling. On/toggle remembers the last nonzero level. New storage defaults to off.
 - Mac mode uses plain F5/F6 for keyboard brightness and Fn+F5/F6 for ordinary function keys. Generic mode uses ordinary F5/F6 and Fn for lighting. Feature-off mappings remain unchanged.
-- RMK resolves actions and handles presses once. Key processing updates a bounded latest-value Watch without awaiting PWM, radio or flash. No ActionEvent subscriber is added.
+- RMK resolves actions. Taps change one step; physical Up/Down holds repeat after 350 ms at 80 ms intervals on the existing keyboard deadline scheduler. Release, sleep and endpoint saturation stop repetition. Other actions remain single-press. Key processing updates a bounded latest-value Watch without awaiting PWM, radio or flash. No ActionEvent subscriber is added. See [hold behavior](backlight-hold.md); it is not installed yet.
 - The left owns brightness. An appended absolute brightness/sleep snapshot travels over the existing split link, including on every split connection. An older right firmware can still type but cannot apply that message. Both halves need lighting builds for synchronization.
 - The left restores through RMK storage and saves two seconds after the last brightness change. Peripheral lighting is not independently persisted. Sleep is temporary output-off and neither saves zero nor postpones a pending brightness save.
 - Explicit user intent wins a startup storage-read race, including Off/Down at initial zero. Output skips identical effective levels. Subscribe-before-snapshot ordering retains changes made during the reconnect send.
@@ -17,7 +17,7 @@ The board supplies PWM0, vendor-published P0.20, standard GPIO drive, frequency 
 
 ## Hardware and migration limits
 
-Physical polarity remains unknown. `backlight-active-low` and `backlight-active-high` are alternative explicit build choices, not interchangeable approved images. A half with the generic `backlight` feature alone fails compilation until polarity is selected. Lighting is disabled by default.
+Active-high on/off and dimming behavior is owner-confirmed on the left. The right polarity and electrical waveform remain unmeasured. `backlight-active-low` and `backlight-active-high` are alternative explicit build choices, not interchangeable approved images. A half with the generic `backlight` feature alone fails compilation until polarity is selected. Lighting is disabled by default.
 
 The follow-up PWM setting matches the factory binary's explicit 400 Hz request (8 MHz / 20,000). The pinned [Embassy fork](https://github.com/sarimabbas/embassy-nrf-nocfree/commit/1b5fc397aa65026925d9641d88073a7e91993647) adds `BufferedPwm`, using a unique static RAM duty buffer and cooperative DMA waiting. Pending state survives cancelled or forgotten update futures; subsequent updates finish DMA before modifying the buffer. The prior synchronous API remains unchanged. Coalescing and cooperative waiting do not establish an input-latency bound; physical dimming and typing under brightness load remain unverified.
 

@@ -35,3 +35,9 @@ The next physical observation must distinguish nonzero brightness levels and con
 Root reran the safety/scanner harness (47 Python safety tests and seven Rust scanner tests) and all 277 RMK tests. `scripts/check.sh --reclaimed-softdevice --usb-recovery-first --backlight-active-high` passed all role/keymap and probe cross-builds. Both active-low halves with both keymaps, feature-off halves with both keymaps, and the actual protected receiver configuration also cross-built successfully. The receiver has no lighting feature. This does not resolve the known protected-layout full-left size overflow or establish any new hardware result.
 
 The framework revision changes RMK's storage schema hash. The next half update can reinitialize settings and bonds; preserve a fresh readback and expect pairing again. No incompatible settings restoration or schema bypass is included.
+
+## Owner-assisted left result
+
+The installed left image matched the exact candidate, FF page padding and untouched application gap. USB-first recovery returned the readable update drive. Settings reinitialized as expected. After normal battery-first startup, USB identity matched the left location; the owner typed `qwert` and reported that three F6 presses visibly increased brightness and three F5 presses visibly decreased it back to off. This validates the requested left-only dimming loop. It does not validate every nonzero level, waveform, right lighting, synchronization, persistence or latency.
+
+On a later Fn+Escape entry, the owner observed that the left backlight turned off in recovery. A fresh readback again matched the working 400 Hz application and padding and saved its current settings before the hold trial.

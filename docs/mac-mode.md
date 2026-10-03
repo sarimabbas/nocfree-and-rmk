@@ -1,6 +1,6 @@
 # Mac function row
 
-Current status: both halves run full RMK; the earlier diagnostic observations below are historical. The compiled Mac row uses the captured F14/F15 display-brightness keys. Optional `backlight-active-low` or `backlight-active-high` builds map F5/F6 to the new RMK backlight service, with ordinary F5/F6 behind Fn. Those lighting builds have not passed physical acceptance; feature-off builds still emit ordinary F5/F6. See [implementation and validation](research/backlight-implementation.md).
+Current status: both halves run full RMK; the earlier diagnostic observations below are historical. The compiled Mac row uses the captured F14/F15 display-brightness keys. Optional `backlight-active-low` or `backlight-active-high` builds map F5/F6 to the new RMK backlight service, with ordinary F5/F6 behind Fn. The left-only 400 Hz active-high trial passed off and three visible steps in each direction, plus USB typing; right lighting, synchronization and persistence remain pending. Feature-off builds still emit ordinary F5/F6. See [implementation and validation](research/backlight-implementation.md).
 
 The optional `mac-keymap` Cargo feature selects the user's Mac function row in the
 shared electrical default keymap. Both USB input diagnostics and the production left

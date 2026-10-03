@@ -1,6 +1,6 @@
 # Backlight acceptance
 
-Independent review plan, 2026-10-02. These are proposed checks; none is a hardware result. Firmware review is pending the implementation candidate.
+Initial independent review plan, 2026-10-02. The first-candidate review below is historical; see [400 Hz results](backlight-400hz-validation.md) for owner-observed left dimming and [hold behavior](backlight-hold.md) for the follow-up. Proposed checks below are not themselves hardware results.
 
 ## Electrical gate and first trial
 
@@ -13,7 +13,7 @@ Use ordinary GPIO drive strength; do not compensate for unknown circuitry with h
 ## Source review gates
 
 - Allocate P0.20 and one unused PWM peripheral exactly once. Current board main reserves TIMER0/RTC0/PPI resources for MPSL/SDC; it does not currently allocate a PWM peripheral. Check the actual final role configurations for conflicts.
-- Keep brightness state/action handling in RMK. Process only presses once; hold/release must not add brightness steps. Saturate and make absolute state replay idempotent. Fn+F5/F6 must retain ordinary function keys in Mac mode.
+- Keep brightness state/action handling in RMK. Process a tap once; the follow-up deliberately repeats physical Up/Down holds on RMK's deadline scheduler and stops on release. Other actions stay single-press. Saturate and make absolute state replay idempotent. Fn+F5/F6 must retain ordinary function keys in Mac mode.
 - Keep key processing free of awaited lighting queue/radio/flash operations. Coalesce latest state rather than accumulating unlimited changes; preserve key events ahead of optional lighting traffic. A bounded event subscriber can still block the publisher if it stops draining.
 - Review sleep/disconnect cancellation: output must reach verified off, reconnect must apply current authority state, and restarting tasks must not retain a stale subscriber or miss the latest snapshot. Snapshot capture and event subscription need an explicit ordering that cannot lose an intervening brightness change.
 - Append split message variants, test postcard bytes for existing variants, and audit size constants/MTUs and mixed-version behavior. Do not reuse indicator messages as brightness. Matching half versions are required if the protocol is incompatible.
