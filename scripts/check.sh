@@ -13,6 +13,7 @@ for option in "$@"; do
     esac
 done
 cd "$(dirname "$0")/.."
+./experiments/held-key-recovery/check.sh
 python3 -m unittest discover -s tests -v
 cargo test --locked --manifest-path crates/nocfree-input/Cargo.toml
 cargo fmt --manifest-path crates/nocfree-input/Cargo.toml -- --check
