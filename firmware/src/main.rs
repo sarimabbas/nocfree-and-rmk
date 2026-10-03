@@ -2,6 +2,8 @@
 #![no_main]
 #[cfg(feature = "application-recovery-shim")]
 mod startup_recovery;
+#[cfg(feature = "usb-rescue-startup")]
+mod usb_rescue;
 #[cfg(not(any(feature = "left", feature = "right", feature = "receiver")))]
 compile_error!("Select exactly one role: left, right, receiver");
 #[cfg(any(
@@ -60,7 +62,10 @@ fn ble_addr() -> [u8; 6] {
 }
 #[embassy_executor::main]
 async fn main(spawner: Spawner) {
-    let p = embassy_nrf::init(embassy_nrf::config::Config::default());
+    #[allow(unused_mut)]
+    let mut p = embassy_nrf::init(embassy_nrf::config::Config::default());
+    #[cfg(feature = "usb-rescue-startup")]
+    usb_rescue::run(p.USBD.reborrow(), Irqs).await;
     let mpsl_p =
         mpsl::Peripherals::new(p.RTC0, p.TIMER0, p.TEMP, p.PPI_CH19, p.PPI_CH30, p.PPI_CH31);
     let lfclk = mpsl::raw::mpsl_clock_lfclk_cfg_t {

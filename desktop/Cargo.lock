@@ -3547,6 +3547,7 @@ dependencies = [
  "gpui-platform-gpui-unofficial",
  "gpui-unofficial",
  "gpuikit",
+ "nusb",
  "plist",
  "rynk",
  "rynk-usb",

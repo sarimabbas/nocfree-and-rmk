@@ -20,7 +20,9 @@ fn main() {
         "memory-factory.x"
     };
     let mut memory = std::fs::read_to_string(layout).unwrap();
-    if std::env::var_os("CARGO_FEATURE_APPLICATION_RECOVERY_SHIM").is_some() {
+    if std::env::var_os("CARGO_FEATURE_APPLICATION_RECOVERY_SHIM").is_some()
+        || std::env::var_os("CARGO_FEATURE_USB_RESCUE_STARTUP").is_some()
+    {
         assert!(
             std::env::var_os("CARGO_FEATURE_USB_RECOVERY_FIRST").is_none(),
             "Application recovery must not retain the USB-first marker"
@@ -52,6 +54,7 @@ fn main() {
     println!("cargo:rerun-if-changed=bootloader-recovery.x");
     println!("cargo:rerun-if-changed=startup-recovery.x");
     println!("cargo:rerun-if-env-changed=CARGO_FEATURE_APPLICATION_RECOVERY_SHIM");
+    println!("cargo:rerun-if-env-changed=CARGO_FEATURE_USB_RESCUE_STARTUP");
     println!("cargo:rerun-if-changed=migration-diagnostic.x");
     println!("cargo:rerun-if-env-changed=CARGO_FEATURE_MIGRATION_RUNTIME_PROBE");
     println!("cargo:rerun-if-env-changed=CARGO_FEATURE_MIGRATION_HAL_PROBE");

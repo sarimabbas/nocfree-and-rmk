@@ -1,7 +1,10 @@
 //! Presentation only. Discovery and backup decisions remain in the session.
 use std::{
     path::PathBuf,
-    sync::{Arc, OnceLock},
+    sync::{
+        Arc, OnceLock,
+        atomic::{AtomicBool, Ordering},
+    },
     time::{Duration, Instant},
 };
 
@@ -9,6 +12,7 @@ use crate::{
     battery,
     device::{self, Role},
     home::{Home, UpdateAssessment},
+    recovery,
     session::{Session, View},
     trial::{Trial, TrialView},
 };
@@ -25,6 +29,8 @@ use gpuikit::{
 };
 
 pub struct Companion {
+    rescue: Option<RescueView>,
+    rescue_cancel: Option<Arc<AtomicBool>>,
     session: Option<Session>,
     view: View,
     role: Option<Role>,
@@ -47,6 +53,12 @@ pub struct Companion {
     developer_focus: FocusHandle,
     developer_options: bool,
     _poll: Task<()>,
+}
+
+enum RescueView {
+    Choose,
+    Running(nocfree_companion::experimental_recovery::Role),
+    Finished(Result<(), String>),
 }
 
 impl Companion {
@@ -217,6 +229,8 @@ impl Companion {
             }
         });
         Self {
+            rescue: None,
+            rescue_cancel: None,
             session: Some(session),
             view,
             role: None,
@@ -240,6 +254,128 @@ impl Companion {
             developer_options: false,
             _poll: poll,
         }
+    }
+
+    fn start_recovery(
+        &mut self,
+        role: nocfree_companion::experimental_recovery::Role,
+        cx: &mut Context<Self>,
+    ) {
+        if !recovery::enabled() || matches!(self.rescue, Some(RescueView::Running(_))) {
+            return;
+        }
+        let cancelled = Arc::new(AtomicBool::new(false));
+        self.rescue_cancel = Some(cancelled.clone());
+        self.rescue = Some(RescueView::Running(role));
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            let worker_cancel = cancelled.clone();
+            let result = cx
+                .background_executor()
+                .spawn(async move { recovery::run(role, worker_cancel) })
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                if this
+                    .rescue_cancel
+                    .as_ref()
+                    .is_some_and(|current| Arc::ptr_eq(current, &cancelled))
+                    && !cancelled.load(Ordering::Relaxed)
+                {
+                    this.rescue = Some(RescueView::Finished(result));
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
+    }
+
+    fn recovery_screen(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        use nocfree_companion::experimental_recovery::Role as RecoveryRole;
+        let (title, description) = match self.rescue.as_ref().unwrap() {
+            RescueView::Choose => (
+                "Recover a device",
+                "Which part would you like to recover?".to_owned(),
+            ),
+            RescueView::Running(role) => (
+                "Reconnect your device",
+                recovery::instruction(*role).to_owned(),
+            ),
+            RescueView::Finished(Ok(())) => (
+                "Recovery drive is ready",
+                "Your firmware hasn’t been changed.".to_owned(),
+            ),
+            RescueView::Finished(Err(error)) => ("Let’s try again", error.clone()),
+        };
+        div()
+            .size_full()
+            .bg(rgb(0xffffff))
+            .flex()
+            .items_center()
+            .justify_center()
+            .child(
+                div()
+                    .max_w(px(420.))
+                    .p(px(32.))
+                    .flex()
+                    .flex_col()
+                    .items_center()
+                    .gap(px(24.))
+                    .child(
+                        div()
+                            .text_size(px(12.))
+                            .text_color(rgb(0x626870))
+                            .child("Experimental recovery"),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(28.))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .child(title),
+                    )
+                    .child(div().text_center().line_height(px(24.)).child(description))
+                    .when(matches!(self.rescue, Some(RescueView::Choose)), |column| {
+                        column
+                            .child(button("recover-left", "Left half").on_click(cx.listener(
+                                |this, _, _, cx| this.start_recovery(RecoveryRole::Left, cx),
+                            )))
+                            .child(button("recover-right", "Right half").on_click(cx.listener(
+                                |this, _, _, cx| this.start_recovery(RecoveryRole::Right, cx),
+                            )))
+                            .child(button("recover-receiver", "USB receiver").on_click(
+                                cx.listener(|this, _, _, cx| {
+                                    this.start_recovery(RecoveryRole::Receiver, cx)
+                                }),
+                            ))
+                    })
+                    .when(
+                        matches!(self.rescue, Some(RescueView::Running(_))),
+                        |column| {
+                            column.child(
+                                div()
+                                    .text_size(px(13.))
+                                    .text_color(rgb(0x626870))
+                                    .child("Waiting for the recovery drive…"),
+                            )
+                        },
+                    )
+                    .child(
+                        button(
+                            "close-recovery",
+                            if matches!(self.rescue, Some(RescueView::Running(_))) {
+                                "Cancel"
+                            } else {
+                                "Done"
+                            },
+                        )
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            if let Some(cancelled) = this.rescue_cancel.take() {
+                                cancelled.store(true, Ordering::Relaxed);
+                            }
+                            this.rescue = None;
+                            cx.notify();
+                        })),
+                    ),
+            )
     }
 
     fn accept_trial(&mut self, trial: Trial) {
@@ -420,6 +556,9 @@ impl Focusable for Companion {
 
 impl Render for Companion {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if self.rescue.is_some() {
+            return self.recovery_screen(cx).into_any_element();
+        }
         let options_rows = div()
             .flex()
             .flex_col()
@@ -474,7 +613,7 @@ impl Render for Companion {
                         }
                     })),
             )
-            .when(self.trial_available, |rows| {
+            .when(self.trial_available || recovery::enabled(), |rows| {
                 rows.child(
                     div()
                         .id("developer-options-control")
@@ -687,6 +826,15 @@ impl Render for Companion {
                                     .gap(px(8.))
                                     .child(separator())
                                     .child(options_rows)
+                                    .when(self.developer_options && recovery::enabled(), |tools| {
+                                        tools.child(
+                                            button("experimental-recovery", "Recover a device")
+                                                .on_click(cx.listener(|this, _, _, cx| {
+                                                    this.rescue = Some(RescueView::Choose);
+                                                    cx.notify();
+                                                })),
+                                        )
+                                    })
                                     .when(
                                         self.developer_options && self.trial_available,
                                         |tools| {
@@ -827,6 +975,7 @@ impl Render for Companion {
                         ),
                 )
             })
+            .into_any_element()
     }
 }
 

@@ -15,6 +15,7 @@ sha2 = "0.10"
 rynk = { git = "https://github.com/sarimabbas/rmk-nocfree", rev = "b41bd7caa7de67a47f6e7380519b730630f16152" }
 rynk-usb = { git = "https://github.com/sarimabbas/rmk-nocfree", rev = "b41bd7caa7de67a47f6e7380519b730630f16152" }
 tokio = { version = "1", features = ["rt", "macros", "time"] }
+nusb = "=0.2.7"
 
 [profile.dev]
 debug = 0

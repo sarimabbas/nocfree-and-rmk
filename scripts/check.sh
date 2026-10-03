@@ -4,6 +4,7 @@ set -eu
 layout_features=""
 backlight_features=""
 shim_features=""
+rescue_features=""
 for option in "$@"; do
     case "$option" in
         --reclaimed-softdevice) layout_features="$layout_features,reclaimed-softdevice" ;;
@@ -11,12 +12,14 @@ for option in "$@"; do
         --backlight-active-low) backlight_features="$backlight_features,backlight-active-low" ;;
         --backlight-active-high) backlight_features="$backlight_features,backlight-active-high" ;;
         --application-recovery-shim) shim_features=",application-recovery-shim" ;;
-        *) echo "Usage: $0 [--reclaimed-softdevice] [--usb-recovery-first] [--backlight-active-low|--backlight-active-high] [--application-recovery-shim]" >&2; exit 2 ;;
+        --usb-rescue-startup) rescue_features=",usb-rescue-startup" ;;
+        *) echo "Usage: $0 [--reclaimed-softdevice] [--usb-recovery-first] [--backlight-active-low|--backlight-active-high] [--application-recovery-shim] [--usb-rescue-startup]" >&2; exit 2 ;;
     esac
 done
 cd "$(dirname "$0")/.."
 ./experiments/held-key-recovery/check.sh
 ./experiments/application-recovery-shim/check.sh
+cargo test --locked --manifest-path experiments/usb-startup-recovery/Cargo.toml
 python3 -m unittest discover -s tests -v
 cargo test --locked --manifest-path crates/nocfree-input/Cargo.toml
 cargo fmt --manifest-path crates/nocfree-input/Cargo.toml -- --check
@@ -31,7 +34,7 @@ cargo fmt --manifest-path firmware/Cargo.toml -- --check
             # Receiver has no keyboard backlight and needs no lighting feature/schema change.
             if [ "$role" = receiver ]; then role_backlight_features=""; role_shim_features=""; fi
             cargo build --locked --release --bin nocfree-rmk --target thumbv7em-none-eabihf \
-                --no-default-features --features "defmt-logging,$role$layout_features$keymap_features$role_backlight_features$role_shim_features" || failed=1
+                --no-default-features --features "defmt-logging,$role$layout_features$keymap_features$role_backlight_features$role_shim_features$rescue_features" || failed=1
         done
     done
     cargo build --locked --release --bin recovery-probe --target thumbv7em-none-eabihf \

@@ -1,5 +1,16 @@
 # NocFree Companion
 
+## Experimental USB recovery
+
+With `NOCFREE_USB_RESCUE_EXPERIMENT=1`, More options → Developer tools exposes
+Recover a device. Select one component and follow its single power-cycle step;
+the app watches for that component's experimental startup USB interface and
+sends one DFU recovery request. It reports success only after observing the
+recovery drive at the same USB location. This flow requests a reset, but never
+copies firmware. Current installed images do not all support this interface.
+The experiment supports macOS observation; Windows/Linux device acceptance is
+still pending. The default app does not expose this experiment.
+
 A read-only macOS prototype using GPUI and `iamnbutler/gpuikit`. A start screen names two journeys: factory backup/restore and RMK installation. Only saving current firmware copies is available; restore and RMK installation are explicitly unavailable. The future RMK journey calls for a factory backup first, but this prototype does not establish that a saved current image is factory firmware or restore-compatible.
 
 After the owner chooses Save firmware copies, the app starts with the left half, shows one physical step at a time, and saves a private firmware copy automatically after fresh connection and metadata checks. Once normal startup returns, it guides the right half. There are no firmware-write, reset, erase or serial-port commands.

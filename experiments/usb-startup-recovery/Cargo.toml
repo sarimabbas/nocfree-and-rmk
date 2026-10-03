@@ -1,0 +1,15 @@
+[package]
+name = "nocfree-usb-startup-review"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[dev-dependencies]
+embassy-usb = "=0.6.0"
+embassy-time = { version = "=0.5.1", features = ["std"] }
+
+[[test]]
+name = "framework_dfu"
+path = "framework_dfu.rs"
