@@ -66,3 +66,16 @@ specifies the configuration, polarity and input register pairs. Register offsets
 were checked against pinned `nrf-pac` 0.4.0 nRF52833 definitions already used by
 this workspace. The previous held-key bootloader gate failed hardware trials;
 this alternative is a prototype, not evidence that the previous cause is fixed.
+# Startup diagnostic
+
+The first left application-shim trial typed normally, its installed application
+and untouched settings matched readback, and ordinary wired USB startup typed
+without entering recovery. The owner-assisted held Fn+Escape startup did not
+mount the recovery drive; RMK remained visible. A genuine controller reset was
+not measured, so that result does not isolate the scanner from the power path.
+
+`startup-recovery-diagnostic` records the pre-init outcome in a fully initialized
+`.uninit` trace and exposes a short static manufacturer label through RMK's
+existing device configuration. The product name and transport implementation
+stay the same. This is temporary instrumentation, not a completed recovery route.
+It changes neither the factory bootloader nor UICR, and adds no USB interface.

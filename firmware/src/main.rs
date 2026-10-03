@@ -135,7 +135,16 @@ async fn main(spawner: Spawner) {
     let driver = Driver::new(p.USBD, Irqs, HardwareVbusDetect::new(Irqs));
     #[cfg(not(feature = "right"))]
     let device_config = rmk::config::DeviceConfig {
-        manufacturer: "NocFree RMK community",
+        manufacturer: {
+            #[cfg(feature = "startup-recovery-diagnostic")]
+            {
+                startup_recovery::diagnostic_manufacturer()
+            }
+            #[cfg(not(feature = "startup-recovery-diagnostic"))]
+            {
+                "NocFree RMK community"
+            }
+        },
         product_name: if cfg!(feature = "receiver") {
             "NocFree AND RMK Receiver"
         } else {

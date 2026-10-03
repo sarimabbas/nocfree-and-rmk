@@ -90,16 +90,43 @@ Current production integration is passed offline review; root's complete
 per-role harness/build results and device acceptance remain separate evidence.
 No image was installed by this reviewer.
 
+## Feature-gated startup diagnostic review
+
+The left diagnostic ELF was independently inspected at SHA256
+`6aea6b5f5ffbebf3efcebd4254b6e1b0199650448569da1e89d86e366298777a`.
+The 48-byte trace is in NOLOAD `.uninit` at `0x20017290`, exactly after
+`__ebss`, outside data/BSS initialization. Pre-init first writes all twelve
+words, then reset/USB/ownership observations and the magic last, before any
+branch can return. The linked initializer contains only volatile register/trace
+writes and stack operations. Runtime descriptor access reads initialized trace
+words and returns short immutable strings; no trace writes occur after handoff.
+
+Reset still calls the hook before BSS/data initialization and FPU enablement.
+The hook preserves PRIMASK and stack alignment. The thirteen reachable early
+functions, including outlined tail epilogues, contain only integer operations,
+stack array helpers, registers and the uninitialized trace. No initialized-data,
+HAL, allocation, panic, NVMC, UICR or floating-point dependency was found. STOP
+failure still resets without dropping DMA-owning frames. The trace is overwritten
+on every startup: a fatal reset reason does not survive into a later RMK session.
+
+Ten host tests independently passed, covering policy/reason distinctions,
+initialized trace handoff and label selection. NACK labels mask ERRORSRC bits1/2;
+overrun bit0 alone remains a generic failure. These diagnostics do not establish
+which electrical fault occurred or prove held-key recovery. Actual installed
+readback and physical startup/typing/recovery checks remain separate.
+
 ## Reviewed source hashes
 
-- `firmware/src/startup_recovery/mod.rs`: `aa7bbc6ee718da694285bf334e115dfce17490ddaf3fd3fe976be041e83af0a6`
-- `firmware/src/startup_recovery/nrf.rs`: `a5787dec07845ecf0d2a05ccfd06e54c88ace1aeefe937d044a7d4e41eccc043`
-- `firmware/src/startup_recovery/gate.rs`: `ff3b3a3aa2a70c38ab755835e08cd7ad0313db9f792268805e921db51959bafa`
-- `firmware/src/main.rs`: `ebfea876055a6463f9a72161963018be3978c72a2e8400e86042014788c14b6d`
+- `firmware/src/startup_recovery/mod.rs`: `dc7cc24656d9c6513e15de8c8851d17581a676312dbbbd1e4b057e207b42ebda`
+- `firmware/src/startup_recovery/nrf.rs`: `e7d0136026e66992fcbaad48894e7ebc40710c41bff3478d64202473a49db798`
+- `firmware/src/startup_recovery/gate.rs`: `879e92436f2ef5e2e8109167c3282d6705dd3ff01736ffb6f5c110f26c26d0a6`
+- `firmware/src/startup_recovery/trace.rs`: `0fa6ef145ac995f534a9033591d3c1d9b0b0af44fb87ce5541c415116c179661`
+- `firmware/src/main.rs`: `ad8f3e637243ac7166c35f37fefd914d9dd9b2f8401ff705d73341b816959a06`
 - `firmware/build.rs`: `01cc94d81c43f24554ba0c999c64bc81f62f599d8de827d9ed5bd3a2bb23d91d`
 - `firmware/startup-recovery.x`: `668fc290392f2d58f66405356a4d926ae1330a1fda4ec2a7bfbad546756c0790`
-- `firmware/Cargo.toml`: `28fb4f689eda9a71fbbc7beed9ad1d0719fb5213d0d2d4660f4f3a0720ae77d7`
+- `firmware/Cargo.toml`: `31fc521bcb772ac43c67ef7adc58d8a9150faade27e829ec57aba2613bec5ec6`
 - `scripts/migration_guard.py`: `9a20028c4f6dd4ecd35d50caa90ca7b4fcd8380444a71e0e4f55d1ef1384d009`
 - `tests/test_application_shim_guard.py`: `5a2b86b79b1f4efc033fab83566502c2e802c46298e6477d3ed2f666a76c60ff`
 - `experiments/application-recovery-shim/lib.rs`: `697b6090490545d6749ad48284b4c341b896834227b64870e6a618ebcb1aa732`
-- `experiments/application-recovery-shim/README.md`: `e5ea53e80520cd856c5c1c714da85d688fdceae465769ae1f26ff1ff767fc328`
+- `experiments/application-recovery-shim/README.md`: `33be7b486e1fd7195c9f74efbe4cf0ad801263f9f46af73004ad2b5bd6a64744`
+- `experiments/application-recovery-shim/check.sh`: `be8a14c867e2e52a16977e4326fc8126cdf834db6e62c7c1a2aaba5df7e2d02e`

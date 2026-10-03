@@ -1,10 +1,10 @@
-//! nRF52833 polled TWIM0 adapter. No runtime, statics, interrupts or UICR access.
+//! nRF52833 polled TWIM0 adapter. No initialized statics, interrupts or UICR access.
 use core::{
     ptr::{read_volatile, write_volatile},
     sync::atomic::{Ordering, compiler_fence},
 };
 #[path = "gate.rs"]
-mod gate;
+pub(super) mod gate;
 use gate::{Inputs, Role};
 const TWIM: usize = 0x40003000;
 const TIMER: usize = 0x40009000;
@@ -103,6 +103,15 @@ impl Bus {
             write(TWIM + 0x008, 1);
         }
         let ok = self.wait_stopped(true, 4_000);
+        #[cfg(feature = "startup-recovery-diagnostic")]
+        if !ok || unsafe { read(TWIM + 0x54c) != len as u32 || (rx && read(TWIM + 0x53c) != 2) } {
+            super::trace::transfer_error(
+                address,
+                unsafe { read(TWIM + 0x4c4) },
+                unsafe { read(TWIM + 0x54c) },
+                unsafe { read(TWIM + 0x53c) },
+            );
+        }
         if !ok {
             unsafe {
                 write(TWIM + 0x200, 0);
@@ -110,6 +119,8 @@ impl Bus {
                 write(TWIM + 0x014, 1);
             }
             if !self.wait_stopped(false, 1_000) {
+                #[cfg(feature = "startup-recovery-diagnostic")]
+                super::trace::outcome(gate::Outcome::StopFailed);
                 // Without STOPPED the peripheral may still own these buffers.
                 // A DSB/ENABLE=0 is not proof of EasyDMA completion. Never
                 // reuse or drop them: hardware reset is the bounded escape.
@@ -152,6 +163,14 @@ impl Bus {
     }
 }
 impl Inputs for Bus {
+    #[cfg(feature = "startup-recovery-diagnostic")]
+    fn outcome(&mut self, reason: gate::Outcome) {
+        super::trace::outcome(reason);
+    }
+    #[cfg(feature = "startup-recovery-diagnostic")]
+    fn first_snapshot(&mut self, bits: u64) {
+        super::trace::snapshot(bits);
+    }
     fn usb(&self) -> bool {
         unsafe { read(0x40000438) & 1 != 0 }
     }
@@ -195,13 +214,24 @@ impl Inputs for Bus {
 /// Caller must be before HAL/RMK initialization and before interrupts are enabled.
 /// `right=false` is left Fn+Escape; `true` is right Fn+Backspace.
 pub unsafe fn check(right: bool) {
+    #[cfg(feature = "startup-recovery-diagnostic")]
+    unsafe {
+        super::trace::initialize(read(0x40000400), read(0x40000438), read(TWIM + 0x500));
+    }
     let mut bus = Bus {
         tx: [0; 3],
         rx: [0; 2],
         pins: [0; 2],
         active: false,
     };
-    if !bus.usb() || !unsafe { bus.begin() } {
+    if !bus.usb() {
+        #[cfg(feature = "startup-recovery-diagnostic")]
+        super::trace::outcome(gate::Outcome::NoUsb);
+        return;
+    }
+    if !unsafe { bus.begin() } {
+        #[cfg(feature = "startup-recovery-diagnostic")]
+        super::trace::outcome(gate::Outcome::PeripheralOwned);
         return;
     }
     let recover = gate::held(&mut bus, if right { Role::Right } else { Role::Left });

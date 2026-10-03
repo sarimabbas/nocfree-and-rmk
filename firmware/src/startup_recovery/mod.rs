@@ -5,6 +5,12 @@ compile_error!(
 );
 
 mod nrf;
+#[cfg(feature = "startup-recovery-diagnostic")]
+mod trace;
+#[cfg(feature = "startup-recovery-diagnostic")]
+pub fn diagnostic_manufacturer() -> &'static str {
+    trace::manufacturer()
+}
 
 // The hook runs before data/BSS initialization. Save the incoming interrupt mask
 // and keep interrupts masked while the stack-only scanner owns TWIM0/TIMER1.
