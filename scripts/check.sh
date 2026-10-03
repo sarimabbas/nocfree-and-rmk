@@ -32,6 +32,10 @@ cargo fmt --manifest-path firmware/Cargo.toml -- --check
     done
     cargo build --locked --release --bin recovery-probe --target thumbv7em-none-eabihf \
         --no-default-features --features defmt-logging,right,recovery-probe,usb-recovery-first || failed=1
+    for inspect_role in left right; do
+        cargo build --locked --release --bin bootloader-inspect --target thumbv7em-none-eabihf \
+            --no-default-features --features "defmt-logging,$inspect_role,bootloader-inspect" || failed=1
+    done
     for probe_role in left right; do
         for keymap_features in "" ",mac-keymap"; do
             cargo build --locked --release --bin input-probe --target thumbv7em-none-eabihf \

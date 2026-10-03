@@ -14,6 +14,11 @@ required-features = ["recovery-probe"]
 name = "input-probe"
 path = "src/bin/input-probe.rs"
 required-features = ["input-probe"]
+
+[[bin]]
+name = "bootloader-inspect"
+path = "src/bin/bootloader-inspect.rs"
+required-features = ["bootloader-inspect"]
 [features]
 default = ["defmt-logging"]
 # Normal builds use RMK defmt; --no-default-features callers select this explicitly.
@@ -51,6 +56,8 @@ migration-usb-reset-serial-probe = ["migration-probe"]
 migration-usb-addressed-serial-probe = ["migration-probe"]
 # Right-local USB typing diagnostic, with independent CDC update entry.
 input-probe = ["dep:embassy-usb", "rmk/adafruit_bl"]
+# Temporary read-only upper-flash/MBR/UICR inspection, retaining USB-first recovery.
+bootloader-inspect = ["dep:embassy-usb", "reclaimed-softdevice", "usb-recovery-first", "embassy-nrf/preserve-uicr"]
 left = ["rmk/split", "rmk/dongle", "rmk/adafruit_bl", "rmk/rynk"]
 right = ["rmk/split"]
 receiver = ["rmk/dongle", "rmk/adafruit_bl"]
@@ -79,4 +86,4 @@ debug = 2
 
 # Published 0.11.0 source with nRF52833 SET_ADDRESS handling and buffered PWM updates.
 [patch.crates-io]
-embassy-nrf = { git = "https://github.com/sarimabbas/embassy-nrf-nocfree", rev = "1b5fc397aa65026925d9641d88073a7e91993647" }
+embassy-nrf = { git = "https://github.com/sarimabbas/embassy-nrf-nocfree", rev = "4e3d8c790cc1ca615bca524af816bc5d3c244bae" }

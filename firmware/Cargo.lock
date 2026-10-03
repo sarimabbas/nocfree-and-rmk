@@ -774,7 +774,7 @@ dependencies = [
 [[package]]
 name = "embassy-nrf"
 version = "0.11.0"
-source = "git+https://github.com/sarimabbas/embassy-nrf-nocfree?rev=1b5fc397aa65026925d9641d88073a7e91993647#1b5fc397aa65026925d9641d88073a7e91993647"
+source = "git+https://github.com/sarimabbas/embassy-nrf-nocfree?rev=4e3d8c790cc1ca615bca524af816bc5d3c244bae#4e3d8c790cc1ca615bca524af816bc5d3c244bae"
 dependencies = [
  "bitflags 2.13.2",
  "cfg-if",
