@@ -774,7 +774,7 @@ dependencies = [
 [[package]]
 name = "embassy-nrf"
 version = "0.11.0"
-source = "git+https://github.com/sarimabbas/embassy-nrf-nocfree?rev=9640cd7af9d2e5f9fe9860aae7108e4a04f96c8c#9640cd7af9d2e5f9fe9860aae7108e4a04f96c8c"
+source = "git+https://github.com/sarimabbas/embassy-nrf-nocfree?rev=1b5fc397aa65026925d9641d88073a7e91993647#1b5fc397aa65026925d9641d88073a7e91993647"
 dependencies = [
  "bitflags 2.13.2",
  "cfg-if",
@@ -1930,7 +1930,7 @@ checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 [[package]]
 name = "rmk"
 version = "0.9.0"
-source = "git+https://github.com/sarimabbas/rmk-nocfree?rev=beab077484db7d6bd96d19421bd4eae2466f511e#beab077484db7d6bd96d19421bd4eae2466f511e"
+source = "git+https://github.com/sarimabbas/rmk-nocfree?rev=e4d359c0d89713b5d310e7bc4116bc4f7c221bbe#e4d359c0d89713b5d310e7bc4116bc4f7c221bbe"
 dependencies = [
  "bt-hci",
  "byteorder",
@@ -1966,7 +1966,7 @@ dependencies = [
 [[package]]
 name = "rmk-config"
 version = "0.8.0"
-source = "git+https://github.com/sarimabbas/rmk-nocfree?rev=beab077484db7d6bd96d19421bd4eae2466f511e#beab077484db7d6bd96d19421bd4eae2466f511e"
+source = "git+https://github.com/sarimabbas/rmk-nocfree?rev=e4d359c0d89713b5d310e7bc4116bc4f7c221bbe#e4d359c0d89713b5d310e7bc4116bc4f7c221bbe"
 dependencies = [
  "config",
  "miniz_oxide",
@@ -1983,7 +1983,7 @@ dependencies = [
 [[package]]
 name = "rmk-macro"
 version = "0.8.0"
-source = "git+https://github.com/sarimabbas/rmk-nocfree?rev=beab077484db7d6bd96d19421bd4eae2466f511e#beab077484db7d6bd96d19421bd4eae2466f511e"
+source = "git+https://github.com/sarimabbas/rmk-nocfree?rev=e4d359c0d89713b5d310e7bc4116bc4f7c221bbe#e4d359c0d89713b5d310e7bc4116bc4f7c221bbe"
 dependencies = [
  "cargo_toml",
  "darling 0.24.1",
@@ -1999,7 +1999,7 @@ dependencies = [
 [[package]]
 name = "rmk-types"
 version = "0.4.0"
-source = "git+https://github.com/sarimabbas/rmk-nocfree?rev=beab077484db7d6bd96d19421bd4eae2466f511e#beab077484db7d6bd96d19421bd4eae2466f511e"
+source = "git+https://github.com/sarimabbas/rmk-nocfree?rev=e4d359c0d89713b5d310e7bc4116bc4f7c221bbe#e4d359c0d89713b5d310e7bc4116bc4f7c221bbe"
 dependencies = [
  "bitfield-struct",
  "cobs",

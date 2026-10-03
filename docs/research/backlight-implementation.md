@@ -1,8 +1,8 @@
 # Optional RMK backlight
 
-Software candidate, 2026-10-02. No lighting image has been installed or physically validated.
+First left-only hardware trial, 2026-10-02: USB typing, initial lights off, off control and logical brightness steps were owner-confirmed. All nonzero levels appeared full brightness; visible dimming failed. The right half and receiver remain unchanged. See [PWM diagnosis](backlight-pwm-diagnosis.md) for the factory-matched follow-up candidate.
 
-The framework extension is pinned to [RMK fork `beab0774`](https://github.com/sarimabbas/rmk-nocfree/commit/beab077484db7d6bd96d19421bd4eae2466f511e), based on upstream `9607aed`. A separate small fix rejects macro splices when zero macros are configured; the board configuration exposed a constant-underflow lint in local source builds. Dependencies are locked; no uncommitted Cargo-cache patch or floating branch dependency is used.
+The framework extension is pinned to [RMK fork `e4d359c0`](https://github.com/sarimabbas/rmk-nocfree/commit/e4d359c0d89713b5d310e7bc4116bc4f7c221bbe), based on upstream `9607aed`. A separate small fix rejects macro splices when zero macros are configured; the board configuration exposed a constant-underflow lint in local source builds. Dependencies are locked; no uncommitted Cargo-cache patch or floating branch dependency is used.
 
 ## Behavior
 
@@ -19,7 +19,7 @@ The board supplies PWM0, vendor-published P0.20, standard GPIO drive, frequency 
 
 Physical polarity remains unknown. `backlight-active-low` and `backlight-active-high` are alternative explicit build choices, not interchangeable approved images. A half with the generic `backlight` feature alone fails compilation until polarity is selected. Lighting is disabled by default.
 
-The proposed PWM setting is 8 kHz (16 MHz / 2000), not a measured factory frequency. Embassy `SimplePwm::set_duty` busy-waits for SEQEND while enabled: one nominal period is 125 µs. Interrupts remain available, but another async task on the same executor waits during that call. Coalescing and caching reduce redundant work; they do not establish an input-latency bound. Physical output and typing under brightness load require measurement.
+The follow-up PWM setting matches the factory binary's explicit 400 Hz request (8 MHz / 20,000). The pinned [Embassy fork](https://github.com/sarimabbas/embassy-nrf-nocfree/commit/1b5fc397aa65026925d9641d88073a7e91993647) adds `BufferedPwm`, using a unique static RAM duty buffer and cooperative DMA waiting. Pending state survives cancelled or forgotten update futures; subsequent updates finish DMA before modifying the buffer. The prior synchronous API remains unchanged. Coalescing and cooperative waiting do not establish an input-latency bound; physical dimming and typing under brightness load remain unverified.
 
 The board's sleep timeout is zero, disabling central sleep management including explicit suspend requests. These hooks therefore **do not enable automatic idle/suspend backlight-off** in the present configuration. A sleep-policy change requires separate wake/input acceptance.
 
@@ -47,7 +47,7 @@ cargo +1.93.1 nextest run --manifest-path rmk/Cargo.toml --no-default-features \
 
 Nextest isolates mock-clock tests; ordinary `cargo test` is unsuitable for those tests. The full suite passed 277 tests, including six backlight cases and the invalid macro-slot regression. The scanner/image host harness and all role/keymap and diagnostic cross-builds passed with the high-polarity candidate. Low-polarity halves also cross-built with both keymaps; feature-off halves and the protected receiver passed separately. Hosted CI results remain separate from local checks.
 
-## Offline candidates
+## Archived first-trial packages
 
 Ignored local packages bind exact ELF LOADs to BIN and page-padded UF2. Both reclaimed-half layouts start at `0x1000`, stop before settings at `0x65000`, retain the existing recovery marker and satisfy the nRF52833 address/vector/family gate. An independent parser verified all four packages; this proves structure, not device identity or installation approval.
 
@@ -58,4 +58,4 @@ Ignored local packages bind exact ELF LOADs to BIN and page-padded UF2. Both rec
 | Right / high | 217612 | `0x37000` |
 | Right / low | 217620 | `0x37000` |
 
-Generated candidates and working/factory backups stay private. A fresh left recovery readback matched the installed working application and gap exactly; settings were saved separately in its readable image. A first lighting trial still needs a separately reviewed, owner-approved operator. Choose physically verified polarity before shipping a default.
+Generated candidates and working/factory backups stay private. A fresh left recovery readback matched the installed working application and gap exactly; settings were saved separately in its readable image. The approved first left trial verified exact installed bytes and USB-first recovery, then established off control and logical step counting but failed visible dimming. A different image needs a separately reviewed, owner-approved trial; the earlier approval does not authorize a different candidate. Choose physically verified polarity before shipping a default.

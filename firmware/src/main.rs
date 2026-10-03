@@ -147,16 +147,20 @@ async fn main(spawner: Spawner) {
         let backlight = {
             use embassy_nrf::{
                 gpio::Level,
-                pwm::{Prescaler, SimpleConfig, SimplePwm},
+                pwm::{DutyCycle, Prescaler, SimpleConfig, SimplePwm},
             };
             let active_low = cfg!(feature = "backlight-active-low");
             // P0.20 is vendor-published. Polarity remains an explicit trial choice.
-            // 16 MHz / 2000 = 8 kHz; frequency is a port setting, not a board measurement.
+            // Factory applications request 400 Hz: 8 MHz / 20000, up counting.
+            // See docs/research/backlight-pwm-diagnosis.md; physical output is unmeasured.
             let mut config = SimpleConfig::default();
-            config.prescaler = Prescaler::Div1;
-            config.max_duty = 2000;
+            config.prescaler = Prescaler::Div2;
+            config.max_duty = 20000;
             config.ch0_idle_level = if active_low { Level::High } else { Level::Low };
-            rmk::backlight::NrfPwm::new(SimplePwm::new_1ch(p.PWM0, p.P0_20, &config), active_low)
+            static DUTIES: StaticCell<[DutyCycle; 4]> = StaticCell::new();
+            let pwm = SimplePwm::new_1ch(p.PWM0, p.P0_20, &config)
+                .with_static_duty_buffer(DUTIES.init([DutyCycle::normal(0); 4]));
+            rmk::backlight::NrfPwm::new(pwm, active_low)
         };
         use embassy_nrf::gpio::{Level, Output, OutputDrive};
         use embassy_nrf::saadc::Input as _;
