@@ -45,3 +45,46 @@ Every selected execution returned correctly, preserved those registers, ran 663,
 The reviewer also independently replayed the exact retained Rust `SecretKey::dh_key` wrapper, whose calling convention was checked against its disassembly: result pointer in `r0`, native scalar pointer in `r1`, remote big-endian coordinate bytes in `r2`, cached local point in `r3`. The harness derives the matching local point by executing the retained `p256_keygen`, supplies separate result/input buffers, and flushes Unicorn's translation cache after registering the measurement hook and before wrapper execution. Ten vectors passed, with return and callee-saved register checks, at 665,840 instructions and 1,820 bytes SP descent. That includes the 296-byte wrapper frame and 1,524-byte ECDH chain; adding the retained pairing-handler frame gives the same 4,356-byte subtotal. This tests the wrapper's point checking and byte-order conversion as well as ECDH, but not live SMP dispatch or interrupt preemption.
 
 The separate source-build experiment uses Arm GNU 15.2.Rel1, hard-float Cortex-M4 instructions and identical sources/flags except C optimization. The cached object's producer establishes that Cargo's `z` became GCC `-Os`, rather than a literal GCC `-Oz`. The reviewer inspected the recorded build commands and result reports: both `-Os` and `-O2` passed ten vectors. Their respective counts were 658,827 / 658,722 instructions and 1,524 / 1,516 bytes SP descent. The reduction is only 105 instructions (about 0.016%) and 8 stack bytes. Those rebuilt images link newlib helpers, so compare the pair with each other rather than treating their totals as exact retained-firmware counts. This experiment provides no support for changing the firmware optimization to solve the observed two-second link timeout. The reviewer independently replayed the retained binary and wrapper; the rebuild comparison was reviewed from the experiment agent's bound commands and result reports.
+
+## Expanded active-stack finding after the pairing stall
+
+The preceding arithmetic/ABI review covered the crypto boundary and explicitly excluded outer executor frames. A subsequent owner-observed loss of USB typing after the failed host pairing prompted a review of those frames. This expanded binary review identifies a concrete static stack-budget problem that the crypto-only subtotal missed.
+
+The retained image has the following direct `BL` call chain. Caller frame allocation remains in place at each listed call; inspected stack-restoration branches lead to return epilogues, rather than continuing into the callee.
+
+| Retained caller | Callee call instruction | Caller frame bytes |
+| --- | --- | ---: |
+| Main `TaskStorage::poll` (`0x16bf8`) | `0x18836` → `Join::poll` | 2,904 |
+| `Join::poll` (`0x2852c`) | `0x2bdc2` → `Join3::poll` | 13,800 |
+| `Join3::poll` (`0x158c`) | `0x2f3a` → RMK BLE task | 14,720 |
+| RMK BLE task (`0x1b908`) | `0x1bc02` → Trouble RX runner | 920 |
+| Trouble RX runner (`0x1197c`) | `0x141d4` → pairing L2CAP handler | 952 |
+| Pairing L2CAP handler (`0xf058`) | `0xf076` → `Pairing::handle_input` | 88 |
+| `Pairing::handle_input` (`0xcc34`) | `0xd0b8` / `0xd4b2` → `dh_key` | 2,536 |
+| `dh_key` plus its ECDH callees | Independently emulated retained wrapper | 1,820 |
+
+The subtotal is **37,740 bytes**, exceeding the entire 33,744-byte nominal static-to-stack gap by **3,996 bytes**, before the executor's own outer frame or any interrupt frames. Even assuming entry at the RAM ceiling `0x20020000`, that chain reaches `0x20016c94`, below `__ebss = 0x20017830` and the uninitialized RTT buffer ending at `0x20017c30`. Large temporary allocations in the two nested asynchronous join polls dominate the budget. This is a retained-binary call-chain calculation, not a device stack-pointer measurement. It establishes that the reviewed chain cannot fit above statically allocated data; it does not identify the exact overwritten object, prove which instructions the failed hardware attempt reached, or establish its precise fault mechanism.
+
+This supersedes the earlier absence of a demonstrated static overlap in the narrower crypto-only review. Passing standalone ECDH and `dh_key` functional emulation does not address this outer-stack problem. The scoped P256 `-O2` experiment saves only 8 bytes and cannot eliminate a deficit of thousands. The next software experiment should reduce or isolate the nested poll-frame pressure using existing framework execution boundaries, then compare the actual compiled call-chain budget before any device trial.
+
+The reset entry enables the FPU but does not visibly configure FPCCR. The current source does not explicitly set ASPEN/LSPEN or verify the bootloader's inherited lazy-stacking configuration. No runtime FPCCR or CONTROL value was read. Therefore interrupt FPU-state preservation remains unverified; the stack finding requires no assumption that lazy stacking is broken. Interrupt frames can only increase the required space beyond this subtotal, and functional emulation performed without interrupts cannot validate them.
+
+## Minimal compiler/configuration and framework-boundary alternatives
+
+The [Cargo profile reference](https://doc.rust-lang.org/cargo/reference/profiles.html) supports global `s` size optimization and `thin` LTO as ordinary configuration experiments. Package overrides require care: generic code can be generated in the crate that instantiates it, so optimizing only `embassy-futures` does not reliably target this application's concrete join polls. A root-package optimization override with size-optimized dependencies is another compile-only comparison if global speed optimization does not fit flash. Each result needs its actual flash usage and active compiled stack chain checked; no setting promises improvement.
+
+If profile changes cannot produce a fitting image, the pinned RMK already exposes the needed execution boundary without a framework fork. Its [run_all macro](https://github.com/rmk-rs/rmk/blob/9607aedf343b17dd6b27307583ae80c4f728fbbd/rmk/src/input_device/mod.rs#L81) only imports `Runnable` and passes each `.run()` future to [join_all](https://github.com/rmk-rs/rmk/blob/9607aedf343b17dd6b27307583ae80c4f728fbbd/rmk/src/helper_macro.rs). A bounded board-wiring experiment can pin `ble.run()` in place with `core::pin::pin!` and pass its `Pin<&mut Future>` to the same `rmk::join_all!`, with every other runnable in exactly its existing order. This retains RMK's own run futures, join implementation and polling order; it introduces no allocator, static-lifetime conversion or custom USB/BLE implementation. The hypothesis is that the outer join's `MaybeDone` then holds a small pinned reference rather than a large owned BLE future, avoiding its large move/drop temporaries. It must be cross-built and disassembled before being called a fix. Internal RMK joins remain unchanged.
+
+## Compile-only profile results
+
+Using the current pinned source, Rust 1.93.1 / LLVM 21.1.8, the left Mac feature set and unchanged application/RAM/storage limits:
+
+| Override | Result |
+| --- | --- |
+| Global `opt-level = 2` | Link rejected: final loadable section exceeds FLASH by 9,888 bytes |
+| Global `opt-level = "s"`, existing fat LTO | Compiler rejected: `Undefined temporary symbol` |
+| Global `opt-level = "s"`, thin LTO | Same compiler rejection |
+| Global `opt-level = "s"`, debug information disabled | Same compiler rejection; disabling DWARF did not isolate it |
+| Root-package-only `opt-level = 2`, dependencies at existing `z` | Link rejected: final loadable section exceeds FLASH by 49,888 bytes |
+
+These isolated build overrides changed no tracked firmware source and produced no candidate eligible for a device trial. The flash boundary was not relaxed, RAM origin was not lowered, and no firmware was copied. The next experiment is the pinned-reference RMK execution boundary described above.
