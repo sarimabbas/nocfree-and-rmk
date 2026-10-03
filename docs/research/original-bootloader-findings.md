@@ -93,3 +93,9 @@ this left half. The original factory bootloader remains installed. The right
 half and receiver were unchanged; right startup recovery, interrupted holds,
 and corruption of the application entry are not covered by these observations.
 The retained temporary manufacturer diagnostic does not change the product name.
+
+The owner subsequently tested the simpler sequence on the corrected image:
+middle WIRED, unplug USB for five seconds, **then** hold Fn+Escape and reconnect
+USB. The drive appeared before key release. Its identity and complete readable
+payload matched the installed checkpoint. Holding the keys before unplugging is
+therefore not required for this observed left-half recovery procedure.
