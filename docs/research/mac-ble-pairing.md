@@ -74,3 +74,21 @@ Owner-confirmed left typing passed on the rollback. Fn+Escape entered recovery, 
 The corrected capture helper passed 28 offline checks and the old capture approval was revoked. It permanently refuses the historical trial after any rollback attempt; a future logger trial needs fresh installation proof and approval. The observed RMK USB serial is a build/protocol tag, not a unique FICR identity, so future USB binding must include bootloader-correlated location and actual candidate evidence. No serial port was opened.
 
 Final rollback checkpoint: normal left USB identity/interfaces returned after owner battery-first startup. The unchanged right half, with USB unplugged, rejoined and the owner produced `HJKL` using left Shift with right keys. Basic split input and shared modifiers are restored; the rollback trial is complete. Direct host Bluetooth pairing remains unresolved, and exhaustive disconnect/release, simultaneous-input and wake-latency acceptance remain outstanding. The last hardware-tested image is retained; no further firmware change is planned merely to obtain logs.
+
+
+## PacketLogger capture, 2026-10-02
+
+The owner installed Apple's macOS Bluetooth logging profile. PacketLogger then captured HCI and ACL traffic, including the installed `NocFree RMK Left` advertisement. The owner clicked Connect once; the trace was stopped and saved privately. Independent parsers agree on all 5,081 records and correlate the named advertisement to this attempt's connection. No addresses, key material, or raw capture are published.
+
+Verified observations from this attempt:
+
+- LE connection completes successfully with a random peer address; ATT MTU negotiation and service/characteristic discovery receive replies.
+- An ATT read receives Insufficient Encryption (`0x0f`), followed by SMP Pairing Request and Pairing Response. Both advertise Secure Connections; the keyboard's NoInputNoOutput capability selects Just Works with the Mac's KeyboardDisplay capability.
+- macOS sends an SMP Pairing Public Key. No further target ACL traffic, including continuation fragments or a keyboard public-key response, occurs before disconnection.
+- A connection update succeeds 59 ms after the Mac public-key packet, with a 2,000 ms supervision timeout. HCI Disconnection Complete reports Connection Timeout (`0x08`), 2.059 seconds after the Mac public-key packet and 3.347 seconds after connection completion. No SMP Pairing Failed packet or host HCI Disconnect command appears in this interval.
+
+This locates the observed failure after the initial pairing response and Mac public key, before completed public-key exchange, confirm/random, DHKey checks, or encryption. It does not prove that the keyboard received that packet, identify a panic/reset, or distinguish crypto execution failure from radio loss. The earlier Apple internal status `708` remains opaque. Address-kind normalization in f5/f6 is downstream of the observed stopping point, so it is not the first fix to trial from this trace.
+
+Next: inspect the pinned peripheral public-key handler and Cortex-M4 P-256 implementation, then select a bounded experiment that distinguishes execution/stack failure from link loss. The saved trace is an offline analysis fixture, not an agent-runnable hardware reproduction. No firmware was changed for this capture.
+
+Protocol interpretation uses the [Bluetooth Security Manager specification](https://www.bluetooth.com/wp-content/uploads/Files/Specification/HTML/Core-61/out/en/host/security-manager-specification.html); PacketLogger framing is independently checked against [Wireshark's reader](https://github.com/wireshark/wireshark/blob/master/wiretap/packetlogger.c). The capture uses the little-endian variant (length, seconds, microseconds, type, payload); exact frame-length consumption and HCI/ACL lengths were checked.
