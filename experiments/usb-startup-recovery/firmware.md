@@ -9,6 +9,15 @@ disables USBD interrupts/endpoints, clears events and returns ownership to RMK.
 The factory bootloader, storage boundaries and UICR remain unchanged. WinUSB MS
 OS 2.0 descriptors accompany the rescue interface.
 
+The feature retains this port's established `defmt-logging` feature, including
+when callers disable default features. RMK hashes its enabled features into its
+storage schema: dropping logging in the first right trial caused a settings
+reset, despite the updater leaving storage untouched. The owner confirmed
+Companion recovery without keys and subsequent right-half typing/shared Shift;
+exact readback confirmed application/padding/gap, with nine changed storage bytes
+independently decoded as the schema reset. The final candidates must preserve
+the existing role's complete RMK feature set.
+
 The USB host sees experimental VID 0x4c4b and PID 0x4660 (left), 0x4661 (right),
 or 0x4662 (receiver). A scoped class/interface DETACH request with an empty payload
 requests the existing GPREGRET 0x57 recovery reset. The existing DFU handler resets
@@ -25,22 +34,32 @@ MPSL starts; an already-outstanding preceding-stage request is preserved.
 
 ## Cross-build measurements
 
-Release, no default features, `usb-rescue-startup`, existing RMK/Embassy revisions,
+Release, no default features, `usb-rescue-startup` retaining `defmt-logging`, existing RMK/Embassy revisions,
 the repository's canonical cached build without C compiler environment overrides.
 Halves also select reclaimed-softdevice,
 mac-keymap and backlight-active-high; receiver preserves its factory SoftDevice.
 
 | Role | BIN bytes | Application origin | Padded end | Application limit |
 | --- | ---: | --- | --- | --- |
-| Left | 389484 | 0x1000 | 0x61000 | 0x65000 |
-| Right | 226812 | 0x1000 | 0x39000 | 0x65000 |
-| Receiver | 251556 | 0x27000 | 0x65000 | 0x65000 |
-| Right transitional chord retained | 228172 | 0x1000 | 0x39000 | 0x65000 |
+| Left | 389504 | 0x1000 | 0x61000 | 0x65000 |
+| Right | 227072 | 0x1000 | 0x39000 | 0x65000 |
+| Receiver | 251264 | 0x27000 | 0x65000 | 0x65000 |
+
+These final candidates omit the key-chord feature. BIN sizes use the canonical
+Arm GNU exporter with erased flash gaps. The earlier no-logging transitional
+right trial was 228172 bytes and ended on the same `0x39000` page boundary.
 
 Left static initialized data is 4812 bytes and BSS is 58304 bytes; receiver data
 is 4572 bytes and BSS is 39408 bytes. Dynamic stack acceptance remains hardware work.
 Right data is 4636 bytes and BSS is 33712 bytes.
-The receiver has only 2396 bytes of unpadded flash headroom.
+The receiver has only 2688 bytes of unpadded flash headroom.
+
+Restoring logging preserves the established left and right storage schema hashes.
+The current right trial already wrote the no-logging schema, so correcting it
+causes another settings reset. The receiver's saved working image uses an older
+RMK revision: its proposed update changes the schema even with logging preserved.
+Receiver pairing and recovery need a separate device acceptance trial; this table
+does not establish that its existing settings will survive the update.
 
 A separate initialized Embassy USB stage was also measured at 12336 BIN bytes.
 A page-aligned independent prefix would consume 16 KiB and would not fit the
