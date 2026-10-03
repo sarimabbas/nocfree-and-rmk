@@ -70,3 +70,26 @@ the bootloader or UICR. Its own entry and vector table remain application data
 and can be corrupted by a bad update. Independent source review and linked-image
 checks are required, followed by real startup/chord/typing tests; none substitutes
 for that hardware acceptance.
+
+## Application shim acceptance on the left (2026-10-03)
+
+The first application shim typed normally and matched its guarded readback, but
+held-key startup did not enter recovery. Temporary startup instrumentation then
+reported `boot:noUSB`: the early VBUS condition skipped key scanning. This
+observation does not establish whether USB detection was still settling or the
+application had already started during the unplug interval.
+
+The corrected shim checks the local chord on every startup, without a VBUS
+precondition. The owner held left Fn+Escape before unplugging USB, kept both held
+through a five-second disconnect and reconnection, and confirmed that the factory
+UF2 drive appeared **before either key was released**. RMK's ordinary bootloader
+action runs on release, so this distinguishes the observed startup entry from
+that runtime shortcut. The drive identity and entire application readback matched;
+all untouched readable gap and fresh settings bytes remained exact. A subsequent
+middle-WIRED USB restart without held keys typed normally without recovery.
+
+These checks establish the observed closed-case startup/recovery procedure on
+this left half. The original factory bootloader remains installed. The right
+half and receiver were unchanged; right startup recovery, interrupted holds,
+and corruption of the application entry are not covered by these observations.
+The retained temporary manufacturer diagnostic does not change the product name.
