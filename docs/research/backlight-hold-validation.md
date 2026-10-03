@@ -26,8 +26,12 @@ The left known-chain margin passes the existing 8,192-byte review floor. This na
 
 Private repeatable evidence is retained under `.evidence/backlight-hold-package-review/`: independent parser, exact-image disassembly, new wrapper-vector runs and hash-bound review JSON. The review performs no device operations and does not identify a connected board, prove recovery or authorize flashing. Only active-high packages were independently parsed in this pass.
 
-Hardware acceptance still needs a short tap, held F5/F6 ramping, prompt stop after release, ordinary typing during a hold and endpoint behavior. Both-half lighting, persistence, split reconnect and loss/release/wake acceptance remain separate observations.
+The later owner observations below cover tap, hold, release and typing. Persistence, lighting after split reconnect and loss/release/wake acceptance remain separate observations.
 
 ## Owner-assisted left result
 
 The scoped left-only installation passed exact application/padding/gap readback and USB-first recovery. Settings reinitialized as disclosed. Normal USB startup was observed at the approved left location. The owner reported “works perfectly” after checking one-step tap, held up/down brightness ramps, stopping after midpoint release, off endpoint and typing `qwert` while holding F6. This establishes those functional owner checks, not a measured input-latency or loss bound. The right and receiver firmware were unchanged.
+
+## Right owner trial
+
+The approved right-only update passed exact application and page-tail readback, unchanged protected-gap verification and independent USB-first recovery. Runtime settings changed as disclosed. The left and receiver firmware stayed unchanged. With right USB unplugged, the owner confirmed synchronized brightening/dimming, held ramping and stop after midpoint release, responsive right typing during a left brightness hold, and cross-half Shift. The owner reported a slight right-side lighting delay. These are functional observations, not measured latency or loss bounds. Saved brightness and lighting after split reconnection remain pending.

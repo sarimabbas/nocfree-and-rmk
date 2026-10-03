@@ -1,6 +1,6 @@
 # Optional RMK backlight
 
-Left-only hardware result, 2026-10-02: the factory-matched 400 Hz active-high image passed owner-observed off control, three visible brightness steps in each direction and USB typing. The earlier 8 kHz image passed logical step counting but appeared full brightness at every nonzero level. The right half and receiver remain unchanged. All 15 nonzero levels, electrical waveforms, split lighting and persistence have not been individually validated. See [PWM diagnosis](backlight-pwm-diagnosis.md).
+Initial left-only hardware result, 2026-10-02: the factory-matched 400 Hz active-high image passed owner-observed off control, three visible brightness steps in each direction and USB typing. The earlier 8 kHz image passed logical step counting but appeared full brightness at every nonzero level. The right half and receiver were unchanged in that initial trial. All 15 nonzero levels and electrical waveforms have not been individually validated. See [PWM diagnosis](backlight-pwm-diagnosis.md).
 
 The framework extension is pinned to [RMK fork `b41bd7ca`](https://github.com/sarimabbas/rmk-nocfree/commit/b41bd7caa7de67a47f6e7380519b730630f16152), based on upstream `9607aed`. A separate small fix rejects macro splices when zero macros are configured; the board configuration exposed a constant-underflow lint in local source builds. Dependencies are locked; no uncommitted Cargo-cache patch or floating branch dependency is used.
 
@@ -17,7 +17,7 @@ The board supplies PWM0, vendor-published P0.20, standard GPIO drive, frequency 
 
 ## Hardware and migration limits
 
-Active-high on/off and dimming behavior is owner-confirmed on the left. The right polarity and electrical waveform remain unmeasured. `backlight-active-low` and `backlight-active-high` are alternative explicit build choices, not interchangeable approved images. A half with the generic `backlight` feature alone fails compilation until polarity is selected. Lighting is disabled by default.
+Active-high off and dimming behavior is now owner-confirmed on both halves. Electrical polarity and waveforms have not been measured. `backlight-active-low` and `backlight-active-high` are alternative explicit build choices, not interchangeable approved images. A half with the generic `backlight` feature alone fails compilation until polarity is selected. Lighting is disabled by default.
 
 The follow-up PWM setting matches the factory binary's explicit 400 Hz request (8 MHz / 20,000). The pinned [Embassy fork](https://github.com/sarimabbas/embassy-nrf-nocfree/commit/1b5fc397aa65026925d9641d88073a7e91993647) adds `BufferedPwm`, using a unique static RAM duty buffer and cooperative DMA waiting. Pending state survives cancelled or forgotten update futures; subsequent updates finish DMA before modifying the buffer. The prior synchronous API remains unchanged. Coalescing and cooperative waiting do not establish an input-latency bound; The owner confirmed left dimming and typing during a hold; waveform, measured latency and both-half behavior remain unverified.
 
@@ -59,3 +59,5 @@ Ignored local packages bind exact ELF LOADs to BIN and page-padded UF2. Both rec
 | Right / low | 217620 | `0x37000` |
 
 Generated candidates and working/factory backups stay private. A fresh left recovery readback matched the installed working application and gap exactly; settings were saved separately in its readable image. The approved first left trial verified exact installed bytes and USB-first recovery, then established off control and logical step counting but failed visible dimming. A different image needs a separately reviewed, owner-approved trial; the earlier approval does not authorize a different candidate. Choose physically verified polarity before shipping a default.
+
+The subsequent matching right lighting trial passed exact readback and USB-first recovery. The owner confirmed synchronized tap-and-hold brightness, stopping on release, responsive right typing during a hold and cross-half Shift. A slight right-side lighting delay was reported and remains unmeasured. Lighting persistence and split-rejoin synchronization remain pending. See [hold validation](backlight-hold-validation.md).
