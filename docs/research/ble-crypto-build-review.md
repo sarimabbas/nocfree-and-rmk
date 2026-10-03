@@ -88,3 +88,13 @@ Using the current pinned source, Rust 1.93.1 / LLVM 21.1.8, the left Mac feature
 | Root-package-only `opt-level = 2`, dependencies at existing `z` | Link rejected: final loadable section exceeds FLASH by 49,888 bytes |
 
 These isolated build overrides changed no tracked firmware source and produced no candidate eligible for a device trial. The flash boundary was not relaxed, RAM origin was not lowered, and no firmware was copied. The next experiment is the pinned-reference RMK execution boundary described above.
+
+## Supported MTU configuration removes the identified overlap
+
+The independent isolated application-level BLE pin experiment compiled but retained the same 37,740-byte pairing subtotal. The proposed pin alternative above is therefore not a fix. DWARF maps the 13,800-byte outer join frame to inlined `BleTransport::run` initialization, and the 14,720-byte inner join to RMK's BLE host/split-session/scan join. Pinning the application-level BLE future does not remove those internal construction temporaries.
+
+The supported `TROUBLE_HOST_DEFAULT_PACKET_POOL_MTU = "251"` setting leaves the existing packet MTU, packet-pool size, RX/TX depths and split notification count unchanged. The pinned Trouble build script then derives the notification payload buffer as 244 bytes instead of its implicit 512-byte fallback. No optimization profile, panic handler, RAM origin, flash boundary or transport implementation changes are adopted. See the [primary-source build research](rmk-build-optimization.md).
+
+The independent audit of the resulting left Mac ELF found the affected frame sequence `2904 + 9512 + 10312 + 920 + 952 + 88 + 2536 + 1820 = 29,044` bytes. The verified outer main/executor frames add 24 bytes, for **29,068 bytes** of known foreground stack. Static allocation ends at `0x200173d0`, leaving **35,888 bytes** below the initial stack pointer; the affected path therefore has **6,820 bytes of remaining headroom before interrupt overhead**. Its lowest calculated foreground SP is `0x20018e74`. Flash fits, and exact-binary crypto-wrapper replay passes ten published vectors with ABI preservation. The repeated host harness and all supported role/keymap cross-builds pass with the configuration applied.
+
+This removes the demonstrated overlap in the reviewed compiled pairing path. It does not establish interrupt high-water usage, safety of every async branch, successful host pairing, no-loss input, or hardware latency. Following a battery-first restart, the owner confirmed left USB `qwert` typing again on the retained earlier image; the explicit-MTU image has not been installed.
