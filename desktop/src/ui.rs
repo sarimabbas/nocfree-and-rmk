@@ -2,10 +2,11 @@
 use std::{
     path::PathBuf,
     sync::{Arc, OnceLock},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use crate::{
+    battery,
     device::{self, Role},
     session::{Session, View},
     trial::{Trial, TrialView},
@@ -35,6 +36,7 @@ pub struct Companion {
     completed: bool,
     stopped: bool,
     message: Option<String>,
+    battery_text: Option<String>,
     focus_handle: FocusHandle,
     _poll: Task<()>,
 }
@@ -72,7 +74,43 @@ impl Companion {
                 return;
             }
 
+            let mut battery_checked = None;
             loop {
+                let idle = this.update(cx, |this, _| !this.started);
+                if matches!(idle, Ok(true))
+                    && battery_checked
+                        .is_none_or(|last: Instant| last.elapsed() >= Duration::from_secs(30))
+                {
+                    let readings = cx
+                        .background_executor()
+                        .spawn(async { battery::read() })
+                        .await;
+                    battery_checked = Some(Instant::now());
+                    if this
+                        .update(cx, |this, cx| {
+                            if !this.started {
+                                this.battery_text = readings.ok().map(|r| {
+                                    let level = |v: Option<u8>| {
+                                        v.map_or("Unavailable".into(), |v| format!("{v}%"))
+                                    };
+                                    let right = if r.right_connected {
+                                        level(r.right)
+                                    } else {
+                                        "Disconnected".into()
+                                    };
+                                    format!(
+                                        "Estimated battery · Left {} · Right {right}",
+                                        level(r.left)
+                                    )
+                                });
+                                cx.notify();
+                            }
+                        })
+                        .is_err()
+                    {
+                        return;
+                    }
+                }
                 let state = this.update(cx, |this, cx| {
                     let trial = this.trial.take();
                     if trial.is_some() {
@@ -155,6 +193,7 @@ impl Companion {
             completed: false,
             stopped: false,
             message: None,
+            battery_text: None,
             focus_handle: cx.focus_handle(),
             _poll: poll,
         }
@@ -384,6 +423,9 @@ impl Render for Companion {
                         .flex()
                         .flex_col()
                         .gap(px(16.))
+                        .child(div().text_size(px(13.)).text_color(rgb(0x626870)).child(
+                            self.battery_text.clone().unwrap_or_else(|| "Connect the left half by USB to see battery levels.".into())
+                        ))
                         .child(
                             div()
                                 .flex()
@@ -401,7 +443,7 @@ impl Render for Companion {
                                     div()
                                         .text_size(px(20.))
                                         .font_weight(FontWeight::SEMIBOLD)
-                                        .child("Factory backup & restore"),
+                                        .child("Back up your firmware"),
                                 )
                                 .child(
                                     div()
@@ -441,17 +483,18 @@ impl Render for Companion {
                                         .line_height(px(21.))
                                         .child("A factory backup comes first."),
                                 )
-                                .when(self.trial_available, |section| section.child(
-                                    div().text_size(px(13.)).line_height(px(19.)).text_color(rgb(0x626870))
-                                        .child("Developer test. Factory firmware is restored afterward.")))
                                 .child(div().flex().pt(px(4.)).child(
-                                    if self.trial_available {
-                                        button("start-trial", "Run startup test").disabled(self.busy).on_click(
-                                            cx.listener(|this, _, _, cx| this.start_trial(cx)),
-                                        )
-                                    } else {
-                                        button("install-unavailable", "Coming soon").disabled(true)
-                                    },
+                                    button("install-unavailable", "Coming soon").disabled(true),
+                                ))
+                                .when(self.trial_available, |section| section.child(
+                                    div().pt(px(12.)).flex().flex_col().gap(px(8.))
+                                        .child(div().text_size(px(13.)).text_color(rgb(0x626870))
+                                            .child("Developer startup test"))
+                                        .child(div().flex().child(
+                                            button("start-trial", "Open test guide").disabled(self.busy).on_click(
+                                                cx.listener(|this, _, _, cx| this.start_trial(cx)),
+                                            ),
+                                        )),
                                 )),
                         )
                         .when_some(self.message.clone(), |column, message| column.child(

@@ -31,6 +31,7 @@ pub struct Session {
     location: Option<u64>,
     ready: Option<BootMount>,
     normal_present: bool,
+    rmk_left: bool,
     connection_present: bool,
     problem: Option<String>,
     status: String,
@@ -110,6 +111,7 @@ impl Session {
                 .collect();
             if normal.len() == 1 && bootloaders.is_empty() && snapshot.mounts.is_empty() {
                 self.location = Some(normal[0].location);
+                self.rmk_left = normal[0].rmk_left();
                 self.normal_present = true;
                 self.connection_present = true;
                 self.problem = None;
@@ -199,7 +201,7 @@ impl Session {
             ReturnPhase::OffWait { since }
                 if now.saturating_duration_since(since) >= Duration::from_secs(5) =>
             {
-                if self.role == Some(Role::Right) {
+                if self.role == Some(Role::Right) || self.rmk_left {
                     ReturnPhase::PowerOn
                 } else {
                     ReturnPhase::Reconnect
@@ -247,6 +249,10 @@ impl Session {
                     "Then unplug its USB cable.".into()
                 },
             ),
+            ReturnPhase::Disconnect if self.rmk_left => (
+                "Unplug the left half".into(),
+                "Set its switch to WIRED, then unplug its USB cable.".into(),
+            ),
             ReturnPhase::Disconnect => (
                 "Unplug the left half".into(),
                 if self.status.starts_with("It stayed in recovery") {
@@ -258,6 +264,10 @@ impl Session {
             ReturnPhase::OffWait { since } => (
                 "Keep it unplugged".into(),
                 format!("Wait {} more seconds.", remaining(since, 5)),
+            ),
+            ReturnPhase::PowerOn if self.rmk_left => (
+                "Switch the left half to Bluetooth".into(),
+                "Leave USB unplugged. Confirm once its switch is in Bluetooth.".into(),
             ),
             ReturnPhase::PowerOn => (
                 "Switch the right half ON".into(),
@@ -285,10 +295,11 @@ impl Session {
         let waiting_drive = identified && self.connection_present && !self.normal_present;
         let instruction = match self.role {
             None => "Connect your keyboard with a USB cable.".into(),
-            Some(Role::Left) if !identified => "Connect the left half by USB. Set its switch to WIRED. Leave the dongle disconnected.".into(),
+            Some(Role::Left) if !identified => "Connect the left half by USB. Leave the dongle disconnected.".into(),
             Some(Role::Right) if !identified => "Plug in the right half.".into(),
             _ if waiting_drive => "Keep the cable connected.".into(),
             _ if !self.connection_present => "Reconnect using the same USB port.".into(),
+            Some(Role::Left) if self.rmk_left => "Keep USB connected. Hold Fn, tap Escape, then release Fn.".into(),
             Some(Role::Left) => "Leave USB connected and the switch in WIRED. Hold Fn + 5 for five seconds, then release.".into(),
             Some(Role::Right) => "Leave USB connected. Hold Fn, tap the main-row 0 key, then release Fn.".into(),
         };
@@ -302,6 +313,7 @@ impl Session {
                 "Waiting for your keyboard".into()
             } else if identified {
                 match self.role {
+                    Some(Role::Left) if self.rmk_left => "Hold Fn and tap Escape".into(),
                     Some(Role::Left) => "Hold Fn + 5".into(),
                     Some(Role::Right) => "Hold Fn and tap 0".into(),
                     None => "Connect your keyboard".into(),
@@ -721,5 +733,37 @@ mod tests {
         s.observe_at(Err("USB unavailable".into()), now + Duration::from_secs(9));
         assert!(matches!(s.return_phase, Some(ReturnPhase::Disconnect)));
         assert!(!s.view().return_complete);
+    }
+    #[test]
+    fn rmk_left_uses_its_shortcut_and_battery_first_return() {
+        let now = Instant::now();
+        let mut rmk = normal();
+        rmk.devices[0].vendor = 0x4c4b;
+        rmk.devices[0].product = 0x4643;
+        rmk.devices[0].name = "NocFree RMK".into();
+        let mut s = Session::new();
+        s.select(Role::Left);
+        s.observe_at(Ok(rmk.clone()), now);
+        assert!(s.view().instruction.contains("tap Escape"));
+        assert!(!s.view().instruction.contains("Fn + 5"));
+        s.observe_at(Ok(boot(true)), now);
+        assert!(s.view().can_save);
+        // Same saved-archive return seam exercised by the existing factory tests.
+        s.backup_path = Some(PathBuf::from("/private/rmk-fixture"));
+        s.return_phase = Some(ReturnPhase::Disconnect);
+        s.observe_at(Ok(Snapshot::default()), now);
+        s.observe_at(Ok(Snapshot::default()), now + Duration::from_secs(5));
+        assert!(s.view().needs_power_on_ack);
+        assert!(s.view().title.contains("Bluetooth"));
+        s.confirm_power_on_at(now + Duration::from_secs(5));
+        s.observe_at(Ok(Snapshot::default()), now + Duration::from_secs(14));
+        assert!(matches!(
+            s.return_phase,
+            Some(ReturnPhase::StartWait { .. })
+        ));
+        s.observe_at(Ok(Snapshot::default()), now + Duration::from_secs(15));
+        assert!(matches!(s.return_phase, Some(ReturnPhase::Reconnect)));
+        s.observe_at(Ok(rmk), now + Duration::from_secs(16));
+        assert!(s.view().return_complete);
     }
 }

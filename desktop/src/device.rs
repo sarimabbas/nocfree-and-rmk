@@ -23,9 +23,19 @@ impl Device {
     pub(crate) fn bootloader(&self) -> bool {
         self.vendor == 0x239a && self.product == 0x0029
     }
+    pub(crate) fn factory_left(&self) -> bool {
+        matches!(
+            (self.vendor, self.product, self.name.as_str()),
+            (0x2886, 0x8029, "NocFree _ ANSI" | "NocFree & ANSI")
+        )
+    }
+    pub(crate) fn rmk_left(&self) -> bool {
+        (self.vendor, self.product, self.name.as_str()) == (0x4c4b, 0x4643, "NocFree RMK")
+    }
     pub(crate) fn role(&self) -> Option<Role> {
         match (self.vendor, self.product, self.name.as_str()) {
             (0x2886, 0x8029, "NocFree _ ANSI" | "NocFree & ANSI") => Some(Role::Left),
+            (0x4c4b, 0x4643, "NocFree RMK") => Some(Role::Left),
             (0x4c4b, 0x4651, "NocFree Input Probe Right Mac") => Some(Role::Right),
             _ => None,
         }
@@ -211,5 +221,33 @@ pub(crate) mod tests {
             .role(),
             None
         );
+    }
+    #[test]
+    fn full_rmk_left_identity_excludes_receiver_and_near_matches() {
+        let left = Device {
+            location: 7,
+            vendor: 0x4c4b,
+            product: 0x4643,
+            name: "NocFree RMK".into(),
+        };
+        assert_eq!(left.role(), Some(Role::Left));
+        assert!(left.rmk_left());
+        assert!(!left.factory_left());
+        for (vendor, product, name) in [
+            (0x4c4b, 0x4643, "NocFree AND RMK Receiver"),
+            (0x4c4b, 0x4643, "NocFree RMK Left"),
+            (0x4c4b, 0x4651, "NocFree RMK"),
+            (0x2886, 0x4643, "NocFree RMK"),
+        ] {
+            let other = Device {
+                vendor,
+                product,
+                name: name.into(),
+                ..left.clone()
+            };
+            assert_eq!(other.role(), None);
+            assert!(!other.rmk_left());
+            assert!(!other.factory_left());
+        }
     }
 }

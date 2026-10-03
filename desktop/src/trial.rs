@@ -196,7 +196,7 @@ impl Trial {
             let candidates: Vec<_> = snapshot
                 .devices
                 .iter()
-                .filter(|d| d.role() == Some(Role::Left))
+                .filter(|d| d.factory_left())
                 .collect();
             if candidates.len() > 1 {
                 self.invalidate(
@@ -267,7 +267,7 @@ impl Trial {
         self.mode = match present.first() {
             Some(d) if d.vendor == 0x239a && d.product == 0x2a => Mode::SerialBootloader,
             Some(d) if d.bootloader() => Mode::MscBootloader,
-            Some(d) if d.role() == Some(Role::Left) => Mode::Factory,
+            Some(d) if d.factory_left() => Mode::Factory,
             Some(_) => Mode::Other,
             None => Mode::Absent,
         };
@@ -915,5 +915,31 @@ mod tests {
         )
         .unwrap();
         assert!(parsed.validate().is_ok());
+    }
+    #[test]
+    fn rmk_left_never_attests_factory_identification_or_restoration() {
+        let now = Instant::now();
+        let mut rmk = normal();
+        rmk.devices[0].vendor = 0x4c4b;
+        rmk.devices[0].product = 0x4643;
+        rmk.devices[0].name = "NocFree RMK".into();
+        let mut connect = trial(Step::ConnectLeft);
+        connect.observe_at(Ok(rmk.clone()), now);
+        assert!(!connect.complete);
+        assert_ne!(connect.mode, Mode::Factory);
+        let mut returning = trial(Step::FactoryReturn);
+        returning.phase = Phase::Reconnect;
+        returning.absence_confirmed = true;
+        returning.switch_ack = true;
+        returning.observe_at(Ok(rmk), now);
+        assert_eq!(returning.mode, Mode::Other);
+        assert!(!returning.complete);
+        let mut factory = trial(Step::FactoryReturn);
+        factory.phase = Phase::Reconnect;
+        factory.absence_confirmed = true;
+        factory.switch_ack = true;
+        factory.observe_at(Ok(normal()), now);
+        assert_eq!(factory.mode, Mode::Factory);
+        assert!(factory.complete);
     }
 }

@@ -1,3 +1,4 @@
+mod battery;
 mod device;
 mod session;
 mod trial;

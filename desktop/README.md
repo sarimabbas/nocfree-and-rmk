@@ -55,3 +55,11 @@ The development bundle currently relies on debug asset loading from the local Ca
 The [installer design](../docs/research/guided-installer-app.md) describes the later guarded writer and cross-OS release work. This prototype has no Install or Restore action.
 
 The developer dock-cycle step keeps the cable connected while a separately approved controller cycles only the bound keyboard port pair. `reconnect_ready` requires the complete observed absence interval and switch acknowledgment; it does not claim that VBUS was measured. Twenty-two companion replay/archive tests, strict Clippy and formatting passed. The app remains read-only.
+
+## Working RMK battery status and recovery
+
+The home screen reads separate firmware-reported battery estimates through a bounded GET-only Rynk vendor USB session while the left is connected. It refreshes every 30 seconds while the app is idle and stops polling during a guided session. Disconnected right values are hidden; USB attachment is not evidence of charging. Percentage calibration remains unresolved, including a low left reading despite prolonged USB attachment. See [battery audit](../docs/research/battery-reporting.md).
+
+The exact full-RMK left identity is now recognized separately from factory firmware and the receiver. Its shortcut is Fn+Escape, followed by the verified battery-first return guide. Factory Fn+5 instructions and factory-restoration attestation remain restricted to the actual factory identity. Full RMK right has no normal USB identity and is not supported by this backup flow yet. The real install action remains unavailable; the developer startup test has a separate label. The next guarded-writer checkpoint is described in the [working firmware journey](../docs/research/companion-working-firmware-journey.md).
+
+For this checkpoint, 29 desktop tests, strict Clippy and formatting passed with the desktop-pinned Rust 1.98.1 toolchain; the app was built and its live battery line visually inspected on this Mac. Firmware was unchanged. These are separate software/UI results from the hardware lighting trials.
