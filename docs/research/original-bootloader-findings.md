@@ -30,3 +30,17 @@ The installed executable contains the pinned upstream [UF2 bootloader update bra
 The staging region overlaps RMK settings. A migration must preserve their backup and explicitly account for restoration; successful application backup alone does not establish that bonds survive self-update. The staged image must completely specify the fixed-length copy region, including erased padding and CF2, without carrying the device's current settings, MBR, SoftDevice or unique data.
 
 The source and installed binary establish that the self-update route exists. They do not prove it survives power failure or that a new bootloader works on hardware. The right half needs its own capture before its configuration can be called verified. The current left diagnostic remains installed while a board-specific candidate is prepared.
+
+## Left self-update observation
+
+The guarded LEFT-only self-update was performed. The retained inspection
+application enumerated afterward, and two complete bootloader reads matched the
+reviewed candidate exactly over `0x74000–0x7e000`. MBR, UICR, the parameters page
+and bootloader settings matched their original readbacks. This establishes the
+observed update and exact resulting bytes on this left half; it does not establish
+power-failure recovery or right-half compatibility.
+
+The staged image overwrote the reserved application/settings region as predicted.
+The fresh working RMK application and its settings remain backed up. The next
+acceptance step removes only the diagnostic's four-byte recovery marker, then
+checks normal USB startup and held-key recovery independently of RMK.

@@ -97,3 +97,29 @@ def inspect_left_factory_restore(image):
                 start=hex(START), end_exclusive='0x6d000', blocks=len(image) // 512,
                 stack_pointer=hex(sp), reset_vector=hex(pc), softdevice='S140 7.3.0',
                 status='exact saved left restore valid; connected device identity and approval NOT verified')
+
+
+def inspect_normal_startup(image, binary, marked_image, marked_binary):
+    """Guard a marker-only transition after separate bootloader verification.
+
+    Device/operator policy must prove that the held-key bootloader is installed.
+    This function proves only that the already guarded application changes its
+    four-byte bootloader marker; it does not authorize removal of recovery.
+    """
+    marked = inspect_migration(marked_image, marked_binary)
+    if (int(marked['reset_vector'], 16) & ~1) < START + 0x204:
+        raise ValueError('reset entry must lie beyond the removed marker')
+    expected = marked_binary[:0x200] + b'\xff' * 4 + marked_binary[0x204:]
+    if binary != expected:
+        raise ValueError('normal startup requires exactly the marker-only BIN change')
+    payload = _payload(image, START, END, FAMILY)
+    padded_size = (len(binary) + 4095) // 4096 * 4096
+    if payload != binary + b'\xff' * (padded_size - len(binary)):
+        raise ValueError('normal startup UF2 must exactly match the marker-only BIN')
+    result = dict(marked)
+    result.update(sha256=hashlib.sha256(image).hexdigest(),
+                  binary_sha256=hashlib.sha256(binary).hexdigest(),
+                  marked_image_sha256=hashlib.sha256(marked_image).hexdigest(),
+                  marked_binary_sha256=hashlib.sha256(marked_binary).hexdigest(),
+                  status='marker-only transition valid; installed held-key bootloader evidence REQUIRED')
+    return result
