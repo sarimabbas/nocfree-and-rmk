@@ -6,5 +6,6 @@ rustflags = ["-C", "link-arg=-Tlink.x", "-C", "link-arg=--nmagic", "-C", "link-a
 [env]
 KEYBOARD_TOML_PATH = { value = "keyboard.toml", relative = true }
 DEFMT_LOG = "off"
-# Keep the existing MTU; derive notification buffers from its ATT payload limit.
-TROUBLE_HOST_DEFAULT_PACKET_POOL_MTU = "251"
+# Enabled split, HID and SMP messages fit; Rynk chunks configuration traffic.
+# Keep queue depths unchanged. Re-audit payload and stack bounds on upgrades.
+TROUBLE_HOST_DEFAULT_PACKET_POOL_MTU = "128"

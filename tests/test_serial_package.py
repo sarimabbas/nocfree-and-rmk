@@ -163,5 +163,54 @@ class SerialPackageTests(unittest.TestCase):
         self.reject(stream.getvalue())
 
 
+class ReceiverSerialPackageTests(unittest.TestCase):
+    def setUp(self):
+        binary = bytearray(application())
+        struct.pack_into('<I', binary, 512, 0x55555555)
+        self.binary = bytes(binary)
+        self.image = uf2(self.binary)
+
+    def reject(self, archive, image=None):
+        with self.assertRaises(ValueError):
+            guard.inspect_receiver_serial_package(archive, self.image if image is None else image)
+
+    def test_marker_free_receiver_matches_shuffled_guarded_uf2(self):
+        result = guard.inspect_receiver_serial_package(package(self.binary), self.image)
+        self.assertEqual(result['binary_size'], len(self.binary))
+        self.assertEqual(result['erase_start'], hex(guard.START))
+        self.assertEqual(result['erase_end_exclusive'], hex(guard.START + 4096))
+
+    def test_receiver_rejects_recovery_marker_in_any_block_order(self):
+        binary = application()
+        shuffled = uf2(binary)
+        ordered = b''.join(reversed([shuffled[i:i + 512] for i in range(0, len(shuffled), 512)]))
+        for image in (shuffled, ordered):
+            with self.subTest(shuffled=image == shuffled):
+                self.reject(package(binary), image)
+
+    def test_original_validator_still_requires_recovery_marker(self):
+        with self.assertRaisesRegex(ValueError, 'requires Adafruit recovery marker'):
+            guard.inspect_serial_package(package(self.binary), self.image)
+
+    def test_receiver_rejects_corrupt_or_mismatched_packages(self):
+        self.reject(b'not a zip')
+        self.reject(package(self.binary)[:-30])
+        self.reject(package(self.binary, dat=b'\x00' * 14))
+        changed = bytearray(self.binary)
+        changed[100] ^= 1
+        self.reject(package(bytes(changed)))
+        self.reject(package(self.binary, mutate=lambda m: m['manifest'].update(bootloader={})))
+
+    def test_receiver_rejects_protected_memory_and_wrong_family(self):
+        for address in (guard.START - 256, guard.END):
+            image = bytearray(self.image)
+            struct.pack_into('<I', image, 12, address)
+            with self.subTest(address=address):
+                self.reject(package(self.binary), bytes(image))
+        image = bytearray(self.image)
+        struct.pack_into('<I', image, 28, 0xADA52840)
+        self.reject(package(self.binary), bytes(image))
+
+
 if __name__ == '__main__':
     unittest.main()

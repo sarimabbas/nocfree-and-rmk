@@ -64,6 +64,24 @@ def inspect_serial_package(package, image):
     not just a companion image. This does not establish the connected role.
     """
     guarded = inspect(image, require_recovery_marker=True)
+    return _inspect_serial_package(package, image, guarded)
+
+
+def inspect_receiver_serial_package(package, image):
+    """Validate a protected receiver package without recovery-first boot behavior.
+
+    USB-only receivers must start their application to expose RMK DFU detach.
+    This validates image policy, not independent recovery or device approval.
+    """
+    guarded = inspect(image)
+    for offset in range(0, len(image), 512):
+        if (struct.unpack_from('<I', image, offset + 12)[0] == START + 0x200
+                and struct.unpack_from('<I', image, offset + 32)[0] == 0x87EEB07C):
+            raise ValueError('receiver must not contain the recovery-first marker')
+    return _inspect_serial_package(package, image, guarded)
+
+
+def _inspect_serial_package(package, image, guarded):
     try:
         with zipfile.ZipFile(io.BytesIO(package)) as archive:
             names = archive.namelist()

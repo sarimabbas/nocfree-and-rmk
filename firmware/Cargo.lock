@@ -1933,6 +1933,7 @@ version = "0.9.0"
 source = "git+https://github.com/rmk-rs/rmk?rev=9607aedf343b17dd6b27307583ae80c4f728fbbd#9607aedf343b17dd6b27307583ae80c4f728fbbd"
 dependencies = [
  "bt-hci",
+ "byteorder",
  "cortex-m",
  "defmt 1.1.1",
  "document-features",

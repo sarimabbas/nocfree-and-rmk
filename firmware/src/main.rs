@@ -203,8 +203,9 @@ async fn main(spawner: Spawner) {
             .await;
             let mut keyboard = Keyboard::new(&keymap);
 
-            let mut usb = UsbTransport::new(driver, device_config);
-            let mut ble = BleTransport::new(
+            let host_service = rmk::host::HostService::new(&keymap, &config);
+            let mut usb = UsbTransport::new(driver, device_config).with_host_service(&host_service);
+            let ble = BleTransport::new(
                 sdc,
                 ble_addr(),
                 config,
@@ -215,6 +216,7 @@ async fn main(spawner: Spawner) {
                     col_offset: 37,
                 }],
             );
+            let mut ble = ble.with_host_service(&host_service);
             run_all!(matrix, battery_adc, battery, keyboard, storage, usb, ble).await;
         }
     }
