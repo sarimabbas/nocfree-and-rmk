@@ -1,5 +1,7 @@
 #![no_std]
 #![no_main]
+#[cfg(feature = "application-recovery-shim")]
+mod startup_recovery;
 #[cfg(not(any(feature = "left", feature = "right", feature = "receiver")))]
 compile_error!("Select exactly one role: left, right, receiver");
 #[cfg(any(

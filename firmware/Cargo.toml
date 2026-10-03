@@ -35,6 +35,8 @@ backlight-active-high = ["backlight"]
 reclaimed-softdevice = []
 # Optional existing-bootloader recovery window; changes USB cold-start UX.
 usb-recovery-first = []
+# Local held-key recovery before RMK starts; leaves the factory bootloader intact.
+application-recovery-shim = []
 # Stage-zero USB-only probe; uses the existing Adafruit reset request.
 recovery-probe = ["dep:embassy-usb", "rmk/adafruit_bl"]
 # Left-only lower-layout trial, reusing the USB recovery probe without radio tasks.
