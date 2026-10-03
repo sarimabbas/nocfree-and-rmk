@@ -28,3 +28,20 @@ jobs:
           else
             ./scripts/check.sh
           fi
+
+  backlight:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        polarity: [low, high]
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Install Rust target and formatter
+        run: rustup target add thumbv7em-none-eabihf && rustup component add rustfmt
+      - name: Install Arm compiler and newlib
+        run: sudo apt-get update && sudo apt-get install -y gcc-arm-none-eabi libnewlib-arm-none-eabi
+      - name: Check optional backlight and all roles
+        env:
+          POLARITY: ${{ matrix.polarity }}
+        run: ./scripts/check.sh --reclaimed-softdevice --usb-recovery-first --backlight-active-${POLARITY}

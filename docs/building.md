@@ -1,5 +1,7 @@
 # Repeatable builds
 
+Optional lighting builds use a pinned, minimal RMK fork. See [backlight implementation](research/backlight-implementation.md) for the exact upstream base, feature choices, host tests and hardware limits. Lighting remains disabled by default.
+
 Install Rust through rustup; the root `rust-toolchain.toml` selects Rust 1.93.1, rustfmt and `thumbv7em-none-eabihf`. Install an Arm GNU bare-metal toolchain **with newlib headers**, and put its `bin` directory on PATH. Apple's clang is insufficient for the P-256 dependency. The Homebrew bare GCC formula may lack the required C library headers; Arm's complete toolchain includes them.
 
 Locally verified compiler: Arm GNU 15.2.rel1 for macOS arm64, downloaded from [Arm's distribution](https://developer.arm.com/-/media/Files/downloads/gnu/15.2.rel1/binrel/arm-gnu-toolchain-15.2.rel1-darwin-arm64-arm-none-eabi.tar.xz). Linux CI installs Ubuntu's `gcc-arm-none-eabi` and `libnewlib-arm-none-eabi`; this verifies portability but is not a byte-for-byte reproduction of the macOS compiler. Rust dependencies and upstream RMK are locked. RMK is pinned to an unreleased commit, not described as a released 0.9.0 build.

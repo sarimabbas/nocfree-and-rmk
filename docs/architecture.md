@@ -9,3 +9,11 @@ Three firmware roles share board knowledge: left central, right peripheral, and 
 Firmware dependencies are pinned, the lockfile is committed, and every role must cross-build in the same harness. Image validation independently rejects writes outside the application interval, wrong MCU family, malformed blocks and invalid vectors. It proves structural safety only; device-specific handoff and recovery remain separate hardware gates.
 
 The first version chooses information hiding and few moving parts over a promise of feature parity. Any missing factory behavior is recorded explicitly. Zero input loss and bounded latency require measured acceptance results, not an architectural assertion.
+
+Optional backlighting extends RMK itself: the central resolves light actions,
+owns brightness and delayed persistence, and sends absolute snapshots over its
+existing split link. The board main supplies only the vendor-published pin,
+PWM configuration and an explicit polarity. A latest-value watch separates
+key processing from output/storage/link work. There is no board-local lighting
+key interpreter, second radio protocol or animation system. See
+[implementation](research/backlight-implementation.md).

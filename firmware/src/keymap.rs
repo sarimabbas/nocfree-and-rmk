@@ -94,6 +94,12 @@ pub fn default_keymap() -> [[[KeyAction; 84]; 1]; 2] {
     function[1] = k!(BrightnessDown);
     function[2] = k!(BrightnessUp);
     function[3] = k!(MissionControl);
+    #[cfg(feature = "backlight")]
+    {
+        use rmk::types::action::LightAction;
+        function[5] = KeyAction::Single(Action::Light(LightAction::BacklightDown));
+        function[6] = KeyAction::Single(Action::Light(LightAction::BacklightUp));
+    }
     function[37] = k!(MediaPrevTrack);
     function[38] = k!(MediaPlayPause);
     function[39] = k!(MediaNextTrack);
@@ -116,7 +122,12 @@ pub fn default_keymap() -> [[[KeyAction; 84]; 1]; 2] {
         base[2] = k!(F15);
         base[3] = k!(MissionControl);
         base[4] = k!(WwwSearch);
-        // F5/F6 retain function keys until RMK supports keyboard backlight control.
+        #[cfg(feature = "backlight")]
+        {
+            use rmk::types::action::LightAction;
+            base[5] = KeyAction::Single(Action::Light(LightAction::BacklightDown));
+            base[6] = KeyAction::Single(Action::Light(LightAction::BacklightUp));
+        }
         base[37] = k!(MediaPrevTrack);
         base[38] = k!(MediaPlayPause);
         base[39] = k!(MediaNextTrack);

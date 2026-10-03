@@ -8,6 +8,14 @@ compile_error!("Select exactly one role: left, right, receiver");
     all(feature = "right", feature = "receiver")
 ))]
 compile_error!("Roles are mutually exclusive");
+#[cfg(all(feature = "backlight-active-low", feature = "backlight-active-high"))]
+compile_error!("Select only one backlight polarity");
+#[cfg(all(
+    feature = "backlight",
+    not(feature = "receiver"),
+    not(any(feature = "backlight-active-low", feature = "backlight-active-high"))
+))]
+compile_error!("Backlight output requires an explicit board polarity");
 #[cfg(not(feature = "receiver"))]
 mod battery;
 #[cfg(feature = "left")]
@@ -135,6 +143,21 @@ async fn main(spawner: Spawner) {
     };
     #[cfg(not(feature = "receiver"))]
     {
+        #[cfg(feature = "backlight")]
+        let backlight = {
+            use embassy_nrf::{
+                gpio::Level,
+                pwm::{Prescaler, SimpleConfig, SimplePwm},
+            };
+            let active_low = cfg!(feature = "backlight-active-low");
+            // P0.20 is vendor-published. Polarity remains an explicit trial choice.
+            // 16 MHz / 2000 = 8 kHz; frequency is a port setting, not a board measurement.
+            let mut config = SimpleConfig::default();
+            config.prescaler = Prescaler::Div1;
+            config.max_duty = 2000;
+            config.ch0_idle_level = if active_low { Level::High } else { Level::Low };
+            rmk::backlight::NrfPwm::new(SimplePwm::new_1ch(p.PWM0, p.P0_20, &config), active_low)
+        };
         use embassy_nrf::gpio::{Level, Output, OutputDrive};
         use embassy_nrf::saadc::Input as _;
         use rmk::input_device::battery::BatteryProcessor;
@@ -168,11 +191,14 @@ async fn main(spawner: Spawner) {
         #[cfg(feature = "right")]
         {
             let mut storage = rmk::storage::new_storage_without_keymap(flash, storage_config).await;
-            rmk::futures::future::join(
+            let keyboard_tasks = rmk::futures::future::join(
                 run_all!(matrix, battery_adc, battery, storage),
                 rmk::split::peripheral::run_rmk_split_peripheral(0, sdc, ble_addr()),
-            )
-            .await;
+            );
+            #[cfg(feature = "backlight")]
+            rmk::futures::future::join(keyboard_tasks, rmk::backlight::run(backlight, false)).await;
+            #[cfg(not(feature = "backlight"))]
+            keyboard_tasks.await;
         }
         #[cfg(feature = "left")]
         {
@@ -217,7 +243,12 @@ async fn main(spawner: Spawner) {
                 }],
             );
             let mut ble = ble.with_host_service(&host_service);
-            run_all!(matrix, battery_adc, battery, keyboard, storage, usb, ble).await;
+            let keyboard_tasks =
+                run_all!(matrix, battery_adc, battery, keyboard, storage, usb, ble);
+            #[cfg(feature = "backlight")]
+            rmk::futures::future::join(keyboard_tasks, rmk::backlight::run(backlight, true)).await;
+            #[cfg(not(feature = "backlight"))]
+            keyboard_tasks.await;
         }
     }
     #[cfg(feature = "receiver")]

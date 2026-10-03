@@ -1,6 +1,6 @@
 # Mac function row
 
-Status: both Mac USB diagnostics are installed with exact readback and battery-first startup verified on macOS. The owner reports the requested brightness, Mission Control, Spotlight, playback/volume and Fn-function checks work. External-display brightness still requires Ctrl on this setup; F5/F6 backlight support is not implemented.
+Current status: both halves run full RMK; the earlier diagnostic observations below are historical. The compiled Mac row uses the captured F14/F15 display-brightness keys. Optional `backlight-active-low` or `backlight-active-high` builds map F5/F6 to the new RMK backlight service, with ordinary F5/F6 behind Fn. Those lighting builds have not passed physical acceptance; feature-off builds still emit ordinary F5/F6. See [implementation and validation](research/backlight-implementation.md).
 
 The optional `mac-keymap` Cargo feature selects the user's Mac function row in the
 shared electrical default keymap. Both USB input diagnostics and the production left
@@ -16,8 +16,8 @@ existing keymap and diagnostic USB names/greetings remain unchanged.
 | F2 | F15, intended for display brightness up | F2 |
 | F3 | Mission Control | F3 |
 | F4 | AC Search, intended for Spotlight | F4 |
-| F5 | F5; keyboard backlight down pending | F5 |
-| F6 | F6; keyboard backlight up pending | F6 |
+| F5 | Keyboard backlight down when enabled; otherwise F5 | F5 |
+| F6 | Keyboard backlight up when enabled; otherwise F6 | F6 |
 | F7 | Previous track | F7 |
 | F8 | Play/pause | F8 |
 | F9 | Next track | F9 |
@@ -25,12 +25,11 @@ existing keymap and diagnostic USB names/greetings remain unchanged.
 | F11 | Volume down | F11 |
 | F12 | Volume up | F12 |
 
-The intended final F5/F6 behavior adjusts the NocFree keyboard's own backlight.
-The pinned RMK revision defines `BacklightDown` and `BacklightUp`, but documents
-that light actions are ignored; its keyboard handler warns that light control is
-unsupported. These keys therefore retain their ordinary function actions in
-this candidate. No custom backlight handler or misleading inactive light action
-is added.
+The optional service handles RMK `BacklightDown` and `BacklightUp` inside the
+framework, not the board scanner. It controls the keyboard's own backlight,
+independently of display brightness. Generic mode keeps ordinary F5/F6 and
+places keyboard-backlight actions behind Fn. Physical polarity is an explicit
+build choice until verified; no default lighting output is enabled.
 
 RMK handles consumer usages and modifier reporting. `WwwSearch` maps to HID
 consumer AC Search (`0x0221`); `MissionControl` maps to Desktop Show All Windows
