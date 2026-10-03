@@ -125,8 +125,10 @@ def inspect_normal_startup(image, binary, marked_image, marked_binary):
     return result
 
 
-def inspect_application_shim(image, binary):
-    """Validate left shim image structure; this does not prove its entry path."""
+def inspect_application_shim(image, binary, role='left'):
+    """Validate a declared half's image structure, not its compiled role or entry."""
+    if role not in ('left', 'right'):
+        raise ValueError('startup shim requires a keyboard-half role')
     payload = _payload(image, START, END, FAMILY)
     if not binary or len(binary) % 4 or len(binary) < 0x3008 - START:
         raise ValueError('exact aligned BIN must cover the old S140 magic word')
@@ -140,7 +142,7 @@ def inspect_application_shim(image, binary):
         raise ValueError('old S140 magic must be absent at 0x3004')
     return dict(sha256=hashlib.sha256(image).hexdigest(),
                 binary_sha256=hashlib.sha256(binary).hexdigest(), binary_size=len(binary),
-                role='left', family_id=hex(FAMILY), start=hex(START),
+                role=role, family_id=hex(FAMILY), start=hex(START),
                 binary_end_exclusive=hex(START + len(binary)),
                 end_exclusive=hex(START + len(payload)), blocks=len(image) // 512,
                 touched_pages=[hex(address) for address in range(START, START + len(payload), 4096)],

@@ -143,6 +143,32 @@ therefore repeat recovery after each timeout until released or USB connects.
 This is not permanent battery-only recovery, and the new shim's electrical
 behavior is not established by that bootloader analysis.
 
+## Production cleanup and right-half review
+
+Normal left/right role ELFs were independently inspected after removal of the
+temporary diagnostic feature. Left ELF SHA256 is
+`528f43d4f69d391be3afc98a6fde3747b7c01b39821080b297d2674804860acb`;
+right is `4d642dffbcfbf27843c9a4527ce6ea5bbce56f56524e1353baed7d38313d3640`.
+The left/right early call graphs contain13/12 reachable integer-only functions;
+right linked tests use Fn bit42 and Backspace bit14. Both retain the pre-BSS
+hook and erased reserve, and have no trace symbol/diagnostic strings. Their
+allocated ELF sections match the respective guarded binaries exactly. Declared
+role in the image guard is validated metadata; it does not infer a compiled role.
+
+The typing keymap no longer binds layer1,row0,col0 to Bootloader; transparent
+behavior resolves to ordinary Escape. RMK dependency features remain identical.
+An offline query through pinned sequential-storage8.0.1 of the saved installed
+left snapshot found no persisted mapping for that cell and no keymap records.
+This supports default removal for that snapshot without layout/bond clearing;
+later host remaps and actual behavior require their own verification. RMK schema
+hash does not incorporate our default keymap; unchanged RMK version/features do
+not erase storage because of this change alone.
+
+Earlier right probe evidence records factory UF2 entry after GPREGRET0x57, but
+does not prove the new right startup chord. Local right startup acceptance and
+left ordinary Fn+Escape behavior remain physical trial checks. No reviewer
+commands accessed or changed either device.
+
 ## Reviewed source hashes
 
 - `firmware/src/startup_recovery/mod.rs`: `dc7cc24656d9c6513e15de8c8851d17581a676312dbbbd1e4b057e207b42ebda`
@@ -153,8 +179,9 @@ behavior is not established by that bootloader analysis.
 - `firmware/build.rs`: `01cc94d81c43f24554ba0c999c64bc81f62f599d8de827d9ed5bd3a2bb23d91d`
 - `firmware/startup-recovery.x`: `668fc290392f2d58f66405356a4d926ae1330a1fda4ec2a7bfbad546756c0790`
 - `firmware/Cargo.toml`: `31fc521bcb772ac43c67ef7adc58d8a9150faade27e829ec57aba2613bec5ec6`
-- `scripts/migration_guard.py`: `9a20028c4f6dd4ecd35d50caa90ca7b4fcd8380444a71e0e4f55d1ef1384d009`
-- `tests/test_application_shim_guard.py`: `5a2b86b79b1f4efc033fab83566502c2e802c46298e6477d3ed2f666a76c60ff`
+- `scripts/migration_guard.py`: `95acbc736d6f8ba3019e054a8f14c6be82dbe8339e818b7ac03fb96bba05079d`
+- `tests/test_application_shim_guard.py`: `5949a92920b998a6578c7db07a46c8d7799cd3e8fb73f4c6477f0b19ddecfd0c`
 - `experiments/application-recovery-shim/lib.rs`: `697b6090490545d6749ad48284b4c341b896834227b64870e6a618ebcb1aa732`
 - `experiments/application-recovery-shim/README.md`: `4da75a67c64d55ba782a9054dc6029229574d6df019fbb59312ca779c44c4abb`
 - `experiments/application-recovery-shim/check.sh`: `be8a14c867e2e52a16977e4326fc8126cdf834db6e62c7c1a2aaba5df7e2d02e`
+- `firmware/src/keymap.rs`: `388bb572397a5f0340578a5f38defceac913d5971ef7b19eb81a78246fd6b320`

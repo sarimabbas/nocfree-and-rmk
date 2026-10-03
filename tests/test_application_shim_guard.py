@@ -16,6 +16,13 @@ def candidate(size=0x2100, **changes):
 
 
 class ApplicationShimGuardTests(unittest.TestCase):
+    def test_declared_right_role_and_invalid_roles(self):
+        image, binary = candidate()
+        self.assertEqual(guard.inspect_application_shim(image, binary, 'right')['role'], 'right')
+        for role in ('receiver', '', None):
+            with self.subTest(role=role), self.assertRaises(ValueError):
+                guard.inspect_application_shim(image, binary, role)
+
     def test_valid_structure_reports_exact_hash_and_unverified_entry(self):
         image, binary = candidate()
         result = guard.inspect_application_shim(image, binary)
