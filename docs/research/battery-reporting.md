@@ -60,3 +60,40 @@ A read-only repeated GET can determine whether the *reported* value changes; it 
 ## Direct USB follow-up
 
 The owner moved the left from its dock directly to the Mac after being asked to turn the backlights off, and confirmed that the right had just been connected by USB. A GET-only read returned Left 13% / Right 9%. Three subsequent successful reads 35 seconds apart returned Left 12%, 12%, 12% and Right 8%, 9%, 8%; the right remained connected over the split link and both charging states remained Unknown. Private timestamped results are retained under `.evidence/battery-reporting/`. This short observation shows right percentage fluctuation and no immediate correction of the left estimate after moving off the dock; it does not establish discharge, charging current, dock fault or calibrated capacity. The nominal linear conversion spans about 6.15 mV per percentage point, so small voltage changes can produce visibly different percentages. This is a property of the formula, not a measured voltage-noise result. No firmware or charger GPIO changes were made.
+
+## Companion status preservation, 2026-10-03
+
+A reproducible host defect was found at the actual getter-to-view conversion:
+`desktop/src/battery.rs` reduced `BatteryStatus::Available` to its percentage,
+discarding the producer's charge state and conflating an available status with
+an unknown percentage with an unavailable battery. A test passing a valid
+`Charging` status through the actual conversion failed before the fix. The
+conversion now preserves the framework's complete typed `BatteryStatus`, rejects
+levels above 100, and makes a disconnected right half unavailable rather than
+retaining its cached charge state. Eight tests of the actual module pass,
+including unknown percentages, zero percent and disconnected snapshots. The
+GET path also captures the selected Rynk USB device ID and performs a bounded
+read-only enumeration after the getters. It accepts the snapshot only when the
+same unique ID remains present, rejecting a missing, replaced or duplicate
+connection. On macOS, nusb uses the IOKit registry entry ID rather than the
+physical USB port as this identity; no persistent device identity is stored.
+This is a host freshness check, not a new battery measurement.
+
+This fixes host information loss. The installed firmware currently reports
+`ChargeState::Unknown`, so this change does not establish that either battery
+is charging or correct the low percentage estimate. No ADC scale, GPIO,
+sampling behavior or firmware image was changed for this fix. The saved
+percentage trace remains insufficient to reproduce a calibration error:
+it contains neither raw samples nor a simultaneous voltage reference.
+
+The next calibration discriminator is one paired observation on a single half:
+backlight off, battery-terminal voltage from a meter, the same interval's raw
+ADC count and its reference/gain/resolution configuration. With the present
+configuration, compare the observed ratio against
+`Vbattery = count × 3.6 V / 4096 × 1.3`. If that relationship holds, investigate
+the generic capacity curve and actual charge path; if it does not, investigate
+divider scaling, settling and acquisition first. A burst of raw samples then
+distinguishes measurement noise from a persistent scale error. Current Rynk
+getters expose no raw count, so a separately reviewed temporary measurement
+path is needed before that observation can be made. Changing the percentage
+curve or adding smoothing beforehand would hide the unresolved distinction.

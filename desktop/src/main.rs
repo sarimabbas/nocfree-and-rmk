@@ -1,6 +1,7 @@
 mod battery;
 mod device;
 mod home;
+mod journey;
 mod recovery;
 mod session;
 mod trial;
@@ -27,14 +28,14 @@ fn main() {
                 WindowOptions {
                     window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
                         None,
-                        size(px(640.), px(580.)),
+                        size(px(960.), px(660.)),
                         cx,
                     ))),
                     titlebar: Some(TitlebarOptions {
                         title: Some("NocFree Companion".into()),
                         ..Default::default()
                     }),
-                    window_min_size: Some(size(px(560.), px(540.))),
+                    window_min_size: Some(size(px(800.), px(560.))),
                     ..Default::default()
                 },
                 |window, cx| {

@@ -166,7 +166,7 @@ impl Session {
             self.normal_present = true;
             self.problem = None;
             self.status =
-                "Component is in normal mode. Use the recovery shortcut shown above.".into();
+                "Component is in normal mode. Follow the recovery procedure shown above.".into();
         } else if snapshot.devices.iter().any(|d| d.location == location) {
             self.location = None;
             self.connection_present = false;
@@ -290,6 +290,9 @@ impl Session {
             ),
         })
     }
+    pub(crate) fn identified_normal(&self) -> bool {
+        self.location.is_some() && self.normal_present && self.problem.is_none()
+    }
     pub fn view(&self) -> View {
         let identified = self.location.is_some();
         let waiting_drive = identified && self.connection_present && !self.normal_present;
@@ -299,7 +302,7 @@ impl Session {
             Some(Role::Right) if !identified => "Plug in the right half.".into(),
             _ if waiting_drive => "Keep the cable connected.".into(),
             _ if !self.connection_present => "Reconnect using the same USB port.".into(),
-            Some(Role::Left) if self.rmk_left => "Keep USB connected. Hold Fn, tap Escape, then release Fn.".into(),
+            Some(Role::Left) if self.rmk_left => "Use the recovery procedure for your installed firmware, keeping the same USB port.".into(),
             Some(Role::Left) => "Leave USB connected and the switch in WIRED. Hold Fn + 5 for five seconds, then release.".into(),
             Some(Role::Right) => "Leave USB connected. Hold Fn, tap the main-row 0 key, then release Fn.".into(),
         };
@@ -313,7 +316,7 @@ impl Session {
                 "Waiting for your keyboard".into()
             } else if identified {
                 match self.role {
-                    Some(Role::Left) if self.rmk_left => "Hold Fn and tap Escape".into(),
+                    Some(Role::Left) if self.rmk_left => "Open recovery on the left half".into(),
                     Some(Role::Left) => "Hold Fn + 5".into(),
                     Some(Role::Right) => "Hold Fn and tap 0".into(),
                     None => "Connect your keyboard".into(),
@@ -662,6 +665,38 @@ mod tests {
         s
     }
     #[test]
+    fn journey_advances_only_after_return_and_keeps_saved_copy_on_pause() {
+        let now = Instant::now();
+        let mut session = saved_session(Role::Left);
+        session.observe_at(Ok(Snapshot::default()), now);
+        session.observe_at(Ok(Snapshot::default()), now + Duration::from_secs(5));
+        session.observe_at(Ok(normal()), now + Duration::from_secs(6));
+        assert!(session.view().return_complete);
+        let mut journey = crate::journey::Journey::from_saved_test_session(session, true);
+        journey.observe(Ok(normal()));
+        assert_eq!(journey.role(), Role::Right);
+        assert_eq!(journey.state(), crate::journey::State::Guiding);
+        journey.pause();
+        journey.resume();
+        assert_eq!(journey.role(), Role::Right);
+        assert_eq!(journey.archives(), &[PathBuf::from("/private/test-copy")]);
+        assert!(!journey.is_complete());
+        assert!(!journey.view().can_save);
+    }
+    #[test]
+    fn left_only_journey_completes_after_observed_normal_return() {
+        let now = Instant::now();
+        let mut session = saved_session(Role::Left);
+        session.observe_at(Ok(Snapshot::default()), now);
+        session.observe_at(Ok(Snapshot::default()), now + Duration::from_secs(5));
+        session.observe_at(Ok(normal()), now + Duration::from_secs(6));
+        let mut journey = crate::journey::Journey::from_saved_test_session(session, false);
+        journey.observe(Ok(normal()));
+        assert!(journey.is_complete());
+        assert_eq!(journey.role(), Role::Left);
+        assert_eq!(journey.archives(), &[PathBuf::from("/private/test-copy")]);
+    }
+    #[test]
     fn left_return_requires_observed_absence_then_full_wait() {
         let now = Instant::now();
         let mut s = saved_session(Role::Left);
@@ -735,7 +770,7 @@ mod tests {
         assert!(!s.view().return_complete);
     }
     #[test]
-    fn rmk_left_uses_its_shortcut_and_battery_first_return() {
+    fn rmk_identity_does_not_guess_a_shortcut_and_legacy_return_still_checks_observations() {
         let now = Instant::now();
         let mut rmk = normal();
         rmk.devices[0].vendor = 0x4c4b;
@@ -744,7 +779,8 @@ mod tests {
         let mut s = Session::new();
         s.select(Role::Left);
         s.observe_at(Ok(rmk.clone()), now);
-        assert!(s.view().instruction.contains("tap Escape"));
+        assert!(s.view().instruction.contains("installed firmware"));
+        assert!(!s.view().instruction.contains("Escape"));
         assert!(!s.view().instruction.contains("Fn + 5"));
         s.observe_at(Ok(boot(true)), now);
         assert!(s.view().can_save);

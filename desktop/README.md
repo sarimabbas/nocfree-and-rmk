@@ -1,50 +1,26 @@
 # NocFree Companion
 
-## Experimental USB recovery
+A native macOS GPUI application using GPUKit. The sidebar follows the owner’s flow sketches: contextual firmware tasks, Backup firmware, Keyboard status, and the observed firmware state. The same workspace presents each physical step. Development tools are hidden unless their experiment is enabled.
 
-With `NOCFREE_USB_RESCUE_EXPERIMENT=1`, More options → Developer tools exposes
-Recover a device. Select one component and follow its single power-cycle step;
-the app watches for that component's experimental startup USB interface and
-sends one DFU recovery request. It reports success only after observing the
-recovery drive at the same USB location. This flow requests a reset, but never
-copies firmware. Current installed images do not all support this interface.
-The experiment supports macOS observation; Windows/Linux device acceptance is
-still pending. The default app does not expose this experiment.
+## What works
 
-A read-only macOS prototype using GPUI and `iamnbutler/gpuikit`. A start screen names two journeys: factory backup/restore and RMK installation. Only saving current firmware copies is available; restore and RMK installation are explicitly unavailable. The future RMK journey calls for a factory backup first, but this prototype does not establish that a saved current image is factory firmware or restore-compatible.
+- Read-only discovery of supported normal-mode keyboard identities and recovery drives.
+- Guided firmware copies with automatic saving after fresh identity and readback checks.
+- A shared `Journey` state machine over `Session`’s device, archive and return checks. Observed state advances the guide; pause, resume and retry retain saved archives and replace stale connection/timing evidence.
+- Separate producer-owned battery and split-connection status, refreshed through bounded GET-only Rynk USB requests. Charging metadata stays intact; unknown charge state stays unknown. Disconnected, failed, replaced or expired observations are not presented as current readings.
 
-After the owner chooses Save firmware copies, the app starts with the left half, shows one physical step at a time, and saves a private firmware copy automatically after fresh connection and metadata checks. Once normal startup returns, it guides the right half. There are no firmware-write, reset, erase or serial-port commands.
+The guide does not write firmware. Install, update and factory restoration require the reviewed transfer service and compatible release/restore metadata that have not yet been integrated. The app never claims that an unavailable release is current. Factory firmware is not bundled.
 
-Photo-based SVG illustrations preserve each half's staggered outline, key widths and the right half's ampersand badge. Both assets are embedded in the executable and show orientation, not device status.
+Backup plans include only supported, identified components. The full RMK right peripheral does not have the earlier diagnostic’s normal USB identity; a Bluetooth connection is not evidence that the USB backup route supports it. RMK’s product name alone does not identify its recovery procedure.
 
-The Dock icon uses an independently drawn white ampersand on blue, rather than the manufacturer's logo. The macOS build renders its SVG source into the standard ICNS sizes and bundles it before signing; generated icon files stay out of Git. Rendering uses Apple's Quick Look, Swift command-line tools, `sips` and `iconutil`.
+Battery percentages are uncalibrated voltage estimates. Retaining charging metadata and rejecting stale host results fixes host reporting errors, not the unresolved low percentage or hardware charging behavior. See [battery diagnosis](../docs/research/battery-reporting.md).
 
-An owner-approved developer startup trial can expose **Run startup test** under the RMK journey. Its read-only guide shows one cable/switch action at a time, times waits from observed USB absence, and asks for switch acknowledgments that USB cannot detect. A private, session/sequence-bound host request selects the step; the app publishes private observation status. All discovery and file work runs off the UI thread. The app does not transfer firmware. The separate controller must independently validate device identity, approved images and readbacks, and confirm exact factory restoration before attesting completion. This local developer guide is not a production RMK installer.
-
-A bound `paused` step keeps USB observation live without claiming completion or requesting a physical acknowledgment. It distinguishes waiting for another experiment from a short readback check. Twenty companion tests, strict Clippy and formatting passed after this addition. For this local development session, a separate Codex thread heartbeat checks fresh completed session/sequence-bound status once per minute so the owner need not post “done.” It independently validates the relevant live USB state and readback, handles each step once, and remains quiet on unchanged status. This is a scheduled development bridge, not an immediate app-to-Codex callback or a bundled installer feature; its end-to-end scheduled handoff is not yet verified. The heartbeat is paused while the guide is deliberately paused; re-enable it before the next active physical step so it does not consume runs during software-only investigation.
-
-This version recognizes the ANSI factory left and this project's Mac USB diagnostic on the right. Receiver support, factory-right onboarding and Windows/Linux discovery are pending. The prescribed physical role and USB connection are correlated; identity alone does not prove the role, independent recovery, or restore compatibility. The app asks for the dongle to remain disconnected because it shares the factory left's identity.
-
-## Run
-
-For a developer build on macOS:
+## Run and verify
 
 ```sh
 ./desktop/build-macos.sh
 open 'dist/NocFree Companion.app'
 ```
-
-Rust 1.98.1 is pinned separately from the firmware. The lockfile aligns the unofficial GPUI distribution crates at 1.14.2 with gpuikit 0.9.0; use locked builds. Runtime Metal shader compilation avoids requiring the optional Xcode Metal compiler. The generated bundle is locally signed for development, not a notarized newcomer release. Firmware dependencies are unchanged.
-
-## Recovery archives
-
-After the owner enters recovery using the displayed shortcut, the app automatically reads the mounted drive and writes only to `~/Library/Application Support/NocFree Companion/readback-<timestamp>/`. Files include CURRENT.UF2, bootloader metadata and a SHA-256/coverage manifest. Directories are private (0700), files are private (0600), and each file is flushed and finalized atomically. Failed saves stop the flow; incomplete files may remain for inspection. Retry preserves an already saved copy and its return guide, resetting observation evidence and countdowns. An uncertain save is never automatically retried.
-
-The archive parser validates the complete exposed readback container, not firmware-installation policy. It does not replace the canonical [image guard](../scripts/image_guard.py) or [migration guard](../scripts/migration_guard.py). The readable span excludes MBR, filesystem, bootloader and UICR. An archive is neither a full-chip backup nor a proven restore image. Factory bytes and local identifiers never belong in Git.
-
-The manifest records the archive; it does not resume a prior workflow. Restart requires fresh normal-mode identification. USB disappearance/reappearance changes the screen automatically, and return countdowns begin only after observed absence. The right-side battery-start countdown requires one acknowledgment that its switch was turned ON while USB remains unplugged. Early reconnection or observation errors invalidate the wait. The host cannot observe switch position or battery power. Technical policy stays in these developer notes and local manifests, outside the main flow.
-
-## Verification
 
 ```sh
 cd desktop
@@ -53,34 +29,16 @@ cargo clippy --locked --all-targets -- -D warnings
 cargo fmt --check
 ```
 
-Replay tests cover stale/error observations, late mounts, ambiguous bootloaders, changed connections, removal during backup, restart, archive coverage and private saved files. These are host checks. Actual app launch, live observations, physical recovery/readback and device acceptance are separate evidence.
+The desktop pins Rust separately from firmware. Embedded board drawings show orientation, not device status. The independently drawn ampersand icon avoids using the manufacturer’s logo. The current bundle is locally signed development software; notarization, portable distribution and Windows/Linux device acceptance remain outstanding.
 
-The developer guide adds seven replay/schema tests for switch acknowledgments, observed-absence deadlines, premature USB reconnection, wrong ports, observation errors and stale/restarted requests. All eighteen companion tests, strict Clippy checks and formatting passed; the new physical trial remains separate hardware work. The updated app was launched and its single-action startup screen was inspected on this Mac; no trial transfer has occurred.
+## Copies and interrupted work
 
-Observed locally on 2026-10-01: the app built and launched with a compact single-task layout. Its automatic left-first flow removes role, Details and Save choices. Eleven replay/archive/return-guide tests, strict Clippy checks and formatting passed.
+Copies are saved privately under `~/Library/Application Support/NocFree Companion/`. Archives include exposed CURRENT.UF2 bytes, metadata and a SHA-256/coverage manifest. Directories are 0700 and files 0600; saves are flushed and finalized atomically. An uncertain save stops automatic work. Retry retains completed copies while requiring fresh device observations.
 
-The owner then completed the guided left and right copy flow and reported that it was smooth. Independent inspection confirmed that both private archives contain 1,728 valid UF2 blocks covering 0x1000–0x6d000, their hashes match their manifests, and their bytes match the previously verified left factory image and right Mac diagnostic respectively. Directory and file permissions were 0700 and 0600. A subsequent read-only USB inventory observed both normal-mode identities, no NocFree bootloader and no mounted recovery readback. This validates the copy flow on this Mac and these two firmware states. It does not validate firmware installation, restore compatibility, independent cold-start recovery or other operating systems; earlier guarded firmware trials remain separate evidence.
+Pausing stops the guide; it does not erase a copy or change the keyboard’s firmware. Returning to Backup firmware offers Resume. A saved archive is not a full-chip backup or automatically a restore-compatible image: exposed readback excludes MBR, filesystem, bootloader and UICR. Image guards and durable update-intent journals remain separate from the copy flow; interrupted transfers must be reconciled, never replayed automatically.
 
-The development bundle currently relies on debug asset loading from the local Cargo source directory. It is suitable on this Mac; a portable newcomer download needs embedded assets or a release build, signing/notarization and its own installation tests.
+## Development recovery
 
-The [installer design](../docs/research/guided-installer-app.md) describes the later guarded writer and cross-OS release work. This prototype has no Install or Restore action.
+`NOCFREE_USB_RESCUE_EXPERIMENT=1` exposes Developer tools → Recover a device. Select a component and follow its power-cycle guide. The app sends one scoped DFU request to the matching experimental startup USB interface and reports success only after observing the recovery drive at the same USB location. This requests a reset, never copies firmware, and requires a supporting installed image.
 
-The developer dock-cycle step keeps the cable connected while a separately approved controller cycles only the bound keyboard port pair. `reconnect_ready` requires the complete observed absence interval and switch acknowledgment; it does not claim that VBUS was measured. Twenty-two companion replay/archive tests, strict Clippy and formatting passed. The app remains read-only.
-
-## Working RMK battery status and recovery
-
-The home screen reads separate firmware-reported battery estimates through a bounded GET-only Rynk vendor USB session while the left is connected. It refreshes every 30 seconds while the app is idle and stops polling during a guided session. Disconnected right values are hidden; USB attachment is not evidence of charging. Percentage calibration remains unresolved, including a low left reading despite prolonged USB attachment. See [battery audit](../docs/research/battery-reporting.md).
-
-The exact full-RMK left identity is now recognized separately from factory firmware and the receiver. Its shortcut is Fn+Escape, followed by the verified battery-first return guide. Factory Fn+5 instructions and factory-restoration attestation remain restricted to the actual factory identity. Full RMK right has no normal USB identity and is not supported by this backup flow yet. The real install action remains unavailable; the developer startup test has a separate label. The next guarded-writer checkpoint is described in the [working firmware journey](../docs/research/companion-working-firmware-journey.md).
-
-For this checkpoint, 29 desktop tests, strict Clippy and formatting passed with the desktop-pinned Rust 1.98.1 toolchain; the app was built and its live battery line visually inspected on this Mac. Firmware was unchanged. These are separate software/UI results from the hardware lighting trials.
-
-The home screen now selects the relevant primary intent from fresh USB observations: Connect, recovery, factory → Switch to RMK, or a recognized RMK keyboard. Restore, firmware copies and developer tools sit behind More options. The connected receiver is excluded from left identification; multiple matching left identities remain ambiguous. The product shows Update RMK or You’re up to date only with actual port-release evidence. Current protocol/library versions cannot provide that evidence, so production release assessment remains unknown. Transfer actions remain unavailable until the guarded service is implemented and validated. Restoration will prefer eligible device-matched factory backups, otherwise inspect owner-provided Left/Right/Dongle UF2 files; official firmware is not bundled. See the journey specification for provenance, restore coverage and final confirmation gates.
-
-This home-state checkpoint passed 33 desktop tests and strict Clippy independently. Battery reads are bounded GET-only operations, launched only while idle with a recognized RMK left; current observations are checked again before querying. Home discovery errors or identity changes clear inferred state. No firmware was changed.
-
-The home layout is a compact accessory overview: a USB connection header, paired-board artwork, a short firmware status and one relevant primary action. Secondary operations use quiet grouped rows under More options; developer tools require a further disclosure. GPUKit separators, icon assets and primary buttons share the native layout with accessible GPUI disclosure controls. This visual checkpoint does not enable firmware transfers.
-
-Live macOS verification observed the recognized RMK overview, expanded options fitting the default window, and Tab/Return opening More options and Developer tools. The supplied focus handles are actual tab stops; GPUI handles Enter/Space activation without duplicate custom key handlers. The app was left on the collapsed overview. This is native UI evidence, not VoiceOver or firmware-transfer acceptance.
-
-Host-only update foundations now live in the Companion library: an opaque exact UF2/BIN validator equivalent to the canonical reclaimed-left guard, and a private durable checkpoint journal that cannot replay interrupted transfer intent. No device writer or installed-success transition is exposed. Synthetic differential and interruption tests are documented in [update checkpoint](../docs/research/companion-update-checkpoint.md). The production home remains unchanged and transfer actions remain unavailable.
+The separate private startup trial remains a developer tool, not a newcomer installer. It has no heartbeat dependency. Host fixtures, cross-builds, native UI inspection, physical recovery and firmware hardware acceptance are separate results.
