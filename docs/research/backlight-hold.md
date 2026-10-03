@@ -18,7 +18,7 @@ RMK's existing keyboard deadline scheduler drives the repeat. The lighting outpu
 
 The keyboard cancels a physical hold at the start of every delivered release event, before action resolution. Host tests for a delivered release do not establish release delivery during real split-link loss. A missing release can continue brightness changes to the bounded endpoint; it is not proof of disconnect recovery. Default Mac F5/F6 live on the left. The right-half lighting image, real split synchronization, saved brightness, loss/wake latency and cross-platform acceptance remain separate hardware checks.
 
-The hold candidate has not been installed. Retain the owner-tested 400 Hz image and a fresh readback before another owner-approved trial.
+The owner-approved left trial installed this image and verified its exact bytes, padding and untouched application gap. USB-first recovery returned successfully. After normal startup, the owner confirmed the tap, held up/down ramp, midpoint release, off endpoint and typing during a hold checks. The working image is retained; right-half lighting remains pending.
 
 ## Software verification
 

@@ -27,3 +27,7 @@ The left known-chain margin passes the existing 8,192-byte review floor. This na
 Private repeatable evidence is retained under `.evidence/backlight-hold-package-review/`: independent parser, exact-image disassembly, new wrapper-vector runs and hash-bound review JSON. The review performs no device operations and does not identify a connected board, prove recovery or authorize flashing. Only active-high packages were independently parsed in this pass.
 
 Hardware acceptance still needs a short tap, held F5/F6 ramping, prompt stop after release, ordinary typing during a hold and endpoint behavior. Both-half lighting, persistence, split reconnect and loss/release/wake acceptance remain separate observations.
+
+## Owner-assisted left result
+
+The scoped left-only installation passed exact application/padding/gap readback and USB-first recovery. Settings reinitialized as disclosed. Normal USB startup was observed at the approved left location. The owner reported “works perfectly” after checking one-step tap, held up/down brightness ramps, stopping after midpoint release, off endpoint and typing `qwert` while holding F6. This establishes those functional owner checks, not a measured input-latency or loss bound. The right and receiver firmware were unchanged.
