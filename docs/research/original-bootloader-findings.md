@@ -44,3 +44,29 @@ The staged image overwrote the reserved application/settings region as predicted
 The fresh working RMK application and its settings remain backed up. The next
 acceptance step removes only the diagnostic's four-byte recovery marker, then
 checks normal USB startup and held-key recovery independently of RMK.
+
+## Held-key trial failure and factory bootloader restoration (2026-10-03)
+
+The replacement bootloader matched its intended bytes, but two owner-assisted
+held-key startup trials did not enter recovery. The marker-free inspection
+application continued to enumerate; it had no software reset command. Removing
+the established recovery marker before proving the new chord on hardware left
+the keyboard unable to type and without a demonstrated closed-case recovery
+route. Successful builds, host tests and byte readbacks did not establish that
+route.
+
+With the left enclosure open, an owner-operated current-limited contact test
+opened the UF2 drive. This is a device observation, not a published pad map:
+voltage measurements and a right-half video do not prove left contact identities.
+The exact saved original factory bootloader was then restored through its
+self-update container. Two matching inspection reads equalled the original
+entire upper region, MBR and UICR. The original working RMK application, protected
+gap and saved settings were restored separately; the complete readable payload
+matched the fresh pre-inspection backup. The owner subsequently confirmed that the left keyboard types again. The right half and receiver were not changed.
+
+Further recovery work uses an opt-in application startup shim. It requests the
+factory bootloader through the existing GPREGRET convention; it does not modify
+the bootloader or UICR. Its own entry and vector table remain application data
+and can be corrupted by a bad update. Independent source review and linked-image
+checks are required, followed by real startup/chord/typing tests; none substitutes
+for that hardware acceptance.
