@@ -1,0 +1,47 @@
+# Independent review of the retained ARM crypto build
+
+Reviewed 2026-10-02. This review changes documentation only. It examines the retained hardware-tested left image in `dist/full-left-ble-name/candidate.elf`, SHA-256 `5a5816a04041e8674fe50910df833b6f55238b47ab72ea8cfcf4b822c4aecaee`, and the Cargo-resolved `p256-cortex-m4` 0.1.0-alpha.6 / `p256-cortex-m4-sys` 0.1.0 sources. The disassembly is private under `.evidence/crypto-independent-review/`.
+
+## What the binary establishes
+
+The actual `SecretKey::dh_key` implementation calls `p256_octet_string_to_point` at `0x33eec`, then `p256_ecdh_calc_shared_secret` at `0x33f0e`. This agrees with the [pinned Trouble source](https://github.com/embassy-rs/trouble/blob/42e3e04de00db3951b126741e1f3602bfdf5df47/host/src/security_manager/crypto.rs) and confirms that this image uses the ARM C/assembly implementation, rather than the host fallback. The [backend build script](https://docs.rs/crate/p256-cortex-m4-sys/0.1.0/source/build.rs) selects that implementation for `thumbv7em` and forces `-march=armv7e-m`; the application target is `thumbv7em-none-eabihf`.
+
+The retained assembly contains `UMAAL` and floating-point register moves/loads using `s0`–`s15`. The [backend configuration](https://docs.rs/crate/p256-cortex-m4-sys/0.1.0/source/P256-Cortex-M4/p256-cortex-m4-config.h) enables those FPU instructions when the compiler defines `__ARM_FP`. The image's reset entry enables CP10/CP11 in CPACR at `0x1238`, then executes DSB and ISB before entering `main`. This rules out an image that simply forgot to enable the FPU at startup; it does not establish that later code preserves that configuration or that every interrupt path preserves live state correctly. The inspected crypto range contains no `CPSID`, `CPSIE`, or PRIMASK write.
+
+The [Arm procedure-call standard](https://github.com/ARM-software/abi-aa/blob/main/aapcs32/aapcs32.rst) permits caller-clobbered `s0`–`s15`, requires 4-byte stack alignment universally and 8-byte alignment at public interfaces. Inspected Rust/C public-call frame deltas preserve 8-byte alignment. Private assembly helpers sometimes use temporary 4-byte stack alignment; this alone is not a demonstrated ABI defect. The [backend API](https://github.com/Emill/P256-Cortex-M4#api) requires 4-byte alignment for its `uint32_t` arrays. Rust's wrapper stores scalar and point coordinates in `[u32; 8]`; the retained caller places its point buffers at 4-byte-aligned stack offsets. No concrete alignment fault was found.
+
+## Stack evidence and limits
+
+Local frame sizes, including saved core registers, read from the retained disassembly:
+
+| Function | Bytes retained while its callees run |
+| --- | ---: |
+| `Pairing::handle_input` | 2,536 |
+| `SecretKey::dh_key` | 296 |
+| `p256_ecdh_calc_shared_secret` | 88 |
+| `p256_scalarmult_generic_no_scalar_check` | 40 |
+| `scalarmult_variable_base` | 1,104 |
+
+That active chain accounts for 4,064 bytes before its nested assembly helper frames, outer executor frames and interrupt/exception frames. It is not a full worst-case stack bound. `__sheap`/`_stack_end` is `0x20017c30`, initial stack top is `0x20020000`: the nominal static-to-stack gap is 33,744 bytes. The backend author's [2 KiB stack / nRF52840 benchmark](https://github.com/Emill/P256-Cortex-M4#performance) describes the crypto implementation, not the entire Trouble call chain, and cannot be substituted for this firmware's dynamic high-water measurement.
+
+The source's `opt-level = "z"` propagates to the C build through `cc`; the assembly algorithm is not reoptimized by that C flag. C scalar multiplication includes finite fixed-count loops and calls the handwritten field arithmetic. A scoped `-O2` comparison can quantify compiler-generated C instruction changes and flash/frame differences. Source alone does not justify a two-second compute-time claim, an optimization fix, or a claim that radio interrupts were masked. The installed keyboard's timing remains unmeasured.
+
+## Interpretation
+
+No specific target-instruction, FPU-startup, public-call alignment or static RAM-overlap bug was identified. The missing public-key response still brackets peer-packet reception/dispatch, public-point checks, synchronous ECDH and response queueing. A passing exact-ARM known-answer experiment would weaken an arithmetic/backend-codegen explanation for its tested inputs; it would not validate the board's interrupts, radio scheduling, runtime stack, or the Mac packet's delivery to the handler. Hardware acceptance still requires another captured pairing attempt after a narrowly justified change.
+
+## Dispatch and response-queue review
+
+The inspected call path is `Host::handle_acl` → `ConnectionManager::handle_security_channel` → `SecurityManager::handle_l2cap_command` → peripheral state handler. The connection list and security-manager state use ordinary `RefCell` borrows, and outbound/security channels use `NoopRawMutex`. No explicit critical section surrounds ECDH in these functions. A synchronous computation still occupies the current executor poll; that is distinct from blocking radio interrupts. [Host dispatch](https://github.com/embassy-rs/trouble/blob/42e3e04de00db3951b126741e1f3602bfdf5df47/host/src/host.rs), [connection manager](https://github.com/embassy-rs/trouble/blob/42e3e04de00db3951b126741e1f3602bfdf5df47/host/src/connection_manager.rs), [security manager](https://github.com/embassy-rs/trouble/blob/42e3e04de00db3951b126741e1f3602bfdf5df47/host/src/security_manager/mod.rs).
+
+The response path allocates a packet and uses nonblocking `try_outbound`. Exhausted packet storage or a full outbound queue returns `OutOfMemory`; the error path then attempts a Pairing Failed packet through the same resources. Therefore resource exhaustion can prevent both the public-key reply and the failure reply. This is a source-supported possibility, not an observed failure. If exact retained ARM backend and Rust-wrapper known-answer execution passes, the next useful observation is handler entry, ECDH return and response-enqueue result rather than a downstream f5/f6 change or an unexplained compiler optimization switch.
+
+## Independent replay of the exact ARM experiment
+
+The reviewer inspected and independently reran the experiment agent's private harness against the retained ELF. Ten selected valid [Wycheproof SECP256R1 ECDH vectors](https://github.com/C2SP/wycheproof/blob/master/testvectors_v1/ecdh_secp256r1_test.json) passed on Unicorn 2.1.4's Cortex-M4 functional emulator with the FPU enabled. The frozen vector file SHA-256 was `cdb8bd5d1206fddb6618c69ffa18f303b4752caba321d348d4aacae3f20cbec4`. The harness converts the public coordinates and private scalar to the backend's native little-endian words and compares the returned big-endian shared secret to the published expectation. It requires the return sentinel to be reached, rejects an empty vector selection, and verifies preservation of core registers `r4`–`r11` and FPU registers `s16`–`s31`.
+
+Every selected execution returned correctly, preserved those registers, ran 663,513 emulated instructions and descended 1,524 bytes from its starting SP. This measures only the directly invoked ECDH routine and its callees. Adding the retained `handle_input` and `dh_key` frames accounts for 4,356 bytes before other outer and interrupt frames; this is still not a hardware stack bound. Instruction counts are not CPU cycles or board timing. No interrupts, controller peripheral, radio or executor were modeled. The private Mac public point and the keyboard's ephemeral secret were not inputs to these public known-answer tests.
+
+The reviewer also independently replayed the exact retained Rust `SecretKey::dh_key` wrapper, whose calling convention was checked against its disassembly: result pointer in `r0`, native scalar pointer in `r1`, remote big-endian coordinate bytes in `r2`, cached local point in `r3`. The harness derives the matching local point by executing the retained `p256_keygen`, supplies separate result/input buffers, and flushes Unicorn's translation cache after registering the measurement hook and before wrapper execution. Ten vectors passed, with return and callee-saved register checks, at 665,840 instructions and 1,820 bytes SP descent. That includes the 296-byte wrapper frame and 1,524-byte ECDH chain; adding the retained pairing-handler frame gives the same 4,356-byte subtotal. This tests the wrapper's point checking and byte-order conversion as well as ECDH, but not live SMP dispatch or interrupt preemption.
+
+The separate source-build experiment uses Arm GNU 15.2.Rel1, hard-float Cortex-M4 instructions and identical sources/flags except C optimization. The cached object's producer establishes that Cargo's `z` became GCC `-Os`, rather than a literal GCC `-Oz`. The reviewer inspected the recorded build commands and result reports: both `-Os` and `-O2` passed ten vectors. Their respective counts were 658,827 / 658,722 instructions and 1,524 / 1,516 bytes SP descent. The reduction is only 105 instructions (about 0.016%) and 8 stack bytes. Those rebuilt images link newlib helpers, so compare the pair with each other rather than treating their totals as exact retained-firmware counts. This experiment provides no support for changing the firmware optimization to solve the observed two-second link timeout. The reviewer independently replayed the retained binary and wrapper; the rebuild comparison was reviewed from the experiment agent's bound commands and result reports.
