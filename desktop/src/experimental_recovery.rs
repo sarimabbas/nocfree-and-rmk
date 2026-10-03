@@ -1,6 +1,7 @@
 //! Host request for the uninstalled USB rescue-stage prototype, not a user flow.
 //! The stage is experimental; hardware recovery needs validation. USB attachment cannot reset
 //! an already running battery-powered half. This module never flashes firmware.
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use nusb::{
@@ -69,20 +70,24 @@ impl ArmedRequest {
 
     /// Send only DFU_DETACH, once. Success means request completion, not a mounted
     /// recovery drive. A disconnect/error may follow a reset; never auto-retry.
-    pub async fn request_detach(self) -> Result<(), &'static str> {
+    pub async fn request_detach(self, cancelled: &AtomicBool) -> Result<(), &'static str> {
         if self.armed_at.elapsed() >= ARM_WINDOW {
             return Err("Recovery selection expired. Select the connected device again.");
         }
         tokio::time::timeout(OPERATION_TIMEOUT, async move {
+            if cancelled.load(Ordering::Relaxed) { return Err("Recovery cancelled."); }
             let devices = nusb::list_devices().await.map_err(|_| "Could not inspect the USB connection.")?;
             let mut selected = devices.filter(|d| matches(self.role, d));
             let endpoint = selected.next().ok_or("The selected prototype disconnected.")?;
             if selected.next().is_some() || endpoint.id() != self.connection {
                 return Err("The USB connection changed or is ambiguous. Select the device again.");
             }
+            if cancelled.load(Ordering::Relaxed) { return Err("Recovery cancelled."); }
             let device = endpoint.open().await.map_err(|_| "Could not open the selected rescue interface.")?;
+            if cancelled.load(Ordering::Relaxed) { return Err("Recovery cancelled."); }
             let interface = device.claim_interface(INTERFACE).await.map_err(|_| "Could not claim the selected rescue interface.")?;
             if self.armed_at.elapsed() >= ARM_WINDOW { return Err("Recovery selection expired before the request."); }
+            if cancelled.load(Ordering::Relaxed) { return Err("Recovery cancelled."); }
             interface.control_out(detach_request(), Duration::from_secs(2)).await
                 .map_err(|_| "Recovery request did not complete. Check the device state before trying again.")
         }).await.map_err(|_| "Recovery request timed out. Check the device state before trying again.")?

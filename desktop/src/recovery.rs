@@ -63,7 +63,7 @@ pub(crate) fn run(role: Role, cancelled: Arc<AtomicBool>) -> Result<(), String> 
                     requested_at=Some(Instant::now());
                     // A successful reset may disconnect before acknowledgement.
                     // Only the subsequently correlated drive determines success.
-                    let _=request.request_detach().await;
+                    let _=request.request_detach(&cancelled).await;
                 }
             }
             if let Some(location)=requested_location {

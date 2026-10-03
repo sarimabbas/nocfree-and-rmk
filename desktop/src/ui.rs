@@ -61,6 +61,14 @@ enum RescueView {
     Finished(Result<(), String>),
 }
 
+impl Drop for Companion {
+    fn drop(&mut self) {
+        if let Some(cancelled) = &self.rescue_cancel {
+            cancelled.store(true, Ordering::Relaxed);
+        }
+    }
+}
+
 impl Companion {
     pub fn new(cx: &mut Context<Self>) -> Self {
         let mut theme = Theme::new(
