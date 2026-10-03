@@ -1,6 +1,6 @@
 # Held-key startup recovery experiment
 
-Offline prototype, not installed firmware and not a flashable bootloader. No device operations, flash writes, installed RMK changes, or image-guard changes are part of this experiment.
+Offline integration, not installed firmware or an installable NocFree bootloader. No device operations, flash writes, installed RMK changes, or image-guard changes are part of this experiment.
 
 `recovery_gate.c` is portable C intended to run before launching the application. It reads local PCA9555 inputs through hardware callbacks. It requests USB recovery only if USB power is present and a startup chord remains sampled as held for at least 60 ms. Missing initial keys or a subsequent sampled release returns immediately to ordinary startup. I2C failure returns a distinct error, never a fabricated pressed-key state. Three expanders must produce complete snapshots; a partial snapshot cannot enter recovery. Other held keys do not prevent recovery.
 
@@ -24,13 +24,22 @@ The reported bootloader base is [Adafruit revision 0147d71, main.c](https://gith
 A board-specific integration would:
 
 1. Initialize the GPIO/I2C/monotonic-clock adapter before application entry, after hardware setup. Read USB VBUS presence; do not require enumeration or a mounted UF2 drive.
-2. Run this gate on both normal power-on and reset, making USB power plus the local chord deliberate maintenance entry. Keep existing software-request and invalid-application recovery paths intact. Decide explicitly whether intentional application “skip DFU” requests should override a physically held recovery chord; this prototype assumes the chord is authoritative but does not patch upstream priority yet.
+2. Run this gate on normal power-on and reset, making USB power plus the local chord deliberate maintenance entry. The implemented patch gives the chord priority over application “skip DFU,” serial-only, OTA-reset and physical OTA-button requests. The legacy OTA application jump skips the raw adapter because SoftDevice may already own its peripherals. Existing software requests and invalid-application recovery remain intact when no chord is detected.
 3. On `ENTER_USB_RECOVERY`, choose the existing UF2-capable DFU route and stay there until installation/restart, rather than applying the old three-second single-tap timer.
 4. On `START_APPLICATION`, follow ordinary upstream validity/start logic. On `RECOVERY_IO_ERROR`, record/report the diagnostic as possible without relying on RMK, then follow the same ordinary validity/start logic. Never enter automatic recovery on a mere bus fault when a valid application exists.
 5. Stop I2C and restore owned pins/peripheral state on every exit before USB DFU or application launch. No expander output-drive configuration, interrupts, radio, debounce engine, storage or flash operations belong in the gate.
 6. Remove the application's recovery-first marker only in conjunction with a bootloader and image-policy migration that has passed real, independent recovery tests. The installed firmware and current guard remain unchanged here.
 
-No nRF adapter or upstream patch is included. A pseudo-adapter would hide the important remaining work: independent bounded I2C when a bus is stuck, reliable USB VBUS sensing before enumeration, actual power/reset behavior, peripheral cleanup, bootloader build-size/link constraints, and installation/recovery of the bootloader itself. Cold USB, warm reset, battery-to-USB, USB charging while the switch is OFF, and each half's held chords must be observed on hardware. A right-half switch may isolate battery while USB still powers the MCU; “OFF then ON” cannot be assumed to reset it.
+The [nRF adapter](nrf-adapter.md) and `bootloader.patch` now implement this seam.
+Both role variants link against the pinned upstream with a Nordic DK board
+configuration, and the harness tests the actual patched decision function.
+These DK ELF files are not NocFree firmware: the DK DFU-button pin even overlaps
+this board's SDA. Exact vendor configuration, genuine restart behavior, actual
+I2C timeout/cleanup, installation and recovery still require device evidence.
+Cold USB, warm reset, battery-to-USB, USB charging while the switch is OFF, and
+each half's held chords must be observed on hardware. A right-half switch may
+isolate battery while USB still powers the MCU; “OFF then ON” cannot be assumed
+to reset it.
 
 The dongle is excluded: it has no local keyboard keys and needs its own independently verified recovery design.
 
@@ -39,3 +48,31 @@ The dongle is excluded: it has no local keyboard keys and needs its own independ
 Run `./experiments/held-key-recovery/check.sh`. It compiles the actual C policy with C11 strict warnings and AddressSanitizer/UndefinedBehaviorSanitizer, runs the fault harness, and removes its temporary executable.
 
 Coverage includes both real bit masks, wrong/incomplete chord, ordinary no-key startup, no USB without bus access, sampled release, USB loss including during configuration, a late chord rejected after an absent initial chord, each missing right key, uint32 clock rollover, each of 27 I2C transfer-failure positions through the stable-chord window, transfer timeout, worst permitted transfer duration, all inputs held, invalid API inputs, and a frozen clock. These establish host policy behavior only. They do not establish bootloader buildability, device recovery, latency, pin correctness, or installation safety.
+
+## Integrated bootloader check
+
+Initialize a clean Adafruit checkout at the reported base commit and its three
+pinned submodules. Run:
+
+```sh
+python3 experiments/held-key-recovery/build_smoke.py --upstream /path/to/checkout --toolchain /path/to/arm-toolchain/bin
+```
+
+The wrapper verifies source/submodule revisions and cleanliness, copies sources
+into ignored `.evidence/bootloader-work/smoke-left` and `smoke-right`, applies the
+patch directly without fuzzy matching, tests the actual patched decision function
+for both roles with sanitizers, and builds only a named ELF target. It neither
+generates an update package nor invokes upstream flash commands. Existing smoke
+directories are rejected; retain or remove those generated directories explicitly
+before rerunning.
+
+GCC 15 emits two new warnings for unchanged upstream SDK/UF2 code: fixed low MBR
+address access in `bootloader_settings.c`, and non-NUL-terminated 11-byte FAT names
+in `ghostfat.c`. The wrapper allows only those diagnostic categories in those
+specific source files; warnings remain fatal for our code. This is smoke-build
+compatibility, not a vendor release toolchain qualification.
+
+Actual integrated ELF text/data/BSS: 32,020 / 676 / 22,282 bytes for either role
+with the tested GCC 15.2 toolchain and DK configuration. Independent symbol and
+disassembly inspection confirms the adapter is retained and called with the
+correct role. See [integration review](../../docs/research/bootloader-integration-review.md).
