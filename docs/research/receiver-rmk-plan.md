@@ -1,0 +1,49 @@
+# RMK receiver bring-up plan
+
+Independent source review, 2026-10-02. No device operations, firmware edits, transfers or builds were performed by this reviewer. Bound to RMK `9607aedf343b17dd6b27307583ae80c4f728fbbd`, current NocFree board source, and the existing explicit packet MTU 251 configuration.
+
+## Architecture
+
+Keep the existing right-to-left BLE split. Left owns scanning aggregation, keymap, modifiers, behavior, battery processing and host profiles. Receiver uses RMK `Dongle`, `DongleRouter`, `UsbTransport`, and `new_storage_without_keymap`; it receives the left's combined HID reports over BLE and exposes USB HID. No second keymap, board scanner, debounce implementation or custom ESB compatibility layer belongs on the receiver. The existing `receiver` branch already expresses this composition. This preserves one keyboard's cross-half modifier state.
+
+The [pinned tri-mode example](https://github.com/rmk-rs/rmk/blob/9607aedf343b17dd6b27307583ae80c4f728fbbd/examples/use_rust/nrf_dongle/README.md) uses an nRF52833 split central, but its receiver is nRF54LM20A. It demonstrates framework topology, not this vendor receiver's oscillator, memory, bootloader or recovery behavior. Factory radio compatibility is not implied: an unchanged factory receiver speaks a different protocol.
+
+## Required compatibility change on left
+
+**The currently working left is not yet protocol-compatible with the pinned standard receiver discovery path.**
+
+The [receiver discovery source](https://github.com/rmk-rs/rmk/blob/9607aedf343b17dd6b27307583ae80c4f728fbbd/rmk/src/dongle/mod.rs#L597-L631) requires both HID and, in non-Vial builds, Rynk service characteristics before entering report relay. The current firmware disables RMK defaults and enables `dongle`, `split`, storage and nRF52833 BLE, but neither `rynk` nor `vial`. `dongle` enables protocol types, not the keyboard Rynk server. The [BLE server](https://github.com/rmk-rs/rmk/blob/9607aedf343b17dd6b27307583ae80c4f728fbbd/rmk/src/ble/ble_server.rs#L35-L43) exposes Rynk services only under `feature = "rynk"`.
+
+The smallest supported solution is enable `rmk/rynk` on the left. That also enables framework host processing and host lock through the [manifest](https://github.com/rmk-rs/rmk/blob/9607aedf343b17dd6b27307583ae80c4f728fbbd/rmk/Cargo.toml#L129-L143). It requires a new left candidate: cross-build, flash budget and complete active stack review must be repeated, including the explicit MTU fix. Current left pairing success cannot validate a feature-expanded binary. Avoid altering framework discovery to implement a private HID-only receiver merely to evade this missing service.
+
+## Minimal receiver configuration
+
+Existing role selection `receiver` supplies `rmk/dongle`; common dependencies supply RMK storage and `nrf52833_ble`. Root reports the protected-layout receiver prototype fits. Therefore begin with exactly `receiver` plus the existing logging policy: preserve resident S140 and omit `reclaimed-softdevice`. Use **no `usb-recovery-first`, no probe features and no scanner features**. The source uses SDC for the running BLE stack; leaving resident S140 bytes untouched does not mean executing both stacks. Receiver does not need `rmk/rynk`: non-Vial dongle relay carries the keyboard's Rynk frames without running a local keyboard host processor. Left would separately require `rmk/rynk`. Mac keymap remains on left.
+
+Current receiver SDC builder selects one central connection, scanning and data-length/PHY support. Current default packet MTU 251 gives notification capacity 244; ordinary keyboard, mouse, consumer and system HID reports fit this bound. Preserve the existing queue capacities. Rynk relay chunks are bounded by negotiated ATT MTU in the pinned relay implementation. Do not shrink queues based on monolithic peripheral examples.
+
+The protected factory layout starts the application at `0x27000` and leaves resident S140 untouched; existing storage configuration remains `0x65000..0x6d000`. These are **build settings, not receiver-specific validated boundaries**. Verify them against the physical receiver's bootloader/readback before any candidate transfer; do not copy the left's identity or factory image policy. Reclaiming S140 is not presently necessary for the receiver prototype.
+
+## Profiles and onboarding
+
+NocFree Fn+U is `User(10)`. With five BLE profiles, the [keyboard source](https://github.com/rmk-rs/rmk/blob/9607aedf343b17dd6b27307583ae80c4f728fbbd/rmk/src/keyboard.rs#L1660-L1705) maps this to the dedicated dongle profile (`NUM_BLE_PROFILE + 5`). Tap selects the receiver; a five-second hold clears its bond and starts seeking. Avoid unrelated key events during the hold because the framework cancels the gesture. The receiver scans for the seeking advertisement, stores one keyboard bond and subsequently reconnects. A bonded receiver offers a boot-time replacement window. The user should not need OS Bluetooth pairing for receiver mode.
+
+The minimal app journey is: identify receiver → save factory backup → prove independent recovery → install the concrete reviewed candidate → verify readback → select receiver on keyboard → typing check. Show only the next physical action; keep memory/protocol diagnostics under Details. This journey is currently preparation, not an installable release.
+
+## Recovery and guard gate
+
+A USB-only receiver cannot battery-start past an always-USB recovery marker. `usb-recovery-first` therefore makes normal cold plugging unsuitable. Omit it. The original plan required a physically accessible application-independent recovery route for this exact receiver. The owner has since explicitly waived that prerequisite for the receiver; root records the scoped exception in [receiver recovery](receiver-recovery.md). This waiver does not establish recovery or waive identity, fresh backup, address/vector/family guards, concrete candidate review or transfer scope. Runtime USB DFU or forwarded keyboard commands are conveniences, not recovery from broken application code.
+
+`scripts/migration_guard.py` intentionally requires the recovery marker at `0x1200`, binds a left-only role, and binds the exact left factory container. Its rejection of an unmarked receiver candidate must remain intact. Add a separate receiver policy after receiver evidence establishes its origin, allowed pages, RAM/vector checks, family, complete baseline and restoration image, and explicitly records the owner's receiver-only recovery waiver. The unproven route must remain visible as a limitation. Do not relax the left gate or silently relabel its evidence. Receiver does not currently enable `rmk/adafruit_bl`; a runtime update mechanism must be evaluated separately and does not remove this recovery gate.
+
+## Acceptance before release
+
+Repeat the host harness and cross-build left, right and receiver. Audit the actual receiver and updated-left ELF flash/static/stack margins rather than assuming fewer tasks imply safety. Hardware acceptance must cover initial pairing, saved-bond reconnect after receiver unplug and left restart, both halves with USB absent, cross-half modifiers, media keys, simultaneous inputs, held-key disconnect/release recovery, transport switching, wake latency and measured input loss under sustained input/interference. Test USB HID enumeration and behavior on macOS, Windows and Linux. Report measured bounds, not a zero-lag guarantee. Keep the already working left/right checkpoint available; no receiver or updated-left write is authorized by this research file.
+
+## Follow-up: feature-only Rynk and manual transport composition
+
+Source review confirms that adding `rmk/rynk` creates the required services and is sufficient for **ordinary HID-only receiver discovery and relay**, even while the manually composed left transport has `host_service: None`. Receiver discovery reads HID Report Reference descriptors, discovers Rynk characteristics and subscribes by CCCD writes; it does not issue a mandatory initial Rynk protocol query. The request-forwarding loop waits for bytes from the USB router. CCCD subscription alone does not select a Rynk reply transport or enqueue a request. These observations derive from pinned `KeyboardCharacteristics::discover/subscribe`, `DongleCentral::relay`, and [Rynk GATT handler](https://github.com/rmk-rs/rmk/blob/9607aedf343b17dd6b27307583ae80c4f728fbbd/rmk/src/ble/host/rynk.rs).
+
+However, feature-only exposure is incomplete configurator support. In [BLE communication](https://github.com/rmk-rs/rmk/blob/9607aedf343b17dd6b27307583ae80c4f728fbbd/rmk/src/ble/mod.rs#L886-L897), absence of a `HostService` leaves the host task pending forever. Encrypted Rynk writes still await `RYNK_BLE_RX_PIPE.write_all(data)` from the shared GATT event dispatcher. That pipe has a fixed 512-byte capacity ([channel source](https://github.com/rmk-rs/rmk/blob/9607aedf343b17dd6b27307583ae80c4f728fbbd/rmk/src/channel.rs#L97)); without a consumer it cannot drain or produce replies. A request that exceeds available space can leave the dispatcher blocked. The ordinary HID writer is a separate joined future, so this source finding does not establish an immediate whole-keyboard typing failure, but it does establish a GATT processing hazard after configurator traffic. The receiver does not filter such host requests.
+
+A controlled HID-only prototype can exclude configurator requests and test its stated scope. A complete exposed Rynk implementation should supply RMK's standard `HostService` through its supported transport methods, with corresponding build/stack review, rather than add a private pipe drain, emulate responses, or fork receiver discovery. Root's reported feature-only left build fits flash, but its reduced static-to-stack gap still needs actual active-call-chain audit before transfer. No feature-expanded left or receiver hardware behavior was validated by this source review.
