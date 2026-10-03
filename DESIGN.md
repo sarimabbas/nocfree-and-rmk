@@ -4,7 +4,7 @@ The user's supplied sidebar wireframe defines the composition. Preserve the exis
 
 ## Surface
 
-Operate: a newcomer connects a keyboard, sees its state, and follows one clear next action. A fixed approximately 220 px sidebar provides Keyboard and Backups navigation, with the relevant firmware task only when supported by evidence. Development trials stay out of the default navigation.
+Operate: a newcomer connects a keyboard, sees its state, and follows one clear next action. A fixed approximately 220 px sidebar provides Keyboard and Backups navigation, with the relevant firmware task only when supported by evidence. Recovery mode is a first-class utility alongside Backup firmware and Keyboard status. Development trials stay out of navigation.
 
 ## Visual system
 
@@ -17,3 +17,7 @@ The same content region carries every journey: operation title, active component
 ## Status
 
 Show left, right, and receiver separately using real observations. Unavailable or stale battery readings are unknown. USB connection is distinct from charging. Battery calibration limits belong in contextual detail, not reassuring invented values.
+
+## Shared recovery primitive
+
+Recovery is a state machine with component selection, physical guidance, verified readiness and explicit failure/retry/cancel transitions. Opaque attempt identities reject late results after cancellation or changing components. Use one illustrated guide in the standalone utility and journey prerequisites; let reliable device observations advance it. Firmware writes remain separate guarded operations. Waiting for a person does not expire; dispatched USB requests and drive observation do.

@@ -1,6 +1,6 @@
 # NocFree Companion
 
-A native macOS GPUI application using GPUKit. The sidebar follows the owner’s flow sketches: contextual firmware tasks, Backup firmware, Keyboard status, and the observed firmware state. The same workspace presents each physical step. Development tools are hidden unless their experiment is enabled.
+A native macOS GPUI application using GPUKit. The sidebar follows the owner’s flow sketches: contextual firmware tasks, Backup firmware, Keyboard status, and the observed firmware state. The same workspace presents each physical step. Recovery mode is a first-class utility; development trial flows stay out of navigation.
 
 ## What works
 
@@ -37,8 +37,10 @@ Copies are saved privately under `~/Library/Application Support/NocFree Companio
 
 Pausing stops the guide; it does not erase a copy or change the keyboard’s firmware. Returning to Backup firmware offers Resume. A saved archive is not a full-chip backup or automatically a restore-compatible image: exposed readback excludes MBR, filesystem, bootloader and UICR. Image guards and durable update-intent journals remain separate from the copy flow; interrupted transfers must be reconciled, never replayed automatically.
 
-## Development recovery
+## Recovery mode
 
-`NOCFREE_USB_RESCUE_EXPERIMENT=1` exposes Developer tools → Recover a device. Select a component and follow its power-cycle guide. The app sends one scoped DFU request to the matching experimental startup USB interface and reports success only after observing the recovery drive at the same USB location. This requests a reset, never copies firmware, and requires a supporting installed image.
+Additional utilities → Recovery mode uses a shared, illustrated state machine: choose a component, follow its physical step, and wait for the correlated recovery drive. Cancel invalidates the attempt; retry starts a new explicit attempt. The physical step has no reading-time deadline. USB dispatch and subsequent drive observation retain bounded deadlines and never retry automatically.
 
-The separate private startup trial remains a developer tool, not a newcomer installer. It has no heartbeat dependency. Host fixtures, cross-builds, native UI inspection, physical recovery and firmware hardware acceptance are separate results.
+Automatic app recovery requires supporting installed firmware. The host only targets the matching startup USB interface; older RMK and factory firmware still require their applicable recovery procedures. A product name alone does not prove installed recovery support. Backup uses the same guide presentation with its existing verified procedure; firmware installation services are not yet integrated.
+
+The right no-chord startup image has passed owner-device app recovery, exact readback and reported normal typing. The corresponding left and receiver candidates remain uninstalled. Factory bootloaders remain unchanged. Host fixtures, cross-builds, native UI inspection and hardware acceptance are separate results.

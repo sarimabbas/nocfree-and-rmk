@@ -8,6 +8,10 @@ use std::{
     time::{Duration, Instant},
 };
 
+use nocfree_companion::{
+    experimental_recovery::Role as RecoveryRole,
+    recovery_journey::{Attempt, RecoveryJourney, State as RecoveryState},
+};
 use rynk::rmk_types::battery::{BatteryStatus, ChargeState};
 
 use crate::{
@@ -17,7 +21,6 @@ use crate::{
     journey::Journey,
     recovery,
     session::View,
-    trial::{Trial, TrialView},
 };
 use gpui::{
     App, Context, FocusHandle, Focusable, FontWeight, Image, ImageFormat, InteractiveElement,
@@ -35,22 +38,19 @@ use gpuikit::{
 enum Page {
     Keyboard,
     Backups,
-    Developer,
+    Recovery,
 }
 
 pub struct Companion {
     page: Page,
     nav_focus: Vec<FocusHandle>,
     dongle_connected: bool,
-    rescue: Option<RescueView>,
+    rescue: RecoveryJourney,
     rescue_cancel: Option<Arc<AtomicBool>>,
     session: Option<Journey>,
     view: View,
     role: Option<Role>,
     started: bool,
-    trial_available: bool,
-    trial: Option<Trial>,
-    trial_view: Option<TrialView>,
     busy: bool,
     copies_folder: Option<PathBuf>,
     completed: bool,
@@ -64,12 +64,6 @@ pub struct Companion {
     home: Home,
     focus_handle: FocusHandle,
     _poll: Task<()>,
-}
-
-enum RescueView {
-    Choose,
-    Running(nocfree_companion::experimental_recovery::Role),
-    Finished(Result<(), String>),
 }
 
 impl Drop for Companion {
@@ -104,20 +98,6 @@ impl Companion {
         let session = Journey::backup();
         let view = session.view();
         let poll = cx.spawn(async move |this, cx| {
-            let available = cx
-                .background_executor()
-                .spawn(async { Trial::available() })
-                .await;
-            if this
-                .update(cx, |this, cx| {
-                    this.trial_available = available;
-                    cx.notify();
-                })
-                .is_err()
-            {
-                return;
-            }
-
             let mut battery_checked = None;
             loop {
                 let idle = this.update(cx, |this, _| !this.started || this.completed);
@@ -233,50 +213,14 @@ impl Companion {
                         return;
                     }
                 }
-                let state = this.update(cx, |this, cx| {
-                    let trial = this.trial.take();
-                    if trial.is_some() {
-                        cx.notify();
-                    }
-                    (
-                        this.started,
-                        this.completed,
-                        this.trial_view.is_some(),
-                        trial,
-                    )
-                });
-                let trial = match state {
+                let state = this.update(cx, |this, _| this.started && !this.completed);
+                match state {
                     Err(_) => break,
-                    Ok((_, true, _, _)) => {
+                    Ok(false) => {
                         cx.background_executor().timer(Duration::from_secs(1)).await;
                         continue;
                     }
-                    Ok((false, false, _, _)) | Ok((true, false, true, None)) => {
-                        let timer = cx.background_executor().timer(Duration::from_secs(1));
-                        timer.await;
-                        continue;
-                    }
-                    Ok((true, false, _, trial)) => trial,
-                };
-                if let Some(mut trial) = trial {
-                    let trial = cx
-                        .background_executor()
-                        .spawn(async move {
-                            trial.observe(device::discover());
-                            trial
-                        })
-                        .await;
-                    let running = this.update(cx, |this, cx| {
-                        this.accept_trial(trial);
-                        cx.notify();
-                        !this.completed
-                    });
-                    if running.is_err() {
-                        break;
-                    }
-                    let timer = cx.background_executor().timer(Duration::from_secs(1));
-                    timer.await;
-                    continue;
+                    Ok(true) => {}
                 }
                 let result = cx
                     .background_executor()
@@ -309,15 +253,12 @@ impl Companion {
             page: Page::Keyboard,
             nav_focus: (0..3).map(|_| cx.focus_handle().tab_stop(true)).collect(),
             dongle_connected: false,
-            rescue: None,
+            rescue: RecoveryJourney::new(),
             rescue_cancel: None,
             session: Some(session),
             view,
             role: None,
             started: false,
-            trial_available: false,
-            trial: None,
-            trial_view: None,
             busy: false,
             copies_folder: None,
             completed: false,
@@ -334,17 +275,15 @@ impl Companion {
         }
     }
 
-    fn start_recovery(
-        &mut self,
-        role: nocfree_companion::experimental_recovery::Role,
-        cx: &mut Context<Self>,
-    ) {
-        if !recovery::enabled() || matches!(self.rescue, Some(RescueView::Running(_))) {
-            return;
+    fn start_recovery(&mut self, role: RecoveryRole, cx: &mut Context<Self>) {
+        if let Some(attempt) = self.rescue.start(role) {
+            self.run_recovery(role, attempt, cx);
         }
+    }
+
+    fn run_recovery(&mut self, role: RecoveryRole, attempt: Attempt, cx: &mut Context<Self>) {
         let cancelled = Arc::new(AtomicBool::new(false));
         self.rescue_cancel = Some(cancelled.clone());
-        self.rescue = Some(RescueView::Running(role));
         cx.notify();
         cx.spawn(async move |this, cx| {
             let worker_cancel = cancelled.clone();
@@ -358,8 +297,8 @@ impl Companion {
                     .as_ref()
                     .is_some_and(|current| Arc::ptr_eq(current, &cancelled))
                     && !cancelled.load(Ordering::Relaxed)
+                    && this.rescue.complete(attempt, role, result)
                 {
-                    this.rescue = Some(RescueView::Finished(result));
                     cx.notify();
                 }
             });
@@ -367,152 +306,32 @@ impl Companion {
         .detach();
     }
 
-    fn recovery_screen(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        use nocfree_companion::experimental_recovery::Role as RecoveryRole;
-        let (title, description) = match self.rescue.as_ref().unwrap() {
-            RescueView::Choose => (
-                "Recover a device",
-                "Which part would you like to recover?".to_owned(),
-            ),
-            RescueView::Running(role) => (
-                "Reconnect your device",
-                recovery::instruction(*role).to_owned(),
-            ),
-            RescueView::Finished(Ok(())) => (
-                "Recovery drive is ready",
-                "Your firmware hasn’t been changed.".to_owned(),
-            ),
-            RescueView::Finished(Err(error)) => ("Let’s try again", error.clone()),
-        };
-        div()
-            .size_full()
-            .bg(rgb(0xffffff))
-            .flex()
-            .items_center()
-            .justify_center()
-            .child(
-                div()
-                    .max_w(px(420.))
-                    .p(px(32.))
-                    .flex()
-                    .flex_col()
-                    .items_center()
-                    .gap(px(24.))
-                    .child(
-                        div()
-                            .text_size(px(12.))
-                            .text_color(rgb(0x626870))
-                            .child("Experimental recovery"),
-                    )
-                    .child(
-                        div()
-                            .text_size(px(28.))
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .child(title),
-                    )
-                    .child(div().text_center().line_height(px(24.)).child(description))
-                    .when(matches!(self.rescue, Some(RescueView::Choose)), |column| {
-                        column
-                            .child(action_row(button("recover-left", "Left half").on_click(
-                                cx.listener(|this, _, _, cx| {
-                                    this.start_recovery(RecoveryRole::Left, cx)
-                                }),
-                            )))
-                            .child(action_row(button("recover-right", "Right half").on_click(
-                                cx.listener(|this, _, _, cx| {
-                                    this.start_recovery(RecoveryRole::Right, cx)
-                                }),
-                            )))
-                            .child(action_row(
-                                button("recover-receiver", "USB receiver").on_click(cx.listener(
-                                    |this, _, _, cx| {
-                                        this.start_recovery(RecoveryRole::Receiver, cx)
-                                    },
-                                )),
-                            ))
-                    })
-                    .when(
-                        matches!(self.rescue, Some(RescueView::Running(_))),
-                        |column| {
-                            column.child(
-                                div()
-                                    .text_size(px(13.))
-                                    .text_color(rgb(0x626870))
-                                    .child("Waiting for the recovery drive…"),
-                            )
-                        },
-                    )
-                    .child(action_row(
-                        button(
-                            "close-recovery",
-                            if matches!(self.rescue, Some(RescueView::Running(_))) {
-                                "Cancel"
-                            } else {
-                                "Done"
-                            },
-                        )
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            if let Some(cancelled) = this.rescue_cancel.take() {
-                                cancelled.store(true, Ordering::Relaxed);
-                            }
-                            this.rescue = None;
-                            cx.notify();
-                        })),
-                    )),
-            )
-    }
-
-    fn accept_trial(&mut self, trial: Trial) {
-        let view = trial.view();
-        self.completed = view.finished;
-        self.trial_view = Some(view);
-        self.trial = Some(trial);
-    }
-
-    fn start_trial(&mut self, cx: &mut Context<Self>) {
-        if self.started || self.busy {
-            return;
+    fn cancel_recovery(&mut self) {
+        if let Some(cancelled) = self.rescue_cancel.take() {
+            cancelled.store(true, Ordering::Relaxed);
         }
-        self.busy = true;
-        cx.notify();
-        cx.spawn(async move |this, cx| {
-            let result = cx.background_executor().spawn(async { Trial::new() }).await;
-            let _ = this.update(cx, |this, cx| {
-                this.busy = false;
-                match result {
-                    Ok(trial) => {
-                        this.accept_trial(trial);
-                        this.role = Some(Role::Left);
-                        this.started = true;
-                        this.message = None;
-                    }
-                    Err(error) => this.message = Some(error),
-                }
-                cx.notify();
-            });
-        })
-        .detach();
+        self.rescue.cancel();
     }
 
-    fn acknowledge_trial(&mut self, cx: &mut Context<Self>) {
-        let Some(mut trial) = self.trial.take() else {
-            return;
-        };
-        cx.notify();
-        cx.spawn(async move |this, cx| {
-            let trial = cx
-                .background_executor()
-                .spawn(async move {
-                    trial.acknowledge();
-                    trial
-                })
-                .await;
-            let _ = this.update(cx, |this, cx| {
-                this.accept_trial(trial);
-                cx.notify();
-            });
-        })
-        .detach();
+    fn recovery_screen(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        match self.rescue.state() {
+            RecoveryState::Choose => {
+                recovery_guide(None, "Open recovery mode", "Choose the part you want to recover. We’ll guide you through reconnecting it.", Some((div().flex().gap(px(8.))
+                        .child(button("recover-left", "Left half").on_click(cx.listener(|this, _, _, cx| this.start_recovery(RecoveryRole::Left, cx))))
+                        .child(button("recover-right", "Right half").on_click(cx.listener(|this, _, _, cx| this.start_recovery(RecoveryRole::Right, cx))))
+                        .child(button("recover-receiver", "USB receiver").on_click(cx.listener(|this, _, _, cx| this.start_recovery(RecoveryRole::Receiver, cx))))).into_any_element()))
+                .child(div().text_size(px(12.)).line_height(px(18.)).text_color(rgb(0x626870)).child("App recovery requires compatible RMK firmware. Older firmware uses its keyboard recovery shortcut."))
+            }
+            RecoveryState::Waiting(role) => recovery_guide(Some(*role), "Reconnect your device", nocfree_companion::recovery_journey::instruction(*role), Some((div().flex().flex_col().gap(px(16.))
+                    .child(div().text_size(px(13.)).text_color(rgb(0x626870)).child("Waiting for the recovery drive…"))
+                    .child(action_row(button("cancel-recovery", "Cancel").on_click(cx.listener(|this, _, _, cx| { this.cancel_recovery(); cx.notify(); }))))).into_any_element())),
+            RecoveryState::Ready(role) => recovery_guide(Some(*role), "Recovery mode is ready", "The recovery drive is open. Your firmware hasn’t been changed.", Some((action_row(button("recovery-done", "Done").on_click(cx.listener(|this, _, _, cx| { this.cancel_recovery(); this.page = Page::Keyboard; cx.notify(); })))).into_any_element())),
+            RecoveryState::Failed(role, error) => recovery_guide(Some(*role), "Let’s try again", error.clone(), Some((div().flex().gap(px(8.))
+                    .child(button("retry-recovery", "Try again").on_click(cx.listener(|this, _, _, cx| {
+                        if let Some((role, attempt)) = this.rescue.retry() { this.run_recovery(role, attempt, cx); }
+                    })))
+                    .child(button("cancel-recovery", "Cancel").on_click(cx.listener(|this, _, _, cx| { this.cancel_recovery(); cx.notify(); })))).into_any_element())),
+        }
     }
 
     fn start_copies(&mut self, cx: &mut Context<Self>) {
@@ -695,6 +514,9 @@ impl Companion {
             }
             self.started = false;
         }
+        if self.page == Page::Recovery && page != Page::Recovery {
+            self.cancel_recovery();
+        }
         self.page = page;
         cx.notify();
     }
@@ -752,7 +574,7 @@ impl Render for Companion {
         let page_title = match self.page {
             Page::Keyboard => "Keyboard status",
             Page::Backups => "Backup firmware",
-            Page::Developer => "Developer tools",
+            Page::Recovery => "Recovery mode",
         };
         let navigation = sidebar("navigation")
             .label("NocFree Companion navigation")
@@ -816,16 +638,14 @@ impl Render for Companion {
                 Icons::dashboard(),
                 cx,
             ))
+            .child(self.nav_row(
+                "nav-recovery",
+                "Recovery mode",
+                Page::Recovery,
+                Icons::reset(),
+                cx,
+            ))
             .child(div().flex_1())
-            .when(recovery::enabled(), |nav| {
-                nav.child(self.nav_row(
-                    "nav-developer",
-                    "Developer tools",
-                    Page::Developer,
-                    Icons::gear(),
-                    cx,
-                ))
-            })
             .child(
                 div()
                     .px(px(10.))
@@ -846,33 +666,7 @@ impl Render for Companion {
             .w_full()
             .max_w(px(620.))
             .gap(px(24.));
-        if self.rescue.is_some() {
-            canvas = canvas.child(self.recovery_screen(cx));
-        } else if self.trial_view.is_some() {
-            let view = self.trial_view.as_ref().unwrap();
-            let label = view.ack_label;
-            canvas = canvas
-                .child(keyboard_picture(Some(Role::Left)))
-                .child(
-                    div()
-                        .text_size(px(23.))
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .child(view.title.clone()),
-                )
-                .child(
-                    div()
-                        .text_size(px(15.))
-                        .line_height(px(23.))
-                        .child(view.instruction.clone()),
-                )
-                .when_some(label, |c, label| {
-                    c.child(action_row(
-                        button("trial-acknowledge", label)
-                            .disabled(self.trial.is_none())
-                            .on_click(cx.listener(|this, _, _, cx| this.acknowledge_trial(cx))),
-                    ))
-                });
-        } else {
+        {
             canvas = match self.page {
                 Page::Keyboard => canvas
                     .child(div().text_size(px(23.)).font_weight(FontWeight::SEMIBOLD).child(self.home.title()))
@@ -885,11 +679,9 @@ impl Render for Companion {
                     .when_some(self.battery_error.clone(), |c, text| c.child(div().text_size(px(12.)).line_height(px(18.)).text_color(rgb(0x626870)).child(text)))
                     .child(div().text_size(px(12.)).text_color(rgb(0x737881)).child("Battery levels are estimates.")),
                 Page::Backups if self.started || self.completed => {
-                    let title = if self.completed { if self.session.as_ref().is_some_and(|j| j.archives().len() == 1) { "Your copy is saved".into() } else { "Your copies are saved".into() } } else if self.stopped { "Let’s reconnect".into() } else if self.busy { "Saving a copy…".into() } else { self.view.title.clone() };
-                    let instruction = if self.completed { "Your firmware copies are saved privately on this Mac.".into() } else if self.stopped { self.message.clone().unwrap_or_default() } else if self.busy { "Keep the USB cable connected.".into() } else { self.view.instruction.clone() };
-                    canvas.child(keyboard_picture(self.role))
-                        .child(div().text_size(px(23.)).font_weight(FontWeight::SEMIBOLD).child(title))
-                        .child(div().text_size(px(15.)).line_height(px(23.)).text_color(rgb(0x626870)).child(instruction))
+                    let title: String = if self.completed { if self.session.as_ref().is_some_and(|j| j.archives().len() == 1) { "Your copy is saved".into() } else { "Your copies are saved".into() } } else if self.stopped { "Let’s reconnect".into() } else if self.busy { "Saving a copy…".into() } else { self.view.title.clone() };
+                    let instruction: String = if self.completed { "Your firmware copies are saved privately on this Mac.".into() } else if self.stopped { self.message.clone().unwrap_or_default() } else if self.busy { "Keep the USB cable connected.".into() } else { self.view.instruction.clone() };
+                    canvas.child(recovery_guide(self.role.map(|role| if role == Role::Left { RecoveryRole::Left } else { RecoveryRole::Right }), title, instruction, None))
                         .when(self.view.needs_power_on_ack && !self.stopped && !self.completed, |c| c.child(action_row(button("power-on", "It’s switched on").disabled(self.busy).on_click(cx.listener(|this, _, _, cx| {
                             if let Some(journey) = this.session.as_mut() { journey.confirm_power_on(); this.view = journey.view(); cx.notify(); }
                         })))))
@@ -905,11 +697,7 @@ impl Render for Companion {
                     .child(action_row(button("start-backup", if self.session.as_ref().is_some_and(|j| j.state() == crate::journey::State::Paused) { "Resume backup" } else { "Save firmware copies" }).on_click(cx.listener(|this, _, _, cx| this.start_copies(cx)))))
                     .when_some(self.copies_folder.clone(), |c, path| c.child(action_row(button("browse-backups", "Show saved copies").on_click(cx.listener(move |this, _, _, cx| this.open_folder(path.clone(), cx))))))
                     .child(div().text_size(px(12.)).text_color(rgb(0x737881)).child("Saving a copy doesn’t change your keyboard.")),
-                Page::Developer => canvas
-                    .child(div().text_size(px(23.)).font_weight(FontWeight::SEMIBOLD).child("Developer tools"))
-                    .child(div().text_size(px(14.)).text_color(rgb(0x626870)).child("Experimental recovery is available for this development session."))
-                    .when(recovery::enabled(), |c| c.child(action_row(button("experimental-recovery", "Recover a device").on_click(cx.listener(|this, _, _, cx| { this.rescue = Some(RescueView::Choose); cx.notify(); })))))
-                    .when(self.trial_available, |c| c.child(action_row(button("start-trial", "Open startup test").on_click(cx.listener(|this, _, _, cx| this.start_trial(cx)))))),
+                Page::Recovery => canvas.child(self.recovery_screen(cx)),
             };
         }
         div()
@@ -957,6 +745,62 @@ impl Render for Companion {
             )
             .into_any_element()
     }
+}
+
+// Shared presentation for standalone recovery and recovery prerequisites in
+// the backup journey. Callers supply instructions from their verified model.
+fn recovery_guide(
+    role: Option<RecoveryRole>,
+    title: impl Into<gpui::SharedString>,
+    instruction: impl Into<gpui::SharedString>,
+    controls: Option<gpui::AnyElement>,
+) -> gpui::Div {
+    let picture = match role {
+        Some(RecoveryRole::Left) => keyboard_picture(Some(Role::Left)).into_any_element(),
+        Some(RecoveryRole::Right) => keyboard_picture(Some(Role::Right)).into_any_element(),
+        Some(RecoveryRole::Receiver) => div()
+            .h(px(190.))
+            .flex()
+            .flex_col()
+            .items_center()
+            .justify_center()
+            .gap(px(12.))
+            .child(Icons::component_1().size(px(64.)).text_color(rgb(0x626870)))
+            .child(
+                div()
+                    .text_size(px(12.))
+                    .text_color(rgb(0x626870))
+                    .child("USB receiver"),
+            )
+            .into_any_element(),
+        None => div()
+            .flex()
+            .justify_center()
+            .gap(px(16.))
+            .py(px(12.))
+            .child(img(keyboard_image(Role::Left)).w(px(180.)).h(px(130.)))
+            .child(img(keyboard_image(Role::Right)).w(px(180.)).h(px(130.)))
+            .into_any_element(),
+    };
+    div()
+        .flex()
+        .flex_col()
+        .gap(px(24.))
+        .child(picture)
+        .child(
+            div()
+                .text_size(px(23.))
+                .font_weight(FontWeight::SEMIBOLD)
+                .child(title.into()),
+        )
+        .child(
+            div()
+                .text_size(px(15.))
+                .line_height(px(23.))
+                .text_color(rgb(0x626870))
+                .child(instruction.into()),
+        )
+        .when_some(controls, |guide, controls| guide.child(controls))
 }
 
 fn action_row(control: impl IntoElement) -> impl IntoElement {

@@ -7,3 +7,5 @@ pub mod device;
 pub mod home;
 pub mod journey;
 pub mod session;
+
+pub mod recovery_journey;

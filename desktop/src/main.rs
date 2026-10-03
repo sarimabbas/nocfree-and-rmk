@@ -4,7 +4,6 @@ mod home;
 mod journey;
 mod recovery;
 mod session;
-mod trial;
 mod ui;
 
 use gpui::{

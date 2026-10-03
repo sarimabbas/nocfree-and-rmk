@@ -77,3 +77,18 @@ Before installation is considered proven, observe normal USB enumeration after
 the window, targeted Companion DETACH and matching drive/readback, battery startup,
 and recovery with deliberately non-running RMK. Verify release recovery, simultaneous
 split input, disconnect/reconnect and wake latency after the new USB stage.
+
+## Right no-chord candidate observation, 2026-10-03
+
+The corrected right-only candidate was installed after a fresh device-bound
+backup and independent operator review. Companion opened the drive from an
+OFF/unplug/reconnect startup without keys. After copying the application,
+Companion intercepted its next USB startup and reopened the same device's drive
+without an additional physical step. Readback matched the complete candidate,
+erased page tail, and every untouched readable gap/settings byte exactly.
+The factory bootloader was not changed. The owner then confirmed normal battery startup and typing in response to the
+left-Shift/right-HJKL check with right USB unplugged. The settings schema reset
+was expected at normal startup; its resulting bytes were not read back in this
+acceptance check.
+Left and receiver still run their prior firmware; this observation does not
+validate their prepared candidates or recovery from arbitrary corruption.
