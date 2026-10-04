@@ -2870,7 +2870,9 @@ impl Render for Companion {
             .flex()
             .flex_col()
             .size_full()
+            .min_w_0()
             .min_h_0()
+            .whitespace_normal()
             .child(
                 div()
                     .flex_shrink_0()
@@ -2883,6 +2885,7 @@ impl Render for Companion {
                 div()
                     .id("journey-body")
                     .flex_1()
+                    .min_w_0()
                     .min_h_0()
                     .overflow_y_scroll()
                     .child(
@@ -2890,6 +2893,8 @@ impl Render for Companion {
                             .flex()
                             .items_center()
                             .justify_center()
+                            .min_w_0()
+                            .w_full()
                             .min_h_full()
                             .p(px(32.))
                             .child(screen.body.w_full().max_w(px(620.))),
@@ -2933,15 +2938,29 @@ impl Render for Companion {
             .font_family(cx.theme().font_family.clone())
             .text_size(px(14.))
             .child(
-                div().flex().flex_1().min_h_0().child(navigation).child(
-                    div()
-                        .flex_1()
-                        .h_full()
-                        .flex()
-                        .flex_col()
-                        .overflow_hidden()
-                        .child(div().id("journey-canvas").flex_1().min_h_0().child(canvas)),
-                ),
+                div()
+                    .flex()
+                    .flex_1()
+                    .min_w_0()
+                    .min_h_0()
+                    .child(navigation)
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .h_full()
+                            .flex()
+                            .flex_col()
+                            .overflow_hidden()
+                            .child(
+                                div()
+                                    .id("journey-canvas")
+                                    .flex_1()
+                                    .min_w_0()
+                                    .min_h_0()
+                                    .child(canvas),
+                            ),
+                    ),
             )
             .child(status)
     }
@@ -2984,6 +3003,7 @@ fn instruction_line(
             row.child(
                 Icon::new(IconName::Check)
                     .size(px(18.))
+                    .flex_shrink_0()
                     .text_color(gpui::rgb(0x22c55e)),
             )
         })
@@ -3070,10 +3090,12 @@ fn waiting_indicator(label: &'static str, cx: &App) -> gpui::Div {
         .flex()
         .items_center()
         .gap(px(8.))
+        .min_w_0()
+        .max_w_full()
         .text_size(px(13.))
         .text_color(cx.theme().muted_foreground)
         .child(Spinner::new().small())
-        .child(label)
+        .child(div().min_w_0().whitespace_normal().child(label))
 }
 
 fn button(id: &'static str, label: impl Into<gpui::SharedString>) -> Button {
@@ -3147,12 +3169,5 @@ fn scope_guide(scope: Scope, instruction: &str, cx: &App) -> gpui::Div {
         .gap(px(24.))
         .child(artwork)
         .child(div().font_weight(FontWeight::MEDIUM).child(scope.label()))
-        .child(
-            div()
-                .text_center()
-                .text_size(px(14.))
-                .line_height(px(22.))
-                .text_color(cx.theme().muted_foreground)
-                .child(instruction.to_owned()),
-        )
+        .child(instruction_line(instruction.to_owned(), false, cx))
 }

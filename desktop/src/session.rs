@@ -463,7 +463,7 @@ impl Session {
             _ if !self.connection_present => "Reconnect using the same USB port.".into(),
             Some(Role::Left) if self.rmk_left => "Use the recovery procedure for your installed firmware, keeping the same USB port.".into(),
             Some(Role::Left) => "Leave USB connected and the switch in WIRED. Hold Fn + 5 for five seconds, then release.".into(),
-            Some(Role::Right) if self.factory_right => "Leave USB connected. Hold Fn + 0 for five seconds, then release.".into(),
+            Some(Role::Right) if self.factory_right => "Keep the paired factory left half connected by USB in WIRED and right USB connected. Hold Fn + 0 for five seconds, then release.".into(),
             Some(Role::Right) => "Leave USB connected. Hold Fn, tap the main-row 0 key, then release Fn.".into(),
             Some(Role::Receiver)=>"Keep the dongle connected. Companion will guide you into recovery.".into(),
         };

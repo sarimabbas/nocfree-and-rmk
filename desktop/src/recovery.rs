@@ -235,6 +235,9 @@ fn factory_observation(
         return Ok((Some(Procedure::Reconnect), false));
     }
     if !*disconnected {
+        // The uniquely identified right half can be isolated while its paired
+        // factory left stays powered over normal USB to provide modifier state.
+        // Shared left/dongle identities still require their existing isolation.
         if !snapshot.devices.iter().any(|d| {
             d.role() == Some(normal_role)
                 || role != Role::Right && d.factory_left()
@@ -379,6 +382,65 @@ mod tests {
                     .is_err()
             );
         }
+    }
+    #[test]
+    fn factory_right_can_recover_with_its_paired_left_powered_on_usb() {
+        let mut session = Session::new();
+        session.select_recovery_role(Role::Right);
+        let mut disconnected = false;
+        let mut left = factory_normal(Role::Left);
+        left.devices[0].location = 20;
+        let with_left = |mut snapshot: device::Snapshot| {
+            snapshot.devices.extend(left.devices.clone());
+            snapshot
+        };
+        assert_eq!(
+            factory_observation(
+                &mut session,
+                Role::Right,
+                &mut disconnected,
+                with_left(factory_normal(Role::Right))
+            )
+            .unwrap(),
+            (Some(Procedure::Reconnect), false)
+        );
+        assert!(!disconnected);
+        assert_eq!(
+            factory_observation(&mut session, Role::Right, &mut disconnected, left.clone())
+                .unwrap(),
+            (None, false)
+        );
+        assert!(disconnected);
+        assert_eq!(
+            factory_observation(
+                &mut session,
+                Role::Right,
+                &mut disconnected,
+                with_left(factory_normal(Role::Right))
+            )
+            .unwrap(),
+            (Some(Procedure::FactoryRight), false)
+        );
+        assert_eq!(
+            factory_observation(
+                &mut session,
+                Role::Right,
+                &mut disconnected,
+                with_left(factory_boot(10))
+            )
+            .unwrap(),
+            (None, true)
+        );
+        assert_eq!(session.factory_recovery_role(), Some(Role::Right));
+        assert!(
+            factory_observation(
+                &mut session,
+                Role::Right,
+                &mut disconnected,
+                with_left(factory_boot(11))
+            )
+            .is_err()
+        );
     }
     #[test]
     fn stock_dongle_recovery_requires_all_shared_usb_identities_to_disconnect() {
