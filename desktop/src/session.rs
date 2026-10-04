@@ -388,6 +388,18 @@ impl Session {
     /// Proven stock shared-descriptor origin, retained through its correlated
     /// normal-to-recovery transition. An unbound archive or runtime DFU endpoint
     /// cannot manufacture this factory provenance.
+    /// Retained stock provenance permits a read-only no-op for any factory version.
+    /// It does not attest role-specific firmware or grant a write.
+    pub(crate) fn factory_recovery_role(&self) -> Option<Role> {
+        if self.archive_only || self.recovery_binding().is_err() {
+            return None;
+        }
+        match self.role {
+            Some(Role::Right) if self.factory_right => Some(Role::Right),
+            Some(role @ (Role::Left | Role::Receiver)) if self.shared_factory_origin => Some(role),
+            _ => None,
+        }
+    }
     pub(crate) fn shared_factory_recovery(&self) -> bool {
         self.shared_factory_origin && !self.archive_only && self.recovery_binding().is_ok()
     }

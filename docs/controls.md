@@ -144,3 +144,19 @@ same recovery and transfer machines and the preserved factory originals.
 Software tests cover both targets, refusal guards, interruptions, role binding,
 and stale callbacks. A repeated live factory → RMK → factory roundtrip remains
 a separate hardware acceptance gate; software tests do not establish it.
+
+## Already-current firmware
+
+Install RMK and Restore factory stay visible in the sidebar. Their shared setup
+state checks the connected parts without starting recovery. When all three parts
+report the bundled RMK version, Install RMK shows **Already latest version**.
+When the complete connected set is factory firmware, Restore factory shows
+**Already on factory firmware**, independent of factory version. Neither status
+starts a transfer or offers Next.
+
+Missing or mixed parts continue through the guided checks. Exact current RMK
+readback skips copying that part; a correlated factory part is left unchanged by
+Restore factory regardless of its version. This factory no-op does not weaken
+role validation for any actual firmware write. Firmware release versions must be
+bumped together in the firmware and bundled release whenever shipped bytes change;
+same-version development builds are distinguished by exact readback, not SemVer.

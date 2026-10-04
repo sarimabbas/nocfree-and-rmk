@@ -18,9 +18,25 @@ pub enum Start {
     Firmware,
     Restore,
 }
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Readiness {
+    #[default]
+    Unknown,
+    Needed,
+    AlreadyLatest,
+    AlreadyFactory,
+}
+impl Readiness {
+    fn permits_start(self) -> bool {
+        matches!(self, Self::Unknown | Self::Needed)
+    }
+}
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Stage {
-    Setup(Option<Role>),
+    Setup {
+        selected: Option<Role>,
+        readiness: Readiness,
+    },
     Active,
 }
 enum Event {
@@ -28,11 +44,15 @@ enum Event {
     Select(Role),
     Next,
     Reset,
+    Observe(Readiness),
 }
 #[derive(Default)]
 struct Storage;
 fn select(page: &Page) -> Outcome<State> {
-    let stage = Stage::Setup(None);
+    let stage = Stage::Setup {
+        selected: None,
+        readiness: Readiness::Unknown,
+    };
     Transition(match page {
         Page::Home | Page::Backups => State::backups(stage),
         Page::Recovery => State::recovery(stage),
@@ -52,15 +72,36 @@ fn entry(
         Event::Navigate(next) if *next != page => select(next),
         Event::Select(role)
             if matches!(page, Page::Home | Page::Backups | Page::Recovery)
-                && matches!(stage, Stage::Setup(_)) =>
+                && matches!(stage, Stage::Setup { .. }) =>
         {
-            *stage = Stage::Setup(Some(*role));
+            if let Stage::Setup { selected, .. } = stage {
+                *selected = Some(*role);
+            }
             Handled
         }
-        Event::Next if matches!(stage, Stage::Setup(_)) => {
+        Event::Observe(latest) if matches!(page, Page::Firmware | Page::Restore) => {
+            if let Stage::Setup { readiness, .. } = stage {
+                *readiness = *latest;
+            }
+            Handled
+        }
+        Event::Next if matches!(stage, Stage::Setup { readiness, .. } if readiness.permits_start()) =>
+        {
             let start = match (page, *stage) {
-                (Page::Home | Page::Backups, Stage::Setup(Some(role))) => Some(Start::Backup(role)),
-                (Page::Recovery, Stage::Setup(Some(role))) => Some(Start::Recovery(role)),
+                (
+                    Page::Home | Page::Backups,
+                    Stage::Setup {
+                        selected: Some(role),
+                        ..
+                    },
+                ) => Some(Start::Backup(role)),
+                (
+                    Page::Recovery,
+                    Stage::Setup {
+                        selected: Some(role),
+                        ..
+                    },
+                ) => Some(Start::Recovery(role)),
                 (Page::Pairing, _) => Some(Start::Pairing),
                 (Page::Firmware, _) => Some(Start::Firmware),
                 (Page::Restore, _) => Some(Start::Restore),
@@ -75,7 +116,9 @@ fn entry(
         _ => Handled,
     }
 }
-#[state_machine(initial = "State::backups(Stage::Setup(None))")]
+#[state_machine(
+    initial = "State::backups(Stage::Setup { selected: None, readiness: Readiness::Unknown })"
+)]
 impl Storage {
     #[state]
     fn backups(stage: &mut Stage, event: &Event, context: &mut Option<Start>) -> Outcome<State> {
@@ -118,16 +161,27 @@ impl Navigation {
         self.snapshot().0
     }
     pub fn setup(&self) -> bool {
-        matches!(self.snapshot().1, Stage::Setup(_))
+        matches!(self.snapshot().1, Stage::Setup { .. })
     }
     pub fn selected(&self) -> Option<Role> {
         match self.snapshot().1 {
-            Stage::Setup(role) => role,
+            Stage::Setup { selected, .. } => selected,
             _ => None,
         }
     }
+    pub fn readiness(&self) -> Readiness {
+        match self.snapshot().1 {
+            Stage::Setup { readiness, .. } => readiness,
+            Stage::Active => Readiness::Unknown,
+        }
+    }
+    pub fn observe(&mut self, readiness: Readiness) {
+        self.0
+            .handle_with_context(&Event::Observe(readiness), &mut None);
+    }
     pub fn can_start(&self) -> bool {
         self.setup()
+            && self.readiness().permits_start()
             && (matches!(self.page(), Page::Pairing | Page::Firmware | Page::Restore)
                 || self.selected().is_some())
     }
@@ -179,6 +233,52 @@ mod tests {
             assert!(nav.setup());
             assert_eq!(nav.selected(), None);
         }
+    }
+    #[test]
+    fn current_targets_block_next_but_new_facts_can_enable_setup() {
+        for (page, already) in [
+            (Page::Firmware, Readiness::AlreadyLatest),
+            (Page::Restore, Readiness::AlreadyFactory),
+        ] {
+            let mut nav = Navigation::default();
+            nav.navigate(page);
+            assert_eq!(nav.readiness(), Readiness::Unknown);
+            assert!(nav.can_start());
+            nav.observe(already);
+            assert!(nav.setup());
+            assert_eq!(nav.readiness(), already);
+            assert!(!nav.can_start());
+            assert_eq!(nav.next(), None);
+            nav.observe(Readiness::Needed);
+            assert_eq!(nav.readiness(), Readiness::Needed);
+            assert!(nav.can_start());
+            assert!(nav.next().is_some());
+            nav.observe(already);
+            assert!(!nav.setup());
+            assert_eq!(nav.next(), None);
+        }
+    }
+    #[test]
+    fn observations_are_passive_scoped_and_do_not_cross_navigation() {
+        let mut nav = Navigation::default();
+        nav.observe(Readiness::AlreadyLatest);
+        assert_eq!(nav.readiness(), Readiness::Unknown);
+        nav.select(Role::Left);
+        assert_eq!(nav.next(), Some(Start::Backup(Role::Left)));
+        nav.observe(Readiness::Needed);
+        assert!(!nav.setup());
+        nav.navigate(Page::Firmware);
+        nav.observe(Readiness::AlreadyLatest);
+        nav.navigate(Page::Firmware);
+        assert_eq!(nav.readiness(), Readiness::AlreadyLatest);
+        nav.navigate(Page::Restore);
+        assert_eq!(nav.readiness(), Readiness::Unknown);
+        assert_eq!(nav.next(), Some(Start::Restore));
+        nav.observe(Readiness::AlreadyFactory);
+        assert!(!nav.setup());
+        nav.reset();
+        assert!(nav.setup());
+        assert_eq!(nav.readiness(), Readiness::Unknown);
     }
     #[test]
     fn selection_is_draft_and_does_not_leak_to_another_page() {

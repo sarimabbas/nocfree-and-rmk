@@ -61,6 +61,7 @@ pub struct Companion {
     bluetooth_connected: bool,
     factory_bluetooth_connected: bool,
     factory_release: Option<FactoryRelease>,
+    bundled_version: Option<String>,
     pairing: PairingJourney,
     pairing_observation: Option<dongle_pairing::Observation>,
     pairing_generation: u64,
@@ -81,6 +82,8 @@ pub struct Companion {
     device_generation: u64,
     battery_generation: u64,
     firmware_versions: Vec<crate::firmware_version::Observation>,
+    versions_seen: Option<Instant>,
+    version_refresh: bool,
     home: Home,
     firmware: Option<FirmwareJourney>,
     install: Option<InstallMachine>,
@@ -110,6 +113,19 @@ impl Companion {
         Theme::sync_system_appearance(None, cx);
         let session = Journey::backup();
         let poll = cx.spawn(async move |this, cx| {
+            let bundled = cx
+                .background_executor()
+                .spawn(async {
+                    FirmwareRelease::bundled()
+                        .ok()
+                        .map(|r| r.version().to_owned())
+                })
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                this.bundled_version = bundled;
+                this.observe_preflight();
+                cx.notify();
+            });
             let mut battery_checked = None;
             let mut version_checked: Option<Instant> = None;
             let mut bluetooth_checked: Option<Instant> = None;
@@ -194,6 +210,7 @@ impl Companion {
                                 }
                                 let next = Home::observe(observation, UpdateAssessment::Unknown);
                                 this.home = next;
+                                this.observe_preflight();
                                 this.advance_firmware(cx);
                                 this.observe_install();
                                 cx.notify();
@@ -274,7 +291,8 @@ impl Companion {
                         )
                 });
                 if matches!(version_idle, Ok(true))
-                    && version_checked.is_none_or(|t| t.elapsed() >= Duration::from_secs(30))
+                    && (matches!(this.update(cx, |this, _| this.version_refresh), Ok(true))
+                        || version_checked.is_none_or(|t| t.elapsed() >= Duration::from_secs(5)))
                     && let Ok((generation, key)) = this.update(cx, |this, _| {
                         (this.device_generation, this.device_key.clone())
                     })
@@ -298,6 +316,8 @@ impl Companion {
                                 RecoveryState::Identify(_) | RecoveryState::Guiding(_, _)
                             )
                         {
+                            this.versions_seen = Some(Instant::now());
+                            this.version_refresh = false;
                             this.firmware_versions = versions
                                 .into_iter()
                                 .filter(|v| {
@@ -305,6 +325,7 @@ impl Companion {
                                         .any(|(location, _, _, _)| *location == v.location)
                                 })
                                 .collect();
+                            this.observe_preflight();
                             cx.notify();
                         }
                     });
@@ -411,6 +432,7 @@ impl Companion {
             bluetooth_connected: false,
             factory_bluetooth_connected: false,
             factory_release: None,
+            bundled_version: None,
             pairing: PairingJourney::new(),
             pairing_observation: None,
             pairing_generation: 0,
@@ -431,6 +453,8 @@ impl Companion {
             device_generation: 0,
             battery_generation: 0,
             firmware_versions: Vec::new(),
+            versions_seen: None,
+            version_refresh: false,
             home: Home::default(),
             firmware: None,
             install: None,
@@ -495,6 +519,7 @@ impl Companion {
                     }
             })
         });
+        self.versions_seen = None;
         self.device_key = key;
         self.device_generation = self.device_generation.wrapping_add(1);
         true
@@ -642,10 +667,25 @@ impl Companion {
         }
         body
     }
+    fn observe_preflight(&mut self) {
+        let ready = crate::firmware_preflight::assess(
+            self.navigation.page(),
+            &self.device_key,
+            &self.firmware_versions,
+            self.bundled_version.as_deref().filter(|_| {
+                self.versions_seen
+                    .is_some_and(|t| t.elapsed() < Duration::from_secs(15))
+            }),
+            self.discovery_seen
+                .is_some_and(|t| t.elapsed() < Duration::from_secs(5)),
+        );
+        self.navigation.observe(ready);
+    }
     fn start_selected_journey(&mut self, cx: &mut Context<Self>) {
         if self.operation.busy() {
             return;
         }
+        self.observe_preflight();
         if self.navigation.page() == Page::Restore
             && (self.operation.error().is_some()
                 || !self
@@ -665,6 +705,17 @@ impl Companion {
         cx.notify();
     }
     fn setup_screen(&self, cx: &mut Context<Self>) -> JourneyScreen {
+        let already = match self.navigation.readiness() {
+            crate::navigation::Readiness::AlreadyLatest => Some("Already latest version"),
+            crate::navigation::Readiness::AlreadyFactory => Some("Already on factory firmware"),
+            _ => None,
+        };
+        if let Some(label) = already {
+            return JourneyScreen {
+                body: recovery_guide(None, label, "", None, cx),
+                actions: None,
+            };
+        }
         let body = match self.navigation.page() {
             Page::Restore => self.factory_sources_screen(cx),
             Page::Backups | Page::Home => {
@@ -2014,6 +2065,11 @@ impl Companion {
         }
         self.operation.clear_error();
         self.navigation.navigate(page);
+        if page == Page::Firmware {
+            self.version_refresh = true;
+            self.versions_seen = None;
+        }
+        self.observe_preflight();
         if page == Page::Restore {
             self.load_factory_sources(None, cx);
         }
@@ -2051,38 +2107,9 @@ impl Render for Companion {
                     cx.notify();
                 }));
         }
-        let mut tasks = SidebarGroup::new("Tasks");
-        let firmware_action = self.home.action().or_else(|| {
-            matches!(
-                self.home,
-                Home::Connect | Home::Recovery | Home::Rmk(UpdateAssessment::Unknown)
-            )
-            .then_some("Install RMK")
-        });
-        if let Some(label) = firmware_action {
-            tasks = tasks.child(
-                SidebarMenuItem::new(label)
-                    .when(!self.operation.busy(), |item| item.cursor_pointer())
-                    .mb(px(6.))
-                    .h(px(36.))
-                    .icon(IconName::Download)
-                    .active(self.navigation.page() == Page::Firmware)
-                    .disable(self.operation.busy())
-                    .on_click(cx.listener(|this, _, _, cx| this.navigate(Page::Firmware, cx))),
-            );
-        }
-        if self.home.can_restore() || self.navigation.page() == Page::Restore {
-            tasks = tasks.child(
-                SidebarMenuItem::new("Restore factory")
-                    .icon(IconName::Undo)
-                    .mb(px(6.))
-                    .h(px(36.))
-                    .when(!self.operation.busy(), |item| item.cursor_pointer())
-                    .disable(self.operation.busy())
-                    .active(self.navigation.page() == Page::Restore)
-                    .on_click(cx.listener(|this, _, _, cx| this.navigate(Page::Restore, cx))),
-            );
-        }
+        let tasks = SidebarGroup::new("Tasks")
+            .child(self.nav_row("Install RMK", Page::Firmware, IconName::Download, cx))
+            .child(self.nav_row("Restore factory", Page::Restore, IconName::Undo, cx));
         let navigation = Sidebar::new("navigation")
             .w(px(220.))
             .collapsible(false)
@@ -2093,12 +2120,7 @@ impl Render for Companion {
                     .font_weight(FontWeight::SEMIBOLD)
                     .child("NocFree RMK Companion"),
             )
-            .when(
-                firmware_action.is_some()
-                    || self.home.can_restore()
-                    || self.navigation.page() == Page::Restore,
-                |nav| nav.child(tasks),
-            )
+            .child(tasks)
             .child(
                 SidebarGroup::new("Additional utilities")
                     .child(self.nav_row(

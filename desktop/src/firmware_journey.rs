@@ -145,6 +145,7 @@ struct FirmwareData {
     baseline: Option<Baseline>,
     error: Option<String>,
     attempted: bool,
+    already_current: bool,
     install_authorized: bool,
     verified_locations: Vec<(Role, u64)>,
     // This is failure history, not a second mutable current state.
@@ -197,6 +198,7 @@ impl StatigState<FirmwareData> for Phase {
             FirmwareEvent::RecoverySaved(baseline, installed) if *self == Phase::Recovery => {
                 data.baseline = Some((*baseline).clone());
                 data.error = None;
+                data.already_current = *installed;
                 if *installed {
                     data.verified_locations
                         .push((data.role(), baseline.location));
@@ -292,6 +294,7 @@ impl StatigState<FirmwareData> for Phase {
                 data.index += 1;
                 data.baseline = None;
                 data.attempted = false;
+                data.already_current = false;
                 Transition(Phase::Recovery)
             };
         }
@@ -553,6 +556,16 @@ fn record_factory_supersession(
     }
     Ok(())
 }
+fn already_factory(role: Role, archive: &[u8], stock_origin: Option<Role>) -> Result<bool, String> {
+    device::inspect_archive(archive)?;
+    let actual = FactoryRelease::archive_role(archive);
+    if actual.is_some_and(|r| r != role) {
+        return Err("The recovery drive belongs to another part. Connect the selected part before continuing.".into());
+    }
+    // This is only a no-write decision. Observed stock provenance, retained
+    // through correlated recovery, does not make unknown bytes a restore source.
+    Ok(stock_origin == Some(role) || actual == Some(role))
+}
 // An app restart does not erase uncertainty. A pending journal for this part
 // must reconcile against its original backup and the same pinned target.
 fn reconcile_target(
@@ -638,6 +651,7 @@ impl FirmwareJourney {
                 baseline: None,
                 error: None,
                 attempted: false,
+                already_current: false,
                 install_authorized: false,
                 verified_locations: vec![],
                 retry_phase: None,
@@ -656,6 +670,7 @@ impl FirmwareJourney {
                 baseline: None,
                 error: None,
                 attempted: false,
+                already_current: false,
                 install_authorized: false,
                 verified_locations: vec![],
                 retry_phase: None,
@@ -732,7 +747,24 @@ impl FirmwareJourney {
             ),
         };
         View {
-            title: title.into(),
+            title: if self.machine.inner().already_current
+                && matches!(
+                    self.machine.state(),
+                    Phase::Disconnect
+                        | Phase::OffWait(_)
+                        | Phase::PowerOn
+                        | Phase::StartWait(_)
+                        | Phase::Reconnect
+                ) {
+                if self.is_factory() {
+                    "Already on factory firmware"
+                } else {
+                    "Already latest version"
+                }
+                .into()
+            } else {
+                title.into()
+            },
             instruction: instruction.into(),
             role: self.role(),
             step: self.machine.inner().index,
@@ -757,22 +789,27 @@ impl FirmwareJourney {
             return Err("Recovery belongs to a different component.".into());
         }
         let require_factory_role = session.shared_factory_recovery();
+        let stock_origin = session.factory_recovery_role();
         let folder = session.save_backup()?;
         let bytes = device::read_bounded(&folder.join("CURRENT.UF2"), ARCHIVE_LIMIT)?;
         device::inspect_archive(&bytes)?;
-        if require_factory_role && FactoryRelease::archive_role(&bytes) != Some(role) {
+        let stock_noop = self.is_factory() && already_factory(role, &bytes, stock_origin)?;
+        if !stock_noop && require_factory_role && FactoryRelease::archive_role(&bytes) != Some(role)
+        {
             return Err("This stock firmware is not recognized for the selected part. Currently supported sources are the known original firmware and official ANSI 2.4.5.".into());
         }
         if FactoryRelease::archive_role(&bytes).is_some_and(|actual| actual != role) {
             return Err("The recovery drive contains another part's factory firmware. Connect the selected part before continuing.".into());
         }
-        reconcile_target(
-            &folder,
-            role,
-            location,
-            &bytes,
-            &self.machine.inner().release.image(role)?,
-        )?;
+        if !stock_noop {
+            reconcile_target(
+                &folder,
+                role,
+                location,
+                &bytes,
+                &self.machine.inner().release.image(role)?,
+            )?;
+        }
         let baseline = Baseline {
             location,
             mount,
@@ -782,13 +819,14 @@ impl FirmwareJourney {
         if !self.is_factory() {
             FactoryRelease::discover()?.retain_original(role, &baseline.bytes)?;
         }
-        let installed = self
+        let exact_target = self
             .machine
             .inner()
             .release
             .image(role)?
             .exact(&baseline.bytes)?;
-        if installed && self.is_factory() {
+        let installed = stock_noop || exact_target;
+        if exact_target && self.is_factory() {
             record_factory_supersession(
                 &baseline.folder,
                 &baseline.folder,
@@ -1156,6 +1194,77 @@ mod tests {
         assert_eq!(journey.role(), Role::Right);
     }
     #[test]
+    fn unknown_stock_version_is_noop_only_with_correlated_stock_provenance() {
+        let mut session = Session::new();
+        session.select_recovery_role(Role::Right);
+        session.observe(Ok(Snapshot {
+            devices: vec![Device {
+                location: 10,
+                vendor: 0x239a,
+                product: 0x80d8,
+                name: "NocFree nRF52833 Right".into(),
+            }],
+            mounts: vec![],
+        }));
+        session.observe(Ok(Snapshot {
+            devices: vec![Device {
+                location: 10,
+                vendor: 0x239a,
+                product: 0x0029,
+                name: "NocFree &".into(),
+            }],
+            mounts: vec![BootMount {
+                path: PathBuf::new(),
+                info: "UF2 Bootloader 0.9.2-39-g0147d71\nModel: NocFree &\nBoard-ID: NocFree &"
+                    .into(),
+            }],
+        }));
+        assert_eq!(session.factory_recovery_role(), Some(Role::Right));
+        let unknown = device::tests::archive();
+        assert!(FactoryRelease::archive_role(&unknown).is_none());
+        assert!(already_factory(Role::Right, &unknown, session.factory_recovery_role()).unwrap());
+        assert!(
+            !already_factory(
+                Role::Right,
+                &unknown,
+                Session::new().factory_recovery_role()
+            )
+            .unwrap()
+        );
+        assert!(!already_factory(Role::Right, &unknown, Some(Role::Left)).unwrap());
+    }
+    #[test]
+    fn latest_rmk_noop_has_explicit_title_and_resets_for_next_part() {
+        let mut journey = model(Role::Right);
+        unsafe {
+            *journey.machine.state_mut() = Phase::Recovery;
+        }
+        let release = crate::release::fixture();
+        let baseline = Baseline {
+            location: 10,
+            mount: BootMount {
+                path: PathBuf::new(),
+                info: String::new(),
+            },
+            folder: PathBuf::new(),
+            bytes: archive_with(release.image(Role::Right)),
+        };
+        assert!(
+            TargetImage::Rmk(Box::new(release.image(Role::Right).clone()))
+                .exact(&baseline.bytes)
+                .unwrap()
+        );
+        journey
+            .machine
+            .handle(&FirmwareEvent::RecoverySaved(&baseline, true));
+        assert_eq!(journey.view().title, "Already latest version");
+        assert!(!journey.view().can_transfer);
+        journey.observe(Ok(normal(Role::Right, 10)));
+        assert_eq!(journey.role(), Role::Left);
+        assert!(!journey.machine.inner().already_current);
+        assert_eq!(journey.view().title, "Connect your keyboard");
+    }
+    #[test]
     fn automatic_transfer_requires_overall_approval_and_a_ready_phase() {
         let mut journey = FirmwareJourney::new(crate::release::fixture());
         assert!(!journey.transfer_if_ready().unwrap());
@@ -1252,6 +1361,12 @@ mod tests {
             fs::write(&marker, serde_json::to_vec(&wrong).unwrap()).unwrap();
             assert!(reconcile_target(&next, role, 10, &archive, &rmk).is_err());
             fs::write(marker, saved).unwrap();
+            assert!(already_factory(role, &archive, None).unwrap());
+            for other in [Role::Left, Role::Right, Role::Receiver] {
+                if other != role {
+                    assert!(already_factory(other, &archive, Some(other)).is_err());
+                }
+            }
             assert!(image.exact(&archive).unwrap());
             assert_eq!(image.verify(&archive, &archive).unwrap(), 0);
             for address in [0x1000, 0x27000, 0x65000] {
@@ -1265,6 +1380,64 @@ mod tests {
                 assert!(image.verify(&wrong, &archive).is_err());
             }
         }
+        fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    #[ignore = "requires private original and official ANSI 2.4.5 fixtures; offline only"]
+    fn factory_version_difference_is_noop_without_selected_target_verification() {
+        let root = std::env::temp_dir().join(format!(
+            "factory-version-noop-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let evidence = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .join(".evidence");
+        let original = evidence.join("factory-left/CURRENT.UF2");
+        let mut release = FactoryRelease::at(root.clone()).unwrap();
+        release.import(Role::Left, &original).unwrap();
+        release
+            .import(
+                Role::Left,
+                &evidence.join("factory-version-skip/left-official.uf2"),
+            )
+            .unwrap();
+        let archive = fs::read(original).unwrap();
+        let target = TargetImage::Factory(release.image(Role::Left).unwrap().clone());
+        assert!(!target.exact(&archive).unwrap());
+        assert!(already_factory(Role::Left, &archive, Some(Role::Left)).unwrap());
+        let mut journey = FirmwareJourney {
+            machine: FirmwareData {
+                release: TargetRelease::Factory(release),
+                index: 0,
+                baseline: None,
+                error: None,
+                attempted: false,
+                already_current: false,
+                install_authorized: true,
+                verified_locations: vec![],
+                retry_phase: None,
+            }
+            .state_machine(),
+        };
+        let baseline = Baseline {
+            location: 10,
+            mount: BootMount {
+                path: PathBuf::new(),
+                info: String::new(),
+            },
+            folder: root.clone(),
+            bytes: archive,
+        };
+        journey
+            .machine
+            .handle(&FirmwareEvent::RecoverySaved(&baseline, true));
+        assert_eq!(journey.view().title, "Already on factory firmware");
+        assert!(!journey.view().can_transfer);
+        assert!(!root.join("factory-verified.json").exists());
         fs::remove_dir_all(root).unwrap();
     }
     #[test]
