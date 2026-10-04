@@ -83,6 +83,23 @@ pub fn read() -> Vec<Observation> {
     })
 }
 
+pub(crate) fn connected_label(
+    devices: &crate::device_status::UsbKey,
+    observations: &[Observation],
+) -> String {
+    if crate::device_status::factory_left(devices) {
+        label(true, observations)
+    } else if !crate::device_status::battery_source(devices).is_empty() {
+        label(false, observations)
+    } else if devices.iter().any(|(_, vendor, product, name)| {
+        crate::device::factory_dongle_identity(*vendor, *product, name)
+    }) {
+        label(true, observations)
+    } else {
+        "Firmware not detected".into()
+    }
+}
+
 pub fn label(factory: bool, observations: &[Observation]) -> String {
     let kind = if factory { "factory" } else { "RMK" };
     let version = [Role::Left, Role::Receiver, Role::Right]
@@ -101,6 +118,17 @@ pub fn label(factory: bool, observations: &[Observation]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn factory_dongle_only_reports_firmware_family_without_inventing_a_version() {
+        let devices = vec![(1, 0x2886, 0x8029, "NocFree_Dongle".into())];
+        assert_eq!(
+            connected_label(&devices, &[]),
+            "Running factory firmware · version unknown"
+        );
+        assert_eq!(connected_label(&vec![], &[]), "Firmware not detected");
+        let unknown = vec![(1, 0x2886, 0x8029, "Other dongle".into())];
+        assert_eq!(connected_label(&unknown, &[]), "Firmware not detected");
+    }
     #[test]
     fn only_project_semver_stamp_is_a_version() {
         assert_eq!(stamp(Some("NocFree RMK;fw=1.2.3")), Some("1.2.3".into()));

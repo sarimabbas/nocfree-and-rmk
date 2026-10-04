@@ -3043,13 +3043,8 @@ impl Render for Companion {
                         .child(actions),
                 )
             });
-        let firmware = if crate::device_status::factory_left(&self.device_key) {
-            crate::firmware_version::label(true, &self.firmware_versions)
-        } else if !crate::device_status::battery_source(&self.device_key).is_empty() {
-            crate::firmware_version::label(false, &self.firmware_versions)
-        } else {
-            "Firmware not detected".to_owned()
-        };
+        let firmware =
+            crate::firmware_version::connected_label(&self.device_key, &self.firmware_versions);
         let observed = self.observed_status();
         let status = crate::status_strip::render(
             firmware,
