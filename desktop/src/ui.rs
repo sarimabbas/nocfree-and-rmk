@@ -587,12 +587,6 @@ impl Companion {
                 .gap(px(24.))
                 .child(
                     div()
-                        .text_size(px(23.))
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .child("Start Recovery Mode"),
-                )
-                .child(
-                    div()
                         .text_size(px(14.))
                         .line_height(px(22.))
                         .text_color(cx.theme().muted_foreground)
@@ -1129,7 +1123,17 @@ impl Render for Companion {
             .flex_col()
             .w_full()
             .max_w(px(620.))
-            .gap(px(24.));
+            .gap(px(24.))
+            .child(
+                div()
+                    .text_size(px(23.))
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .child(match self.page {
+                        Page::Backups | Page::Home => "Backup firmware",
+                        Page::Recovery => "Start Recovery Mode",
+                        Page::Firmware => "RMK firmware",
+                    }),
+            );
         match self.page {
             Page::Backups => {
                 if let Some(journey) = &self.session {
@@ -1166,12 +1170,6 @@ impl Render for Companion {
             Page::Backups if self.backup_recovery => canvas.child(self.recovery_screen(cx)),
             Page::Backups if self.started || self.completed => canvas.child(self.backup_screen(cx)),
             Page::Backups | Page::Home => canvas
-                .child(
-                    div()
-                        .text_size(px(23.))
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .child("Backup firmware"),
-                )
                 .child(
                     div()
                         .text_size(px(14.))
@@ -1304,7 +1302,7 @@ fn role_index(role: RecoveryRole) -> usize {
 // the backup journey. Callers supply instructions from their verified model.
 fn recovery_guide(
     role: Option<RecoveryRole>,
-    title: impl Into<gpui::SharedString>,
+    _title: impl Into<gpui::SharedString>,
     instruction: impl Into<gpui::SharedString>,
     controls: Option<gpui::AnyElement>,
     cx: &App,
@@ -1345,12 +1343,6 @@ fn recovery_guide(
         .flex_col()
         .gap(px(24.))
         .child(picture)
-        .child(
-            div()
-                .text_size(px(23.))
-                .font_weight(FontWeight::SEMIBOLD)
-                .child(title.into()),
-        )
         .child(
             div()
                 .text_size(px(15.))

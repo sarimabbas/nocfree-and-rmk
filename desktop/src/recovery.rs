@@ -158,13 +158,17 @@ fn factory_observation(
     if let Some(error) = view.error {
         return Err(error);
     }
-    let procedure = match session.factory_role() {
-        Some(device::Role::Left) if role == Role::Receiver => Some(Procedure::FactoryReceiver),
-        Some(device::Role::Left) => Some(Procedure::FactoryLeft),
-        Some(device::Role::Right) => Some(Procedure::FactoryRight),
-        None if session.identified_normal() => Some(Procedure::Manual),
-        _ => None,
-    };
+    let procedure =
+        match session.factory_role() {
+            Some(device::Role::Left) if role == Role::Receiver => Some(Procedure::FactoryReceiver),
+            Some(device::Role::Left) => Some(Procedure::FactoryLeft),
+            Some(device::Role::Right) => Some(Procedure::FactoryRight),
+            None if session.identified_normal() => return Err(
+                "The RMK recovery interface wasn’t found. Check the USB connection and try again."
+                    .into(),
+            ),
+            _ => None,
+        };
     Ok((procedure, view.can_save))
 }
 

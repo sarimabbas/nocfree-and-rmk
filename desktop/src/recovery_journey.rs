@@ -17,7 +17,6 @@ pub enum Procedure {
     FactoryLeft,
     FactoryRight,
     FactoryReceiver,
-    Manual,
     RuntimeApp,
 }
 
@@ -43,9 +42,6 @@ impl Procedure {
             }
             Self::FactoryReceiver => {
                 "Factory firmware: keep only the dongle connected by USB. Using its paired factory left half in 2.4G mode, hold Fn + 6 for five seconds. This requires the factory Fn-layer 6 key mapped to DongleDFU."
-            }
-            Self::Manual => {
-                "This older RMK firmware does not expose automatic recovery. Its exact recovery procedure must be identified before continuing."
             }
             Self::RuntimeApp => {
                 "RMK firmware: keep USB connected. We’re opening its recovery drive automatically."
