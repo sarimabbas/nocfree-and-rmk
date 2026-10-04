@@ -144,6 +144,7 @@ fn segment(
         ));
     }
     Button::new(id)
+        .cursor_pointer()
         .ghost()
         .small()
         .compact()

@@ -502,6 +502,9 @@ impl Companion {
         };
         let next = button("start-journey", "Next")
             .disabled(!self.navigation.can_start())
+            .when(!self.navigation.can_start(), |button| {
+                button.cursor_default()
+            })
             .on_click(cx.listener(|this, _, _, cx| this.start_selected_journey(cx)));
         JourneyScreen {
             body,
@@ -629,6 +632,7 @@ impl Companion {
             .when(cancellable, |row| {
                 row.child(
                     Button::new("cancel-journey")
+                        .cursor_pointer()
                         .label("Cancel")
                         .secondary()
                         .h(px(40.))
@@ -736,6 +740,7 @@ impl Companion {
             RecoveryRole::Right => "choose-right",
             RecoveryRole::Receiver => "choose-dongle",
         })
+        .cursor_pointer()
         .secondary()
         .outline()
         .when(self.navigation.selected() == Some(role), |card| {
@@ -1199,6 +1204,7 @@ impl Companion {
                         Some(
                             button("check-firmware-again", "Next")
                                 .disabled(self.operation.busy())
+                                .when(self.operation.busy(), |button| button.cursor_default())
                                 .on_click(cx.listener(|this, _, _, cx| {
                                     this.operation.clear_error();
                                     if this.firmware.is_none() {
@@ -1459,6 +1465,7 @@ impl Companion {
         cx: &mut Context<Self>,
     ) -> SidebarMenuItem {
         SidebarMenuItem::new(label)
+            .when(!self.operation.busy(), |item| item.cursor_pointer())
             .mb(px(6.))
             .h(px(36.))
             .icon(icon)
@@ -1486,6 +1493,7 @@ impl Render for Companion {
         if let Some(label) = firmware_action {
             tasks = tasks.child(
                 SidebarMenuItem::new(label)
+                    .when(!self.operation.busy(), |item| item.cursor_pointer())
                     .mb(px(6.))
                     .h(px(36.))
                     .icon(IconName::Download)
@@ -1798,6 +1806,7 @@ fn waiting_indicator(label: &'static str, cx: &App) -> gpui::Div {
 
 fn button(id: &'static str, label: impl Into<gpui::SharedString>) -> Button {
     Button::new(id)
+        .cursor_pointer()
         .label(label)
         .primary()
         .h(px(40.))
