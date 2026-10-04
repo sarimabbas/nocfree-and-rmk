@@ -2978,6 +2978,8 @@ fn instruction_line(
         .justify_center()
         .gap(px(8.))
         .w_full()
+        .max_w(px(680.))
+        .min_w(px(0.))
         .when(satisfied, |row| {
             row.child(
                 Icon::new(IconName::Check)
@@ -2987,6 +2989,9 @@ fn instruction_line(
         })
         .child(
             div()
+                .flex_1()
+                .min_w(px(0.))
+                .whitespace_normal()
                 .text_center()
                 .text_size(px(15.))
                 .line_height(px(23.))

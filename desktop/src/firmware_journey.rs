@@ -787,7 +787,7 @@ impl FirmwareJourney {
             ),
             Phase::Disconnect if self.role() == Role::Left => (
                 "Start the left half",
-                "Move left to middle WIRED. If its recovery drive is still open, unplug USB. Otherwise keep USB connected; we’ll confirm normal startup automatically.",
+                "Move left to middle WIRED. If the recovery drive is open, unplug USB; otherwise keep it connected.",
             ),
             Phase::Disconnect => (
                 "Start the dongle",
