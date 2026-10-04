@@ -783,7 +783,7 @@ impl FirmwareJourney {
             ),
             Phase::Disconnect if self.role() == Role::Right => (
                 "Start the right half",
-                "If its recovery drive is still open, turn right OFF and unplug USB. Otherwise keep it ON; we’ll confirm normal startup automatically.",
+                "If its recovery drive is still open, turn the right switch OFF, then unplug USB. Leave it OFF until prompted to turn it ON. Otherwise keep it ON; we’ll confirm normal startup automatically.",
             ),
             Phase::Disconnect if self.role() == Role::Left => (
                 "Start the left half",
@@ -792,6 +792,10 @@ impl FirmwareJourney {
             Phase::Disconnect => (
                 "Start the dongle",
                 "If its recovery drive is still open, unplug the dongle for five seconds. Otherwise keep it connected; we’ll confirm normal startup automatically.",
+            ),
+            Phase::OffWait(_) if self.role() == Role::Right => (
+                "Keep the right half OFF",
+                "Keep the right switch OFF and USB unplugged for five seconds. We’ll prompt you to turn it ON next.",
             ),
             Phase::OffWait(_) => ("Keep it unplugged", "Keep USB unplugged for five seconds."),
             Phase::PowerOn => (

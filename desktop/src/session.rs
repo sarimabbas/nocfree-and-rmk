@@ -351,9 +351,9 @@ impl Session {
             ReturnPhase::Disconnect if self.role == Some(Role::Right) => (
                 "Turn the right half OFF".into(),
                 if self.status.starts_with("It stayed in recovery") {
-                    "It stayed in recovery. Then unplug its USB cable.".into()
+                    "The right half stayed in recovery. Turn its switch OFF, then unplug its USB cable. Leave it OFF until prompted to turn it ON.".into()
                 } else {
-                    "Then unplug its USB cable.".into()
+                    "Turn the right half’s switch OFF, then unplug its USB cable. Leave it OFF until prompted to turn it ON.".into()
                 },
             ),
             ReturnPhase::Disconnect if self.rmk_left => (
@@ -367,6 +367,10 @@ impl Session {
                 } else {
                     "Leave its switch in WIRED.".into()
                 },
+            ),
+            ReturnPhase::OffWait { since } if self.role == Some(Role::Right) => (
+                "Keep the right half OFF".into(),
+                format!("Keep the right switch OFF and USB unplugged for {} more seconds. We’ll prompt you to turn it ON next.", remaining(since, 5)),
             ),
             ReturnPhase::OffWait { since } => (
                 "Keep it unplugged".into(),
