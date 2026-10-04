@@ -1,4 +1,4 @@
-# NocFree Companion
+# NocFree RMK Companion
 
 <!-- impeccable:product-schema 1 -->
 

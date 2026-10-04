@@ -1111,7 +1111,7 @@ impl Render for Companion {
                     .px(px(12.))
                     .py(px(16.))
                     .font_weight(FontWeight::SEMIBOLD)
-                    .child("Nocfree RMK Companion"),
+                    .child("NocFree RMK Companion"),
             )
             .child(tasks)
             .child(

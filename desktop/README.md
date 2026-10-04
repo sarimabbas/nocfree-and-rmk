@@ -1,6 +1,6 @@
-# NocFree Companion
+# NocFree RMK Companion
 
-A native macOS application using [GPUI Kit](https://gpui-kit.com/) 0.7.0. The window and sidebar use Nocfree RMK Companion branding. Backup firmware is the initial workspace; the sidebar logo has no navigation action. The sidebar follows the owner’s flow sketches: contextual firmware tasks, Backup firmware and Recovery mode, with keyboard observations and firmware in a persistent status bar. Per-part icons use GPUI Kit tooltips and separators; percentages show producer-reported integers. Bluetooth connection state comes only from macOS connected-device observations. Version remains unknown until established by firmware evidence. The same workspace presents each physical step through GPUI Kit Stepper and Spinner components. Component selection uses illustrated cards. System appearance chooses the light or dark theme automatically. Start Recovery Mode is a first-class utility; development trial flows stay out of navigation.
+A native macOS application using [GPUI Kit](https://gpui-kit.com/) 0.7.0. The window and sidebar use NocFree RMK Companion branding. Backup firmware is the initial workspace; the sidebar logo has no navigation action. The sidebar follows the owner’s flow sketches: contextual firmware tasks, Backup firmware and Recovery mode, with keyboard observations and firmware in a persistent status bar. Per-part icons use GPUI Kit tooltips and separators; percentages show producer-reported integers. Bluetooth connection state comes only from macOS connected-device observations. Version remains unknown until established by firmware evidence. The same workspace presents each physical step through GPUI Kit Stepper and Spinner components. Component selection uses illustrated cards. System appearance chooses the light or dark theme automatically. Start Recovery Mode is a first-class utility; development trial flows stay out of navigation.
 
 ## What works
 
@@ -25,7 +25,7 @@ The bundled halves use provisional 150/100 voltage scaling and reported 100% in 
 
 ```sh
 ./desktop/build-macos.sh
-open 'dist/NocFree Companion.app'
+open 'dist/NocFree RMK Companion.app'
 ```
 
 ```sh

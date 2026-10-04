@@ -3,20 +3,25 @@ set -eu
 
 case "${1:-}" in
   -h|--help)
-    echo 'Build the local Nocfree RMK Companion macOS app.'
+    echo 'Build the local NocFree RMK Companion macOS app.'
     echo 'Usage: desktop/build-macos.sh [--help | --version]'
-    echo 'Requires Rust, macOS and Apple command-line tools. Creates dist/NocFree Companion.app.'
+    echo 'Requires Rust, macOS and Apple command-line tools. Creates dist/NocFree RMK Companion.app.'
     exit 0 ;;
-  -v|--version) echo 'Nocfree RMK Companion 0.1.0'; exit 0 ;;
+  -v|--version) echo 'NocFree RMK Companion 0.1.0'; exit 0 ;;
   '') ;;
   *) echo 'Unknown option. Use --help.' >&2; exit 2 ;;
 esac
 [ "$#" -le 1 ] || { echo 'Unexpected arguments. Use --help.' >&2; exit 2; }
 [ "$(uname -s)" = Darwin ] || { echo 'This prototype supports macOS only.' >&2; exit 1; }
 cd "$(dirname "$0")"
-echo 'Building Nocfree RMK Companion…'
+echo 'Building NocFree RMK Companion…'
 cargo build --locked
-bundle='../dist/NocFree Companion.app'
+bundle='../dist/NocFree RMK Companion.app'
+# Preserve the existing generated bundle when adopting its visible product name.
+legacy_bundle='../dist/NocFree Companion.app'
+if [ ! -d "$bundle" ] && [ -d "$legacy_bundle" ]; then
+    mv "$legacy_bundle" "$bundle"
+fi
 mkdir -p "$bundle/Contents/MacOS" "$bundle/Contents/Resources"
 icon_work=$(mktemp -d "${TMPDIR:-/tmp}/nocfree-icon.XXXXXX")
 trap 'rm -rf "$icon_work"' EXIT HUP INT TERM
@@ -41,8 +46,8 @@ cat > "$bundle/Contents/Info.plist" <<'PLIST'
 <plist version="1.0"><dict>
 <key>CFBundleExecutable</key><string>nocfree-companion</string>
 <key>CFBundleIdentifier</key><string>io.github.sarimabbas.nocfree-companion</string>
-<key>CFBundleName</key><string>Nocfree RMK Companion</string>
-<key>CFBundleDisplayName</key><string>Nocfree RMK Companion</string>
+<key>CFBundleName</key><string>NocFree RMK Companion</string>
+<key>CFBundleDisplayName</key><string>NocFree RMK Companion</string>
 <key>CFBundleIconFile</key><string>Companion.icns</string>
 <key>CFBundlePackageType</key><string>APPL</string>
 <key>CFBundleShortVersionString</key><string>0.1.0</string>
@@ -55,4 +60,4 @@ PLIST
 # Refresh this bundle only so Launch Services sees the new name and Dock icon.
 /usr/bin/touch "$bundle"
 /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$bundle"
-echo 'Ready: dist/NocFree Companion.app (local development signature)'
+echo 'Ready: dist/NocFree RMK Companion.app (local development signature)'

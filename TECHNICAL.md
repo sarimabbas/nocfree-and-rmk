@@ -4,7 +4,7 @@ For developers customizing this community firmware. Hardware observations below 
 
 ## Start here
 
-Use **NocFree Companion → Recovery mode**, choose the part, and connect that part by a USB data cable. The running RMK firmware exposes a local USB DFU **runtime DETACH** interface. Companion requests the original factory bootloader, which presents the **NocFree &** drive. This flow has been exercised on the left, right and receiver, with exact application readbacks.
+Use **NocFree RMK Companion → Recovery mode**, choose the part, and connect that part by a USB data cable. The running RMK firmware exposes a local USB DFU **runtime DETACH** interface. Companion requests the original factory bootloader, which presents the **NocFree &** drive. This flow has been exercised on the left, right and receiver, with exact application readbacks.
 
 Save `CURRENT.UF2` and `INFO_UF2.TXT` from each part separately before changing it. Keep the part identity with its backup. A readback archive is not automatically a complete restore package: it does not include every protected region, and restoring application bytes does not guarantee compatible settings or bonds. Do not interchange left, right and receiver images.
 

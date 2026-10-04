@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" role="img" aria-labelledby="title desc">
-  <title id="title">NocFree Companion</title>
+  <title id="title">NocFree RMK Companion</title>
   <desc id="desc">An original flowing white ampersand on a rounded blue square.</desc>
   <rect x="80" y="80" width="864" height="864" rx="190" fill="#1376ed"/>
   <path d="M640 331 C640 272 600 238 547 238 C492 238 454 278 454 328 C454 383 495 425 549 488 L739 731 M624 375 C582 424 516 452 440 508 C380 553 342 598 342 652 C342 723 407 770 486 770 C600 770 666 674 712 544" transform="translate(-22 -15)" fill="none" stroke="#ffffff" stroke-width="70" stroke-linecap="round" stroke-linejoin="round"/>
