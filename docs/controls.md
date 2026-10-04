@@ -55,6 +55,15 @@ RIGHT has its own USB power. The 30-minute first-key wake test is still pending.
 Backlights follow sleep and restore the saved brightness on wake. Battery
 endurance and instrumented wake latency have not been measured.
 
+## Status indicator trial
+
+LEFT indicates the keyboard's host mode: Bluetooth advertising blinks blue,
+connected Bluetooth is steady blue, and connected Dongle mode on battery mixes
+blue and red. USB power releases the shared red channel for the charger, so the
+observed color can differ while charging. Wired mode turns off the blue output.
+RIGHT's indicator remains unchanged; it connects to LEFT rather than selecting
+a host mode. Physical color and sleep behavior are still under acceptance.
+
 ## Factory firmware
 
 Factory Bluetooth uses tap Fn+1/2/3 to select and long-hold to pair. Factory

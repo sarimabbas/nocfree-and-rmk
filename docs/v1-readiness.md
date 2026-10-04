@@ -21,8 +21,9 @@ and must not be used as current startup instructions.
 
 1. Complete battery sleep/wake checks separately for first input from right and
    first input from left; check release, reconnection, and USB-power override.
-2. Verify the blue status LED candidate. Green and a right blue channel are not
-   established by the published hardware mapping.
+2. Verify the LEFT status LED colors and charging coexistence. Mode indication
+   belongs to LEFT, which selects the host transport; RIGHT's indicator remains
+   unchanged because it only follows the split link. No green channel is assumed.
 3. Finalize three Bluetooth profiles and the shortcut guide together. Current
    framework User action IDs depend on profile count; changing only the count
    would change maintenance shortcuts. Remove unused legacy maintenance bindings
