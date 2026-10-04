@@ -40,3 +40,6 @@ pub mod factory_release;
 mod firmware_preflight;
 
 mod factory_source;
+
+mod peripheral_journey;
+pub mod scope;

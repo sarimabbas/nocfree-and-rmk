@@ -1,6 +1,6 @@
 //! Install coordinates child completion and three observable typing checks.
 //! Firmware and pairing retain their own machines; this parent performs no IO.
-use crate::{device_status::Mode, status_strip::Connection};
+use crate::{device_status::Mode, scope::Scope, status_strip::Connection};
 use statig::prelude::*;
 use std::{
     sync::atomic::{AtomicU64, Ordering},
@@ -148,11 +148,11 @@ impl Mode {
 
 mod machine {
     use super::*;
-    #[derive(Default)]
     pub struct Install {
         pub generation: u64,
         pub phase: u64,
         pub target: Target,
+        pub scope: Scope,
     }
     pub enum Event {
         Installed(Ticket, Result<(), String>),
@@ -180,6 +180,9 @@ mod machine {
                     match result {
                         Ok(()) => {
                             self.advance();
+                            if matches!(self.scope, Scope::Part(_)) {
+                                return Transition(State::complete());
+                            }
                             match self.target {
                                 Target::Rmk => Transition(State::pairing()),
                                 Target::Factory => Transition(State::checking(
@@ -330,15 +333,16 @@ impl Default for Machine {
 }
 impl Machine {
     pub fn new() -> Self {
-        Self::for_target(Target::Rmk)
+        Self::scoped(Target::Rmk, Scope::Whole)
     }
+    #[cfg(test)]
     pub fn factory() -> Self {
-        Self::for_target(Target::Factory)
+        Self::scoped(Target::Factory, Scope::Whole)
     }
     pub fn target(&self) -> Target {
         self.machine.inner().target
     }
-    fn for_target(target: Target) -> Self {
+    pub fn scoped(target: Target, scope: Scope) -> Self {
         Self {
             machine: machine::Install {
                 generation: GENERATION
@@ -348,6 +352,7 @@ impl Machine {
                     .expect("Install generation exhausted"),
                 phase: 0,
                 target,
+                scope,
             }
             .state_machine(),
         }
@@ -454,6 +459,27 @@ mod tests {
             result.route = Connection::Unknown;
         }
         result
+    }
+    #[test]
+    fn part_install_completes_without_pairing_or_whole_keyboard_checks() {
+        for target in [Target::Rmk, Target::Factory] {
+            for role in Scope::Whole.roles() {
+                let mut machine = Machine::scoped(target, Scope::Part(role));
+                let ticket = machine.ticket();
+                assert_eq!(machine.stage(), Stage::Installing);
+                assert!(!machine.paired(ticket, Ok(())));
+                assert!(machine.installed(ticket, Ok(())));
+                assert_eq!(machine.stage(), Stage::Complete);
+                assert!(!machine.paired(machine.ticket(), Ok(())));
+                assert!(!machine.observe(machine.ticket(), evidence(Mode::Wired)));
+                assert!(!machine.input(machine.ticket(), TOKEN.into()));
+                assert!(!machine.next(machine.ticket()));
+                assert!(!machine.installed(ticket, Ok(())));
+                let mut failed = Machine::scoped(target, Scope::Part(role));
+                assert!(failed.installed(failed.ticket(), Err("verification failed".into())));
+                assert!(matches!(failed.stage(), Stage::Failed(_)));
+            }
+        }
     }
     #[test]
     fn factory_skips_rmk_pairing_and_requires_setup_ack_then_typing_for_every_mode() {

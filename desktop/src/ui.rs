@@ -47,6 +47,7 @@ use gpui_kit::component::{
 use crate::factory_release::FactoryRelease;
 use crate::install_journey::{self, Machine as InstallMachine, Stage as InstallStage};
 use crate::navigation::{Navigation, Page, Start};
+use crate::scope::Scope;
 use gpui_kit::component::input::{Input, InputEvent, InputState};
 
 struct JourneyScreen {
@@ -56,6 +57,7 @@ struct JourneyScreen {
 
 pub struct Companion {
     navigation: Navigation,
+    peripherals: Option<crate::peripheral_journey::Machine>,
     appearance_subscription: Option<gpui::Subscription>,
     dongle_connected: bool,
     bluetooth_connected: bool,
@@ -161,6 +163,12 @@ impl Companion {
                 }
                 let idle = this.update(cx, |this, _| !this.backup_state.active());
                 if matches!(idle, Ok(true)) {
+                    let peripheral_ticket = this
+                        .update(cx, |this, _| {
+                            this.peripherals.as_ref().map(|batch| batch.ticket())
+                        })
+                        .ok()
+                        .flatten();
                     let (observation, recovery_locations) = cx
                         .background_executor()
                         .spawn(async {
@@ -209,10 +217,12 @@ impl Companion {
                                 {
                                     journey.observe(observation.clone());
                                 }
+                                this.advance_recovery_batch(&observation, peripheral_ticket, cx);
                                 let next = Home::observe(observation, UpdateAssessment::Unknown);
                                 this.home = next;
                                 this.observe_preflight();
                                 this.advance_firmware(cx);
+                                this.advance(cx);
                                 this.observe_install();
                                 cx.notify();
                             }
@@ -428,6 +438,7 @@ impl Companion {
         });
         Self {
             navigation: Navigation::default(),
+            peripherals: None,
             appearance_subscription: None,
             dongle_connected: false,
             bluetooth_connected: false,
@@ -650,6 +661,13 @@ impl Companion {
             (RecoveryRole::Right, "Right half", "factory-right"),
             (RecoveryRole::Receiver, "USB dongle", "factory-dongle"),
         ] {
+            if !self
+                .navigation
+                .scope()
+                .is_some_and(|scope| scope.roles().contains(&role))
+            {
+                continue;
+            }
             let ready = if supplied {
                 self.factory_source.file(role).is_some()
             } else {
@@ -712,7 +730,7 @@ impl Companion {
                     ),
             );
         }
-        let mut body = div().flex().flex_col().gap(px(24.)).child(choices).child(div().text_center().text_color(cx.theme().muted_foreground).child(if supplied { "Choose one factory UF2 for each part. Your saved factory backup supplies anything else needed." } else { "Restore your saved factory firmware. Your current RMK firmware will be backed up first." })).child(cards);
+        let mut body = div().flex().flex_col().gap(px(24.)).child(div().text_center().font_weight(FontWeight::MEDIUM).child(self.navigation.scope().map_or("", Scope::label))).child(choices).child(div().text_center().text_color(cx.theme().muted_foreground).child(if supplied { "Choose one factory UF2 for each part. Your saved factory backup supplies anything else needed." } else { "Restore your saved factory firmware. Your current RMK firmware will be backed up first." })).child(cards);
         if self.operation.busy() {
             body = body.child(waiting_indicator("Checking factory backups…", cx));
         }
@@ -727,7 +745,7 @@ impl Companion {
         body
     }
     fn observe_preflight(&mut self) {
-        let ready = crate::firmware_preflight::assess(
+        let ready = crate::firmware_preflight::assess_scoped(
             self.navigation.page(),
             &self.device_key,
             &self.firmware_versions,
@@ -737,6 +755,7 @@ impl Companion {
             }),
             self.discovery_seen
                 .is_some_and(|t| t.elapsed() < Duration::from_secs(5)),
+            self.navigation.scope(),
         );
         self.navigation.observe(ready);
     }
@@ -750,20 +769,45 @@ impl Companion {
                 || !self
                     .factory_release
                     .as_ref()
-                    .is_some_and(|r| self.factory_source.ready(r.complete())))
+                    .is_some_and(|r| self.factory_ready(r)))
         {
             return;
         }
         match self.navigation.next() {
-            Some(Start::Backup(role)) => self.start_copies(role, cx),
-            Some(Start::Recovery(role)) => self.start_recovery(role, cx),
+            Some(Start::Backup(scope)) => {
+                self.peripherals = Some(crate::peripheral_journey::Machine::new(scope));
+                self.start_copies(scope.roles()[0], cx);
+            }
+            Some(Start::Recovery(scope)) => {
+                self.peripherals = Some(crate::peripheral_journey::Machine::new(scope));
+                self.start_recovery(scope.roles()[0], cx);
+            }
             Some(Start::Pairing) => self.start_pairing(cx),
-            Some(Start::Firmware | Start::Restore) => self.start_firmware(cx),
+            Some(Start::Firmware(_) | Start::Restore(_)) => self.start_firmware(cx),
             None => return,
         }
         cx.notify();
     }
+    fn factory_ready(&self, release: &FactoryRelease) -> bool {
+        self.navigation.scope().is_some_and(|scope| {
+            self.factory_source
+                .ready_for(scope.roles().iter().all(|role| release.has(*role)), scope)
+        })
+    }
     fn setup_screen(&self, cx: &mut Context<Self>) -> JourneyScreen {
+        if self.navigation.choosing() {
+            let instruction = match self.navigation.page() {
+                Page::Recovery => "Choose the part you want to put into recovery mode",
+                Page::Firmware => "Choose the part you want to install RMK on",
+                Page::Restore => "Choose the part you want to restore",
+                _ => "Choose the part you want to back up",
+            };
+            return JourneyScreen {
+                body: self.peripheral_picker(instruction, cx),
+                actions: None,
+            };
+        }
+        let scope = self.navigation.scope().unwrap_or(Scope::Whole);
         let already = match self.navigation.readiness() {
             crate::navigation::Readiness::AlreadyLatest => Some("Already latest version"),
             crate::navigation::Readiness::AlreadyFactory => Some("Already on factory firmware"),
@@ -771,18 +815,26 @@ impl Companion {
         };
         if let Some(label) = already {
             return JourneyScreen {
-                body: recovery_guide(None, label, "", None, cx),
-                actions: None,
+                body: recovery_guide(self.navigation.selected(), label, scope.label(), None, cx),
+                actions: Some(self.footer(None, cx)),
             };
         }
         let body = match self.navigation.page() {
             Page::Restore => self.factory_sources_screen(cx),
-            Page::Backups | Page::Home => {
-                self.peripheral_picker("Choose the part you want to back up", cx)
-            }
-            Page::Recovery => {
-                self.peripheral_picker("Choose the part you want to put into recovery mode", cx)
-            }
+            Page::Backups | Page::Home => recovery_guide(
+                self.navigation.selected(),
+                scope.label(),
+                "Save a copy of the selected firmware locally.",
+                None,
+                cx,
+            ),
+            Page::Recovery => recovery_guide(
+                self.navigation.selected(),
+                scope.label(),
+                "Open recovery for the selected parts, one at a time.",
+                None,
+                cx,
+            ),
             Page::Pairing => recovery_guide(
                 None,
                 "Check pairing",
@@ -791,9 +843,13 @@ impl Companion {
                 cx,
             ),
             Page::Firmware => recovery_guide(
-                None,
-                "RMK firmware",
-                "Install RMK on your dongle and both halves, then check pairing and typing. Your current firmware will be backed up automatically.",
+                self.navigation.selected(),
+                scope.label(),
+                if scope == Scope::Whole {
+                    "Install RMK on your dongle and both halves, then check pairing and typing. Your current firmware will be backed up automatically."
+                } else {
+                    "Install RMK on this part. Your current firmware will be backed up automatically."
+                },
                 None,
                 cx,
             ),
@@ -804,7 +860,7 @@ impl Companion {
                 || (self
                     .factory_release
                     .as_ref()
-                    .is_some_and(|r| self.factory_source.ready(r.complete()))
+                    .is_some_and(|r| self.factory_ready(r))
                     && self.operation.error().is_none()));
         let next = button("start-journey", "Next")
             .disabled(!enabled)
@@ -919,12 +975,17 @@ impl Companion {
                     .as_ref()
                     .is_none_or(|m| m.stage() != InstallStage::Complete),
                 Page::Backups => self.backup_state.active(),
-                Page::Recovery => matches!(
-                    self.rescue.state(),
-                    RecoveryState::Identify(_)
-                        | RecoveryState::Guiding(_, _)
-                        | RecoveryState::Failed(_, _)
-                ),
+                Page::Recovery => {
+                    self.peripherals
+                        .as_ref()
+                        .is_some_and(|b| b.waiting_detach())
+                        || matches!(
+                            self.rescue.state(),
+                            RecoveryState::Identify(_)
+                                | RecoveryState::Guiding(_, _)
+                                | RecoveryState::Failed(_, _)
+                        )
+                }
                 Page::Pairing => !matches!(
                     self.pairing.state(),
                     PairingState::Connected | PairingState::Cancelled
@@ -936,6 +997,27 @@ impl Companion {
             .items_center()
             .justify_between()
             .w_full()
+            .when(
+                self.navigation.setup()
+                    && !self.navigation.choosing()
+                    && self.navigation.page() != Page::Pairing
+                    && !self.operation.busy(),
+                |row| {
+                    row.child(
+                        Button::new("previous-scope")
+                            .label("Previous")
+                            .secondary()
+                            .cursor_pointer()
+                            .h(px(40.))
+                            .px(px(20.))
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.navigation.previous();
+                                this.observe_preflight();
+                                cx.notify();
+                            })),
+                    )
+                },
+            )
             .when(cancellable, |row| {
                 row.child(
                     Button::new("cancel-journey")
@@ -945,6 +1027,9 @@ impl Companion {
                         .h(px(40.))
                         .px(px(20.))
                         .on_click(cx.listener(|this, _, _, cx| {
+                            if let Some(batch) = this.peripherals.as_mut() {
+                                batch.cancel();
+                            }
                             if this.navigation.page() == Page::Recovery {
                                 this.cancel_recovery();
                                 this.navigation.reset();
@@ -959,8 +1044,19 @@ impl Companion {
             .when_some(next, |row, next| row.child(next))
     }
     fn backup_screen(&self, cx: &mut Context<Self>) -> JourneyScreen {
-        let title = if self.backup_state.state() == BackupState::Complete {
-            "Your firmware copy is saved".to_owned()
+        let complete = self.backup_state.state() == BackupState::Complete
+            && self
+                .peripherals
+                .as_ref()
+                .is_some_and(|batch| batch.complete());
+        let title = if complete {
+            if self.navigation.scope() == Some(Scope::Whole) {
+                "Your keyboard firmware is saved".to_owned()
+            } else {
+                "Your firmware copy is saved".to_owned()
+            }
+        } else if self.backup_state.state() == BackupState::Complete {
+            "Preparing the next part".to_owned()
         } else if self.backup_state.failed() {
             "Let’s reconnect".to_owned()
         } else if self.operation.busy() {
@@ -969,7 +1065,7 @@ impl Companion {
             self.backup_view()
                 .map_or_else(|| "Preparing your backup".into(), |v| v.title)
         };
-        let instruction = if self.backup_state.state() == BackupState::Complete {
+        let instruction = if complete {
             "Your firmware is saved locally.".to_owned()
         } else if self.backup_state.failed() {
             self.operation.error().cloned().unwrap_or_default()
@@ -980,9 +1076,17 @@ impl Companion {
                 .map_or_else(|| "Keep USB connected.".into(), |v| v.instruction)
         };
         let mut screen = recovery_guide(self.backup_component(), title, instruction, None, cx);
-        let next = if self.backup_state.state() == BackupState::Complete {
+        let next = if complete {
+            let rendered_ticket = self.peripherals.as_ref().map(|batch| batch.ticket());
             Some(
-                button("backup-done", "Next").on_click(cx.listener(|this, _, _, cx| {
+                button("backup-done", "Next").on_click(cx.listener(move |this, _, _, cx| {
+                    if this.navigation.page() != Page::Backups
+                        || !this.peripherals.as_ref().is_some_and(|batch| {
+                            batch.complete() && Some(batch.ticket()) == rendered_ticket
+                        })
+                    {
+                        return;
+                    }
                     this.backup_state.transition(BackupEvent::Finish);
                     this.navigate(Page::Home, cx);
                 })),
@@ -1066,7 +1170,8 @@ impl Companion {
                 .child(div().font_weight(FontWeight::MEDIUM).child(label)),
         )
         .on_click(cx.listener(move |this, _, _, cx| {
-            this.navigation.select(role);
+            this.navigation.select_scope(Scope::Part(role));
+            this.observe_preflight();
             cx.notify();
         }))
     }
@@ -1090,12 +1195,105 @@ impl Companion {
                     .flex()
                     .gap(px(12.))
                     .child(self.peripheral_card(RecoveryRole::Left, "Left half", cx))
-                    .child(self.peripheral_card(RecoveryRole::Right, "Right half", cx))
-                    .child(self.peripheral_card(RecoveryRole::Receiver, "USB dongle", cx)),
+                    .child(self.peripheral_card(RecoveryRole::Right, "Right half", cx)),
+            )
+            .child(
+                div()
+                    .flex()
+                    .gap(px(12.))
+                    .child(self.peripheral_card(RecoveryRole::Receiver, "USB dongle", cx))
+                    .child(
+                        Button::new("choose-whole")
+                            .secondary()
+                            .outline()
+                            .cursor_pointer()
+                            .flex_1()
+                            .h(px(170.))
+                            .accessibility_label("Whole keyboard")
+                            .child(
+                                div()
+                                    .flex()
+                                    .flex_col()
+                                    .items_center()
+                                    .gap(px(14.))
+                                    .child(
+                                        div()
+                                            .flex()
+                                            .items_center()
+                                            .child(
+                                                img(peripheral_image(RecoveryRole::Left))
+                                                    .w(px(85.))
+                                                    .h(px(100.)),
+                                            )
+                                            .child(
+                                                img(peripheral_image(RecoveryRole::Right))
+                                                    .w(px(85.))
+                                                    .h(px(100.)),
+                                            )
+                                            .child(
+                                                img(peripheral_image(RecoveryRole::Receiver))
+                                                    .w(px(45.))
+                                                    .h(px(70.)),
+                                            ),
+                                    )
+                                    .child(
+                                        div()
+                                            .font_weight(FontWeight::MEDIUM)
+                                            .child("Whole keyboard"),
+                                    ),
+                            )
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.navigation.select_scope(Scope::Whole);
+                                this.observe_preflight();
+                                cx.notify();
+                            })),
+                    ),
             )
     }
 
+    fn advance_recovery_batch(
+        &mut self,
+        observation: &Result<device::Snapshot, String>,
+        observed_ticket: Option<u64>,
+        cx: &mut Context<Self>,
+    ) {
+        if self.navigation.page() != Page::Recovery || self.navigation.setup() {
+            return;
+        }
+        let detached = observation.as_ref().is_ok_and(|snapshot| {
+            snapshot.mounts.is_empty() && !snapshot.devices.iter().any(device::Device::bootloader)
+        });
+        if !detached {
+            return;
+        }
+        let next = self.peripherals.as_mut().and_then(|batch| {
+            (observed_ticket == Some(batch.ticket())
+                && batch.waiting_detach()
+                && batch.detached(batch.ticket()))
+            .then(|| batch.role())
+            .flatten()
+        });
+        if let Some(role) = next {
+            self.cancel_recovery();
+            self.start_recovery(role, cx);
+        }
+    }
     fn recovery_screen(&self, cx: &mut Context<Self>) -> JourneyScreen {
+        if let Some(batch) = self.peripherals.as_ref().filter(|b| b.waiting_detach()) {
+            return JourneyScreen {
+                body: recovery_guide(
+                    batch.role(),
+                    "Unplug this part",
+                    "Unplug its USB cable. We’ll move to the next part automatically.",
+                    Some(
+                        self.recovery_waiting("Waiting for USB to disconnect…", cx)
+                            .into_any_element(),
+                    ),
+                    cx,
+                ),
+                actions: Some(self.footer(None, cx)),
+            };
+        }
         let (body, next) = match self.rescue.state() {
             RecoveryState::Choose => (
                 self.peripheral_picker("Choose the part you want to put into recovery mode", cx),
@@ -1135,12 +1333,35 @@ impl Companion {
                     None,
                     cx,
                 ),
-                Some(
-                    button("recovery-done", "Next").on_click(cx.listener(|this, _, _, cx| {
+                Some({
+                    let rendered_ticket = self.peripherals.as_ref().map(|batch| batch.ticket());
+                    button("recovery-done", "Next").on_click(cx.listener(move |this, _, _, cx| {
+                        if this.navigation.page() != Page::Recovery
+                            || this.rescue.state() != RecoveryState::Ready(role)
+                        {
+                            return;
+                        }
+                        let Some(batch) = this.peripherals.as_mut() else {
+                            return;
+                        };
+                        let Some(ticket) =
+                            rendered_ticket.filter(|ticket| *ticket == batch.ticket())
+                        else {
+                            return;
+                        };
+                        if batch.request_next(ticket) {
+                            cx.notify();
+                            return;
+                        }
+                        if !batch.done(ticket) {
+                            return;
+                        }
                         this.cancel_recovery();
-                        this.navigate(Page::Home, cx);
-                    })),
-                ),
+                        this.navigation.reset();
+                        this.peripherals = None;
+                        cx.notify();
+                    }))
+                }),
             ),
             RecoveryState::Failed(role, error) => (
                 recovery_guide(Some(role), "Let’s try again", error.clone(), None, cx),
@@ -1427,7 +1648,9 @@ impl Companion {
                 body: recovery_guide(
                     None,
                     "You’re ready",
-                    if self.navigation.page() == Page::Restore {
+                    if self.navigation.scope() != Some(Scope::Whole) {
+                        "The selected part’s firmware is verified and it has returned to normal operation."
+                    } else if self.navigation.page() == Page::Restore {
                         "Factory firmware is restored. Wired, Bluetooth and dongle typing checks are complete."
                     } else {
                         "RMK is installed. Pairing, wired, Bluetooth and dongle typing checks are complete."
@@ -1675,11 +1898,15 @@ impl Companion {
         self.operation.clear_error();
         self.firmware = None;
         let factory = self.navigation.page() == Page::Restore;
-        self.install = Some(if factory {
-            InstallMachine::factory()
-        } else {
-            InstallMachine::new()
-        });
+        let scope = self.navigation.scope().expect("Started firmware scope");
+        self.install = Some(InstallMachine::scoped(
+            if factory {
+                install_journey::Target::Factory
+            } else {
+                install_journey::Target::Rmk
+            },
+            scope,
+        ));
         let originals = self.factory_release.clone();
         self.typing_input = None;
 
@@ -1694,11 +1921,14 @@ impl Companion {
                 .background_executor()
                 .spawn(async move {
                     if factory {
-                        FirmwareJourney::factory(
-                            originals.ok_or("Choose all three factory backups first.")?,
+                        FirmwareJourney::factory_scoped(
+                            originals
+                                .ok_or("Choose factory firmware for the selected parts first.")?,
+                            scope,
                         )
                     } else {
-                        FirmwareRelease::bundled().map(FirmwareJourney::new)
+                        FirmwareRelease::bundled()
+                            .map(|release| FirmwareJourney::new_scoped(release, scope))
                     }
                 })
                 .await;
@@ -1971,6 +2201,23 @@ impl Companion {
     }
 
     fn advance(&mut self, cx: &mut Context<Self>) {
+        if self.navigation.page() == Page::Backups
+            && !self.navigation.setup()
+            && self.backup_state.state() == BackupState::Complete
+        {
+            let next = self.peripherals.as_mut().and_then(|batch| {
+                if batch.done(batch.ticket()) {
+                    batch.role()
+                } else {
+                    None
+                }
+            });
+            if let Some(role) = next {
+                self.session = None;
+                self.start_copies(role, cx);
+            }
+            return;
+        }
         if !self.backup_state.active()
             || self.operation.busy()
             || self.backup_state.failed()
@@ -1981,6 +2228,10 @@ impl Companion {
         if let Some(journey) = self.session.as_ref() {
             self.backup_state
                 .transition(BackupEvent::Observed(journey.state()));
+        }
+        if self.backup_state.state() == BackupState::Complete {
+            self.advance(cx);
+            return;
         }
         if self
             .session
@@ -2090,6 +2341,10 @@ impl Companion {
         if self.operation.busy() || self.navigation.page() == page {
             return;
         }
+        if let Some(batch) = self.peripherals.as_mut() {
+            batch.cancel();
+        }
+        self.peripherals = None;
         let leaving_backup = self.backup_state.active() && page != Page::Backups;
         if self.backup_state.active() && page != Page::Backups {
             if let Some(journey) = self.session.as_mut() {
@@ -2247,8 +2502,33 @@ impl Render for Companion {
                 .font_weight(FontWeight::SEMIBOLD)
                 .child(title),
         );
+        if let Some(batch) = self
+            .peripherals
+            .as_ref()
+            .filter(|b| b.len() > 1 && !self.navigation.setup())
+        {
+            heading = heading.child(
+                Stepper::new("peripheral-steps")
+                    .small()
+                    .disabled(true)
+                    .selected_index(if batch.complete() {
+                        batch.len()
+                    } else {
+                        batch.index()
+                    })
+                    .items(
+                        ["Left half", "Right half", "Dongle"]
+                            .into_iter()
+                            .map(|label| StepperItem::new().child(label)),
+                    ),
+            );
+        }
         match self.navigation.page() {
-            Page::Backups if !self.navigation.setup() && self.backup_state.shown() => {
+            Page::Backups
+                if !self.navigation.setup()
+                    && self.backup_state.shown()
+                    && self.navigation.scope() != Some(Scope::Whole) =>
+            {
                 let progress = if self.backup_state.state() == BackupState::Saving {
                     Some(flow_presentation::saving_backup())
                 } else {
@@ -2258,7 +2538,9 @@ impl Render for Companion {
                     heading = heading.child(flow_indicator(progress, "backup-steps", cx));
                 }
             }
-            Page::Firmware | Page::Restore if !self.navigation.setup() => {
+            Page::Firmware | Page::Restore
+                if !self.navigation.setup() && self.navigation.scope() == Some(Scope::Whole) =>
+            {
                 let current = match self.install.as_ref().map(InstallMachine::stage) {
                     Some(InstallStage::Installing) | None => {
                         self.firmware_view().map_or(0, |v| v.step)

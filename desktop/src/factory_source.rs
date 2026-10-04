@@ -1,6 +1,6 @@
 //! Factory image provenance selection. Paths are drafts, never proof of image validity.
 //! The release loader validates contents separately before enabling transfer.
-use crate::runtime_recovery::Role;
+use crate::{runtime_recovery::Role, scope::Scope};
 use statig::prelude::*;
 use std::{
     path::{Path, PathBuf},
@@ -118,11 +118,19 @@ impl Machine {
     }
     /// Validated release completeness is required for either source. Supplied
     /// images additionally require an explicit accepted path for every role.
+    #[cfg(test)]
     pub fn ready(&self, validated_release_complete: bool) -> bool {
+        self.ready_for(validated_release_complete, Scope::Whole)
+    }
+    /// The validity argument covers the selected roles, not unrelated parts.
+    pub fn ready_for(&self, validated_release_complete: bool, scope: Scope) -> bool {
         validated_release_complete
             && match self.0.state() {
                 machine::State::Backups {} => true,
-                machine::State::Supplied { files } => files.0.iter().all(Option::is_some),
+                machine::State::Supplied { files } => match scope {
+                    Scope::Whole => files.0.iter().all(Option::is_some),
+                    Scope::Part(role) => files.0[index(role)].is_some(),
+                },
             }
     }
 }
@@ -172,6 +180,16 @@ mod tests {
         );
         assert!(selection.ready(true));
         assert!(!selection.ready(false));
+    }
+    #[test]
+    fn supplied_part_needs_only_its_accepted_validated_source() {
+        let mut selection = Machine::new();
+        selection.select(Source::Supplied);
+        selection.accept(selection.ticket(), Role::Right, "right.uf2".into());
+        assert!(selection.ready_for(true, Scope::Part(Role::Right)));
+        assert!(!selection.ready_for(false, Scope::Part(Role::Right)));
+        assert!(!selection.ready_for(true, Scope::Part(Role::Left)));
+        assert!(!selection.ready(true));
     }
     #[test]
     fn replacement_machine_does_not_accept_previous_machine_ticket() {

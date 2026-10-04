@@ -5,8 +5,10 @@ use crate::{
     firmware_version::Observation,
     navigation::{Page, Readiness},
     runtime_recovery::Role,
+    scope::Scope,
 };
 
+#[cfg(test)]
 pub(crate) fn assess(
     page: Page,
     devices: &UsbKey,
@@ -14,6 +16,20 @@ pub(crate) fn assess(
     latest: Option<&str>,
     fresh: bool,
 ) -> Readiness {
+    assess_scoped(page, devices, versions, latest, fresh, Some(Scope::Whole))
+}
+
+pub(crate) fn assess_scoped(
+    page: Page,
+    devices: &UsbKey,
+    versions: &[Observation],
+    latest: Option<&str>,
+    fresh: bool,
+    scope: Option<Scope>,
+) -> Readiness {
+    let Some(scope) = scope else {
+        return Readiness::Unknown;
+    };
     if !fresh || devices.is_empty() {
         return Readiness::Unknown;
     }
@@ -26,10 +42,25 @@ pub(crate) fn assess(
             name: name.clone(),
         })
         .collect();
-    if devices.iter().any(Device::bootloader) {
+    if scope == Scope::Whole && devices.iter().any(Device::bootloader) {
         return Readiness::Unknown;
     }
     if page == Page::Restore {
+        if let Scope::Part(role) = scope {
+            return if role == Role::Right
+                && devices.iter().filter(|d| d.factory_right()).count() == 1
+                && !devices.iter().any(|d| {
+                    d.vendor == 0x4c4b
+                        && d.product == u64::from(Role::Right.product())
+                        && d.name == Role::Right.name()
+                }) {
+                Readiness::AlreadyFactory
+            } else {
+                // Left and dongle share a stock descriptor. Selection alone is
+                // not physical identity; recovery correlation resolves it later.
+                Readiness::Needed
+            };
+        }
         if devices.iter().filter(|d| d.factory_left()).count() == 2
             && devices.iter().filter(|d| d.factory_right()).count() == 1
             && !devices.iter().any(|d| {
@@ -50,7 +81,11 @@ pub(crate) fn assess(
     let Some(latest) = latest else {
         return Readiness::Unknown;
     };
-    for role in [Role::Left, Role::Right, Role::Receiver] {
+    let roles = match scope {
+        Scope::Whole => vec![Role::Left, Role::Right, Role::Receiver],
+        Scope::Part(role) => vec![role],
+    };
+    for role in roles {
         let matching: Vec<_> = devices
             .iter()
             .filter(|d| {
@@ -122,6 +157,79 @@ mod tests {
         key.pop();
         assert_eq!(
             assess(Page::Firmware, &key, &versions, Some("1.2.3"), true),
+            Readiness::Needed
+        );
+    }
+    #[test]
+    fn part_preflight_needs_only_selected_fresh_role_and_never_guesses_shared_factory() {
+        let (key, versions) = rmk();
+        let key = vec![key[1].clone()];
+        let versions = vec![versions[1].clone()];
+        assert_eq!(
+            assess_scoped(
+                Page::Firmware,
+                &key,
+                &versions,
+                Some("1.2.3"),
+                true,
+                Some(Scope::Part(Role::Right))
+            ),
+            Readiness::AlreadyLatest
+        );
+        assert_eq!(
+            assess_scoped(
+                Page::Firmware,
+                &key,
+                &versions,
+                Some("1.2.3"),
+                true,
+                Some(Scope::Part(Role::Left))
+            ),
+            Readiness::Needed
+        );
+        assert_eq!(
+            assess_scoped(Page::Firmware, &key, &versions, Some("1.2.3"), true, None),
+            Readiness::Unknown
+        );
+        let stock = vec![
+            (10, 0x2886, 0x8029, "NocFree & ANSI".into()),
+            (12, 0x239a, 0x80d8, "NocFree nRF52833 Right".into()),
+        ];
+        for role in [Role::Left, Role::Receiver] {
+            assert_eq!(
+                assess_scoped(
+                    Page::Restore,
+                    &stock,
+                    &[],
+                    None,
+                    true,
+                    Some(Scope::Part(role))
+                ),
+                Readiness::Needed
+            );
+        }
+        assert_eq!(
+            assess_scoped(
+                Page::Restore,
+                &stock,
+                &[],
+                None,
+                true,
+                Some(Scope::Part(Role::Right))
+            ),
+            Readiness::AlreadyFactory
+        );
+        let mut mixed_right = stock;
+        mixed_right.extend(key);
+        assert_eq!(
+            assess_scoped(
+                Page::Restore,
+                &mixed_right,
+                &[],
+                None,
+                true,
+                Some(Scope::Part(Role::Right))
+            ),
             Readiness::Needed
         );
     }

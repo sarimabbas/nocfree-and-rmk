@@ -5,6 +5,7 @@ use crate::{
     factory_release::{FactoryImage, FactoryRelease},
     release::{FirmwareRelease, ReleaseImage},
     runtime_recovery::Role,
+    scope::Scope,
     session::Session,
     update_image,
 };
@@ -54,6 +55,16 @@ impl TargetRelease {
     fn factory(&self) -> bool {
         matches!(self, Self::Factory(_))
     }
+}
+fn scoped_plan(release: &TargetRelease, scope: Scope) -> Vec<Role> {
+    release
+        .plan()
+        .into_iter()
+        .filter(|role| match scope {
+            Scope::Whole => true,
+            Scope::Part(selected) => *role == selected,
+        })
+        .collect()
 }
 impl TargetImage {
     fn sha(&self) -> &str {
@@ -141,6 +152,7 @@ struct Baseline {
 }
 struct FirmwareData {
     release: TargetRelease,
+    plan: Vec<Role>,
     index: usize,
     baseline: Option<Baseline>,
     error: Option<String>,
@@ -153,7 +165,7 @@ struct FirmwareData {
 }
 impl FirmwareData {
     fn role(&self) -> Role {
-        self.release.plan()[self.index]
+        self.plan[self.index]
     }
 }
 
@@ -288,7 +300,7 @@ impl StatigState<FirmwareData> for Phase {
             data.release.factory(),
         );
         if returned {
-            return if data.index == PLAN.len() - 1 {
+            return if data.index == data.plan.len() - 1 {
                 Transition(Phase::Complete)
             } else {
                 data.index += 1;
@@ -644,9 +656,14 @@ fn reconcile_target(
 }
 impl FirmwareJourney {
     pub fn new(release: FirmwareRelease) -> Self {
+        Self::new_scoped(release, Scope::Whole)
+    }
+    pub fn new_scoped(release: FirmwareRelease, scope: Scope) -> Self {
+        let plan = scoped_plan(&TargetRelease::Rmk(release.clone()), scope);
         Self {
             machine: FirmwareData {
                 release: TargetRelease::Rmk(release),
+                plan,
                 index: 0,
                 baseline: None,
                 error: None,
@@ -660,12 +677,17 @@ impl FirmwareJourney {
         }
     }
     pub fn factory(release: FactoryRelease) -> Result<Self, String> {
-        if !release.is_complete() {
-            return Err("Add factory backups for all three parts first.".into());
+        Self::factory_scoped(release, Scope::Whole)
+    }
+    pub fn factory_scoped(release: FactoryRelease, scope: Scope) -> Result<Self, String> {
+        let plan = scoped_plan(&TargetRelease::Factory(release.clone()), scope);
+        if !plan.iter().all(|role| release.has(*role)) {
+            return Err("Add factory firmware for the selected parts first.".into());
         }
         Ok(Self {
             machine: FirmwareData {
                 release: TargetRelease::Factory(release),
+                plan,
                 index: 0,
                 baseline: None,
                 error: None,
@@ -677,6 +699,9 @@ impl FirmwareJourney {
             }
             .state_machine(),
         })
+    }
+    pub fn plan(&self) -> &[Role] {
+        &self.machine.inner().plan
     }
     pub fn is_factory(&self) -> bool {
         self.machine.inner().release.factory()
@@ -697,7 +722,7 @@ impl FirmwareJourney {
         Ok(true)
     }
     pub fn role(&self) -> Role {
-        self.machine.inner().release.plan()[self.machine.inner().index]
+        self.machine.inner().role()
     }
     pub fn view(&self) -> View {
         let (title, instruction) = match *self.machine.state() {
@@ -1412,6 +1437,7 @@ mod tests {
         let mut journey = FirmwareJourney {
             machine: FirmwareData {
                 release: TargetRelease::Factory(release),
+                plan: vec![Role::Left],
                 index: 0,
                 baseline: None,
                 error: None,
@@ -1438,6 +1464,65 @@ mod tests {
         assert_eq!(journey.view().title, "Already on factory firmware");
         assert!(!journey.view().can_transfer);
         assert!(!root.join("factory-verified.json").exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn part_scope_returns_only_selected_part_and_cannot_advance_others() {
+        for role in PLAN {
+            let mut journey =
+                FirmwareJourney::new_scoped(crate::release::fixture(), Scope::Part(role));
+            assert_eq!(journey.plan(), &[role]);
+            assert_eq!(journey.role(), role);
+            let baseline = Baseline {
+                location: 10,
+                mount: BootMount {
+                    path: PathBuf::new(),
+                    info: String::new(),
+                },
+                folder: PathBuf::new(),
+                bytes: vec![],
+            };
+            journey
+                .machine
+                .handle(&FirmwareEvent::RecoverySaved(&baseline, true));
+            let wrong = PLAN.into_iter().find(|other| *other != role).unwrap();
+            let snapshot = |r: Role| {
+                Ok(Snapshot {
+                    devices: vec![Device {
+                        location: 10,
+                        vendor: 0x4c4b,
+                        product: u64::from(r.product()),
+                        name: r.name().into(),
+                    }],
+                    mounts: vec![],
+                })
+            };
+            journey.observe(snapshot(wrong));
+            assert!(!journey.view().complete);
+            assert_eq!(journey.role(), role);
+            journey.observe(snapshot(role));
+            assert!(journey.view().complete);
+            assert_eq!(journey.role(), role);
+        }
+    }
+    #[test]
+    #[ignore = "uses the owner's private factory original fixture"]
+    fn factory_part_accepts_partial_validated_source() {
+        let root =
+            std::env::temp_dir().join(format!("nocfree-factory-part-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        let mut source = FactoryRelease::at(root.clone()).unwrap();
+        let original = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .join(".evidence/factory-left/CURRENT.UF2");
+        source.import(Role::Left, &original).unwrap();
+        assert!(!source.is_complete());
+        let journey =
+            FirmwareJourney::factory_scoped(source.clone(), Scope::Part(Role::Left)).unwrap();
+        assert_eq!(journey.plan(), &[Role::Left]);
+        assert!(FirmwareJourney::factory_scoped(source.clone(), Scope::Part(Role::Right)).is_err());
+        assert!(FirmwareJourney::factory(source).is_err());
         fs::remove_dir_all(root).unwrap();
     }
     #[test]
