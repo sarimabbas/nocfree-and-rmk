@@ -20,4 +20,6 @@ Show left, right, and receiver separately using real observations. Unavailable o
 
 ## Shared recovery primitive
 
-Recovery is a state machine with component selection, physical guidance, verified readiness and explicit failure/retry/cancel transitions. Opaque attempt identities reject late results after cancellation or changing components. Use one illustrated guide in the standalone utility and journey prerequisites; let reliable device observations advance it. Firmware writes remain separate guarded operations. Waiting for a person does not expire; dispatched USB requests and drive observation do.
+Recovery is a state machine with component selection, firmware identification, the applicable entry procedure, verified readiness and explicit failure/retry/cancel transitions. Opaque attempt identities reject late results after cancellation or changing components. Use one illustrated guide in the standalone utility and journey prerequisites; let reliable device observations advance it. Firmware writes remain separate guarded operations. Waiting for a person does not expire; dispatched USB requests and drive observation do.
+
+Factory key-chord entry and compatible RMK app entry converge on the same recovery-ready state. Detect supported factory identities before showing their shortcuts; never infer a component or firmware capability from a recovery drive alone. Receiver entry retains its factory-left pairing and mapping prerequisite. Keep installation policy outside this entry primitive.

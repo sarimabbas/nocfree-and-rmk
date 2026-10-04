@@ -32,7 +32,15 @@ impl Device {
     pub(crate) fn rmk_left(&self) -> bool {
         (self.vendor, self.product, self.name.as_str()) == (0x4c4b, 0x4643, "NocFree RMK")
     }
+    /// Exact factory identity recorded before and after the original right restore.
+    pub(crate) fn factory_right(&self) -> bool {
+        (self.vendor, self.product, self.name.as_str())
+            == (0x239a, 0x80d8, "NocFree nRF52833 Right")
+    }
     pub(crate) fn role(&self) -> Option<Role> {
+        if self.factory_right() {
+            return Some(Role::Right);
+        }
         match (self.vendor, self.product, self.name.as_str()) {
             (0x2886, 0x8029, "NocFree _ ANSI" | "NocFree & ANSI") => Some(Role::Left),
             (0x4c4b, 0x4643, "NocFree RMK") => Some(Role::Left),

@@ -5,9 +5,39 @@ use crate::experimental_recovery::Role;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum State {
     Choose,
-    Waiting(Role),
+    Identify(Role),
+    Guiding(Role, Procedure),
     Ready(Role),
     Failed(Role, String),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Procedure {
+    FactoryLeft,
+    FactoryRight,
+    FactoryReceiver,
+    Manual,
+    StartupApp,
+}
+
+impl Procedure {
+    pub fn instruction(self, role: Role) -> &'static str {
+        match self {
+            Self::FactoryLeft => {
+                "Keep USB connected and the switch in WIRED. Hold Fn + 5 for five seconds, then release."
+            }
+            Self::FactoryRight => {
+                "Turn the right half ON and keep USB connected. Hold Fn + the main-row 0 key for five seconds, then release."
+            }
+            Self::FactoryReceiver => {
+                "Keep only the receiver connected by USB. Using its paired factory left half in 2.4G mode, hold Fn + 6 for five seconds. This requires the factory Fn-layer 6 key mapped to DongleDFU."
+            }
+            Self::Manual => {
+                "Use the recovery procedure for your installed firmware, keeping the same USB port."
+            }
+            Self::StartupApp => instruction(role),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -41,16 +71,30 @@ impl RecoveryJourney {
             .expect("Recovery attempt counter exhausted");
     }
     pub fn start(&mut self, role: Role) -> Option<Attempt> {
-        if matches!(self.state, State::Waiting(_)) {
+        if matches!(self.state, State::Identify(_) | State::Guiding(_, _)) {
             return None;
         }
         self.invalidate();
-        self.state = State::Waiting(role);
+        self.state = State::Identify(role);
         Some(Attempt(self.generation))
+    }
+    fn active(&self, attempt: Attempt, role: Role) -> bool {
+        attempt == Attempt(self.generation)
+            && match self.state {
+                State::Identify(selected) | State::Guiding(selected, _) => selected == role,
+                _ => false,
+            }
+    }
+    pub fn observe(&mut self, attempt: Attempt, role: Role, procedure: Procedure) -> bool {
+        if !self.active(attempt, role) {
+            return false;
+        }
+        self.state = State::Guiding(role, procedure);
+        true
     }
     /// Stale, cancelled, duplicate or wrong-role callbacks cannot replace current guidance.
     pub fn complete(&mut self, attempt: Attempt, role: Role, result: Result<(), String>) -> bool {
-        if attempt != Attempt(self.generation) || self.state != State::Waiting(role) {
+        if !self.active(attempt, role) {
             return false;
         }
         self.state = match result {
@@ -76,18 +120,40 @@ impl RecoveryJourney {
 pub fn instruction(role: Role) -> &'static str {
     match role {
         Role::Left => {
-            "Move the left switch to WIRED. Unplug its USB cable for five seconds, then reconnect it."
+            "Disconnect the right USB cable and receiver. Move the left switch to WIRED. Unplug its USB cable for five seconds, then reconnect it."
         }
         Role::Right => {
-            "Turn the right half OFF. Unplug its USB cable for five seconds, then reconnect it while still OFF."
+            "Disconnect the left USB cable and receiver. Turn the right half OFF. Unplug its USB cable for five seconds, then reconnect it while still OFF."
         }
-        Role::Receiver => "Unplug the receiver for five seconds, then plug it back in.",
+        Role::Receiver => {
+            "Disconnect both halves’ USB cables. Unplug the receiver for five seconds, then plug it back in."
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn factory_progress_and_cancel_retry_reject_stale_guides() {
+        let mut flow = RecoveryJourney::new();
+        let old = flow.start(Role::Left).unwrap();
+        assert!(flow.observe(old, Role::Left, Procedure::FactoryLeft));
+        assert_eq!(
+            flow.state(),
+            &State::Guiding(Role::Left, Procedure::FactoryLeft)
+        );
+        flow.cancel();
+        let current = flow.start(Role::Left).unwrap();
+        assert!(!flow.observe(old, Role::Left, Procedure::StartupApp));
+        assert!(!flow.complete(old, Role::Left, Ok(())));
+        assert!(flow.observe(current, Role::Left, Procedure::FactoryLeft));
+        assert!(flow.complete(current, Role::Left, Err("Different USB connection".into())));
+        let (_, retry) = flow.retry().unwrap();
+        assert!(!flow.observe(current, Role::Left, Procedure::FactoryLeft));
+        assert_eq!(flow.state(), &State::Identify(Role::Left));
+        assert!(flow.observe(retry, Role::Left, Procedure::FactoryLeft));
+    }
     #[test]
     fn cancellation_and_new_role_reject_the_previous_callback() {
         let mut flow = RecoveryJourney::new();
@@ -98,7 +164,7 @@ mod tests {
         let current = flow.start(Role::Right).unwrap();
         assert!(!flow.complete(old, Role::Left, Ok(())));
         assert!(!flow.complete(current, Role::Left, Ok(())));
-        assert_eq!(flow.state(), &State::Waiting(Role::Right));
+        assert_eq!(flow.state(), &State::Identify(Role::Right));
         assert!(flow.complete(current, Role::Right, Ok(())));
         assert_eq!(flow.state(), &State::Ready(Role::Right));
     }
@@ -123,7 +189,7 @@ mod tests {
     fn waiting_never_becomes_ready_without_a_correlated_transport_result() {
         let mut flow = RecoveryJourney::new();
         let attempt = flow.start(Role::Left).unwrap();
-        assert_eq!(flow.state(), &State::Waiting(Role::Left));
+        assert_eq!(flow.state(), &State::Identify(Role::Left));
         assert!(flow.complete(
             attempt,
             Role::Left,

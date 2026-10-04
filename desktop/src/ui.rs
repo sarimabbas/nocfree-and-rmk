@@ -4,6 +4,7 @@ use std::{
     sync::{
         Arc, OnceLock,
         atomic::{AtomicBool, Ordering},
+        mpsc,
     },
     time::{Duration, Instant},
 };
@@ -287,21 +288,37 @@ impl Companion {
         cx.notify();
         cx.spawn(async move |this, cx| {
             let worker_cancel = cancelled.clone();
-            let result = cx
+            let (progress_sender, progress_receiver) = mpsc::channel();
+            let mut worker = cx
                 .background_executor()
-                .spawn(async move { recovery::run(role, worker_cancel) })
-                .await;
-            let _ = this.update(cx, |this, cx| {
-                if this
-                    .rescue_cancel
-                    .as_ref()
-                    .is_some_and(|current| Arc::ptr_eq(current, &cancelled))
-                    && !cancelled.load(Ordering::Relaxed)
-                    && this.rescue.complete(attempt, role, result)
-                {
-                    cx.notify();
+                .spawn(async move { recovery::run(role, worker_cancel, progress_sender) });
+            loop {
+                tokio::select! {
+                    result = &mut worker => {
+                        let _ = this.update(cx, |this, cx| {
+                            if this.rescue_cancel.as_ref().is_some_and(|current| Arc::ptr_eq(current, &cancelled))
+                                && !cancelled.load(Ordering::Relaxed)
+                                && this.rescue.complete(attempt, role, result)
+                            {
+                                cx.notify();
+                            }
+                        });
+                        break;
+                    }
+                    _ = cx.background_executor().timer(Duration::from_millis(100)) => {
+                        while let Ok(procedure) = progress_receiver.try_recv() {
+                            let _ = this.update(cx, |this, cx| {
+                                if this.rescue_cancel.as_ref().is_some_and(|current| Arc::ptr_eq(current, &cancelled))
+                                    && !cancelled.load(Ordering::Relaxed)
+                                    && this.rescue.observe(attempt, role, procedure)
+                                {
+                                    cx.notify();
+                                }
+                            });
+                        }
+                    }
                 }
-            });
+            }
         })
         .detach();
     }
@@ -313,24 +330,113 @@ impl Companion {
         self.rescue.cancel();
     }
 
+    fn recovery_waiting(&self, label: &'static str, cx: &mut Context<Self>) -> gpui::Div {
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(16.))
+            .child(
+                div()
+                    .text_size(px(13.))
+                    .text_color(rgb(0x626870))
+                    .child(label),
+            )
+            .child(action_row(button("cancel-recovery", "Cancel").on_click(
+                cx.listener(|this, _, _, cx| {
+                    this.cancel_recovery();
+                    cx.notify();
+                }),
+            )))
+    }
+
     fn recovery_screen(&self, cx: &mut Context<Self>) -> impl IntoElement {
         match self.rescue.state() {
-            RecoveryState::Choose => {
-                recovery_guide(None, "Open recovery mode", "Choose the part you want to recover. We’ll guide you through reconnecting it.", Some((div().flex().gap(px(8.))
-                        .child(button("recover-left", "Left half").on_click(cx.listener(|this, _, _, cx| this.start_recovery(RecoveryRole::Left, cx))))
-                        .child(button("recover-right", "Right half").on_click(cx.listener(|this, _, _, cx| this.start_recovery(RecoveryRole::Right, cx))))
-                        .child(button("recover-receiver", "USB receiver").on_click(cx.listener(|this, _, _, cx| this.start_recovery(RecoveryRole::Receiver, cx))))).into_any_element()))
-                .child(div().text_size(px(12.)).line_height(px(18.)).text_color(rgb(0x626870)).child("App recovery requires compatible RMK firmware. Older firmware uses its keyboard recovery shortcut."))
-            }
-            RecoveryState::Waiting(role) => recovery_guide(Some(*role), "Reconnect your device", nocfree_companion::recovery_journey::instruction(*role), Some((div().flex().flex_col().gap(px(16.))
-                    .child(div().text_size(px(13.)).text_color(rgb(0x626870)).child("Waiting for the recovery drive…"))
-                    .child(action_row(button("cancel-recovery", "Cancel").on_click(cx.listener(|this, _, _, cx| { this.cancel_recovery(); cx.notify(); }))))).into_any_element())),
-            RecoveryState::Ready(role) => recovery_guide(Some(*role), "Recovery mode is ready", "The recovery drive is open. Your firmware hasn’t been changed.", Some((action_row(button("recovery-done", "Done").on_click(cx.listener(|this, _, _, cx| { this.cancel_recovery(); this.page = Page::Keyboard; cx.notify(); })))).into_any_element())),
-            RecoveryState::Failed(role, error) => recovery_guide(Some(*role), "Let’s try again", error.clone(), Some((div().flex().gap(px(8.))
-                    .child(button("retry-recovery", "Try again").on_click(cx.listener(|this, _, _, cx| {
-                        if let Some((role, attempt)) = this.rescue.retry() { this.run_recovery(role, attempt, cx); }
-                    })))
-                    .child(button("cancel-recovery", "Cancel").on_click(cx.listener(|this, _, _, cx| { this.cancel_recovery(); cx.notify(); })))).into_any_element())),
+            RecoveryState::Choose => recovery_guide(
+                None,
+                "Open recovery mode",
+                "Choose the part you want to recover. We’ll find the right steps for its firmware.",
+                Some(
+                    (div()
+                        .flex()
+                        .gap(px(8.))
+                        .child(button("recover-left", "Left half").on_click(cx.listener(
+                            |this, _, _, cx| this.start_recovery(RecoveryRole::Left, cx),
+                        )))
+                        .child(button("recover-right", "Right half").on_click(cx.listener(
+                            |this, _, _, cx| this.start_recovery(RecoveryRole::Right, cx),
+                        )))
+                        .child(
+                            button("recover-receiver", "USB receiver").on_click(cx.listener(
+                                |this, _, _, cx| this.start_recovery(RecoveryRole::Receiver, cx),
+                            )),
+                        ))
+                    .into_any_element(),
+                ),
+            )
+            .child(
+                div()
+                    .text_size(px(12.))
+                    .line_height(px(18.))
+                    .text_color(rgb(0x626870))
+                    .child("Your firmware stays unchanged. We’ll only open its recovery drive."),
+            ),
+            RecoveryState::Identify(role) => recovery_guide(
+                Some(*role),
+                "Connect your device",
+                nocfree_companion::recovery_journey::instruction(*role),
+                Some(
+                    self.recovery_waiting("Checking its firmware…", cx)
+                        .into_any_element(),
+                ),
+            ),
+            RecoveryState::Guiding(role, procedure) => recovery_guide(
+                Some(*role),
+                "Open the recovery drive",
+                procedure.instruction(*role),
+                Some(
+                    self.recovery_waiting("Waiting for the recovery drive…", cx)
+                        .into_any_element(),
+                ),
+            ),
+            RecoveryState::Ready(role) => recovery_guide(
+                Some(*role),
+                "Recovery mode is ready",
+                "The recovery drive is open. Your firmware hasn’t been changed.",
+                Some(
+                    (action_row(button("recovery-done", "Done").on_click(cx.listener(
+                        |this, _, _, cx| {
+                            this.cancel_recovery();
+                            this.page = Page::Keyboard;
+                            cx.notify();
+                        },
+                    ))))
+                    .into_any_element(),
+                ),
+            ),
+            RecoveryState::Failed(role, error) => recovery_guide(
+                Some(*role),
+                "Let’s try again",
+                error.clone(),
+                Some(
+                    (div()
+                        .flex()
+                        .gap(px(8.))
+                        .child(button("retry-recovery", "Try again").on_click(cx.listener(
+                            |this, _, _, cx| {
+                                if let Some((role, attempt)) = this.rescue.retry() {
+                                    this.run_recovery(role, attempt, cx);
+                                }
+                            },
+                        )))
+                        .child(button("cancel-recovery", "Cancel").on_click(cx.listener(
+                            |this, _, _, cx| {
+                                this.cancel_recovery();
+                                cx.notify();
+                            },
+                        ))))
+                    .into_any_element(),
+                ),
+            ),
         }
     }
 

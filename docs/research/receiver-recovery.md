@@ -63,3 +63,25 @@ The observed bootloader identifies itself as `0.9.2-39-g0147d71`, model and boar
 The owner then unplugged the receiver and re-entered the left's factory recovery drive. Fresh RMK settings were still exact, so the conditional settings-write phase was skipped. Root returned the complete saved working prefix `0x1000..0x65000`, and a subsequent owner-triggered wired recovery readback matched both the entire saved prefix and settings `0x65000..0x6d000` exactly. No settings rewrite, receiver flash, serial command or dock action was needed. Normal Bluetooth startup and cross-half input confirmation remain pending at this return checkpoint.
 
 After battery-first startup with USB unplugged, the owner typed `qwert` and confirmed the left was back. This completes the temporary factory detour and confirms restored left Bluetooth typing. The requested cross-half Shift test was not supplied in this return response; earlier successful split tests remain earlier evidence. Both the exact working RMK checkpoint and receiver factory backup are retained privately; receiver firmware remains unchanged.
+
+## Shared Companion entry guide, 2026-10-03
+
+The owner requested that Recovery mode work before RMK is installed, rather than
+requiring the app-only startup stage. Factory and compatible RMK entry must
+converge on the same verified recovery-drive state; installation and readback
+remain separate operations.
+
+The official [Dongle Recovery Guide](https://docs.google.com/document/d/1ie1Sjx0E7dMcdMRXochTKFrSFeYoO5rgx8PHVy379mM/edit), linked by the vendor's troubleshooting page,
+was checked again for these procedures. It specifies five-second factory holds:
+left Fn+5 with USB, right Fn+0 with USB and its switch ON. Its receiver procedure
+uses a paired factory left in dongle mode, with the Fn-layer 6 key explicitly
+configured as Dongle DFU, then Fn+6. That guide uses factory 1.5.2 and warns about
+Fn/Ctrl positions in different OS layouts. Therefore Fn+6 is not evidence of a
+universal unconfigured receiver shortcut for every factory release.
+
+Saved owner-device normal USB observations identify the factory right as
+`239a:80d8`, product `NocFree nRF52833 Right`. This supports a narrow recognition
+predicate for this board, not a universal identity claim for Nordic devices.
+Factory left and receiver share a normal identity: explicit physical component
+selection and a single matching USB candidate remain necessary. A mounted
+NocFree drive by itself cannot identify the component or its prior firmware.

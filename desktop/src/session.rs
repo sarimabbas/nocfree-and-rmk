@@ -32,6 +32,7 @@ pub struct Session {
     ready: Option<BootMount>,
     normal_present: bool,
     rmk_left: bool,
+    factory_right: bool,
     connection_present: bool,
     problem: Option<String>,
     status: String,
@@ -112,6 +113,7 @@ impl Session {
             if normal.len() == 1 && bootloaders.is_empty() && snapshot.mounts.is_empty() {
                 self.location = Some(normal[0].location);
                 self.rmk_left = normal[0].rmk_left();
+                self.factory_right = normal[0].factory_right();
                 self.normal_present = true;
                 self.connection_present = true;
                 self.problem = None;
@@ -125,7 +127,7 @@ impl Session {
                         .iter()
                         .any(|d| d.vendor == 0x239a && d.product == 0x80d8)
                 {
-                    self.problem = Some("This right half needs developer setup first.".into());
+                    self.problem = Some("This right half’s USB identity is unfamiliar. Reconnect the selected component.".into());
                 }
                 self.status = "Waiting for the selected component in normal mode; a bootloader drive alone cannot identify a half.".into();
             }
@@ -290,6 +292,17 @@ impl Session {
             ),
         })
     }
+    /// Factory identity for the selected role; shared left/receiver identity still relies on physical selection.
+    pub fn factory_role(&self) -> Option<Role> {
+        if !self.identified_normal() {
+            return None;
+        }
+        match self.role {
+            Some(Role::Left) if !self.rmk_left => Some(Role::Left),
+            Some(Role::Right) if self.factory_right => Some(Role::Right),
+            _ => None,
+        }
+    }
     pub(crate) fn identified_normal(&self) -> bool {
         self.location.is_some() && self.normal_present && self.problem.is_none()
     }
@@ -304,6 +317,7 @@ impl Session {
             _ if !self.connection_present => "Reconnect using the same USB port.".into(),
             Some(Role::Left) if self.rmk_left => "Use the recovery procedure for your installed firmware, keeping the same USB port.".into(),
             Some(Role::Left) => "Leave USB connected and the switch in WIRED. Hold Fn + 5 for five seconds, then release.".into(),
+            Some(Role::Right) if self.factory_right => "Leave USB connected. Hold Fn + 0 for five seconds, then release.".into(),
             Some(Role::Right) => "Leave USB connected. Hold Fn, tap the main-row 0 key, then release Fn.".into(),
         };
         let return_instruction = self.return_instruction(Instant::now());
@@ -318,6 +332,7 @@ impl Session {
                 match self.role {
                     Some(Role::Left) if self.rmk_left => "Open recovery on the left half".into(),
                     Some(Role::Left) => "Hold Fn + 5".into(),
+                    Some(Role::Right) if self.factory_right => "Hold Fn + 0".into(),
                     Some(Role::Right) => "Hold Fn and tap 0".into(),
                     None => "Connect your keyboard".into(),
                 }
@@ -412,7 +427,7 @@ impl Session {
         result
     }
 }
-fn validate_metadata(info: &str) -> Result<(), String> {
+pub(crate) fn validate_metadata(info: &str) -> Result<(), String> {
     let lines: Vec<_> = info.lines().map(str::trim).collect();
     if !lines.contains(&"UF2 Bootloader 0.9.2-39-g0147d71") || !lines.contains(&"Model: NocFree &")
     {
@@ -663,6 +678,19 @@ mod tests {
         s.backup_path = Some(PathBuf::from("/private/test-copy"));
         s.return_phase = Some(ReturnPhase::Disconnect);
         s
+    }
+    #[test]
+    fn factory_right_identity_selects_its_hold_shortcut() {
+        let mut snapshot = normal();
+        snapshot.devices[0].vendor = 0x239a;
+        snapshot.devices[0].product = 0x80d8;
+        snapshot.devices[0].name = "NocFree nRF52833 Right".into();
+        let mut session = Session::new();
+        session.select(Role::Right);
+        session.observe(Ok(snapshot));
+        assert_eq!(session.factory_role(), Some(Role::Right));
+        assert!(session.view().instruction.contains("five seconds"));
+        assert!(!session.view().can_save);
     }
     #[test]
     fn journey_advances_only_after_return_and_keeps_saved_copy_on_pause() {
