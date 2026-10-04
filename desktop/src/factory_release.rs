@@ -414,4 +414,71 @@ mod tests {
         assert_eq!(journey.role(), Role::Left);
         fs::remove_dir_all(root).unwrap();
     }
+    #[test]
+    #[ignore = "requires private original archives and extracted supplied ANSI 2.4.5 UF2 fixtures; offline only"]
+    fn supplied_official_targets_preserve_donors_and_switching_back_reloads_originals() {
+        let evidence = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .join(".evidence");
+        let root = temporary();
+        let mut supplied = FactoryRelease::at(root.clone()).unwrap();
+        let mut originals = vec![];
+        for (role, folder, file) in [
+            (Role::Left, "factory-left", "left.uf2"),
+            (Role::Right, "factory-right", "right.uf2"),
+            (Role::Receiver, "receiver-backup", "dongle.uf2"),
+        ] {
+            let official = evidence.join("factory-source-tests").join(file);
+            // An application alone cannot manufacture its S140/settings donor.
+            assert!(supplied.import(role, &official).is_err());
+            let source = evidence.join(folder).join("CURRENT.UF2");
+            supplied.import(role, &source).unwrap();
+            originals.push((role, supplied.image(role).unwrap().bytes.clone()));
+            let saved = fs::read(root.join(format!("{}.uf2", name(role)))).unwrap();
+            let original = payload(&saved).unwrap();
+            supplied.import(role, &official).unwrap();
+            let image = supplied.image(role).unwrap();
+            image.checked().unwrap();
+            assert_eq!(&image.bytes[..0x26000], &original[..0x26000]);
+            assert_eq!(&image.bytes[0x64000..], &original[0x64000..]);
+            assert_ne!(&image.bytes[0x26000..0x64000], &original[0x26000..0x64000]);
+            assert_eq!(
+                fs::read(root.join(format!("{}.uf2", name(role)))).unwrap(),
+                saved
+            );
+            for other in [Role::Left, Role::Right, Role::Receiver] {
+                if other != role && supplied.has(other) {
+                    let before = supplied.id();
+                    assert!(supplied.import(other, &official).is_err());
+                    assert_eq!(supplied.id(), before);
+                }
+            }
+        }
+        assert!(supplied.complete());
+        for (role, file) in [
+            (Role::Left, "left.uf2"),
+            (Role::Right, "right.uf2"),
+            (Role::Receiver, "dongle.uf2"),
+        ] {
+            for other in [Role::Left, Role::Right, Role::Receiver] {
+                if other != role {
+                    let before = supplied.id();
+                    assert!(
+                        supplied
+                            .import(other, &evidence.join("factory-source-tests").join(file))
+                            .is_err()
+                    );
+                    assert_eq!(supplied.id(), before);
+                }
+            }
+        }
+        let backups = FactoryRelease::at(root.clone()).unwrap();
+        assert!(backups.complete());
+        assert_ne!(backups.id(), supplied.id());
+        for (role, original) in originals {
+            assert_eq!(backups.image(role).unwrap().bytes, original);
+        }
+        fs::remove_dir_all(root).unwrap();
+    }
 }

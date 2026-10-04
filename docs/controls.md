@@ -160,3 +160,17 @@ Restore factory regardless of its version. This factory no-op does not weaken
 role validation for any actual firmware write. Firmware release versions must be
 bumped together in the firmware and bundled release whenever shipped bytes change;
 same-version development builds are distinguished by exact readback, not SemVer.
+
+## Factory restore source
+
+Choose **Use saved backups** for the privately retained originals, or **Supply
+UF2 files** to choose/drop one official factory file for left, right and dongle.
+The supplied option requires all three validated selections before Next.
+Switching source clears supplied selections and reloads the originals; returning
+to the page preserves a validated supplied target without silently reverting it.
+
+NocFree's official app-only UF2s use the complete saved factory backup as the
+system-firmware/settings donor. An app-only file without that backup is refused.
+The original backups are never overwritten by supplied targets. Supported
+official files currently include the inspected ANSI 2.4.5 set; unknown future
+files must pass an updated role-specific guard before use.

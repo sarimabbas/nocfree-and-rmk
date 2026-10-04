@@ -61,6 +61,7 @@ pub struct Companion {
     bluetooth_connected: bool,
     factory_bluetooth_connected: bool,
     factory_release: Option<FactoryRelease>,
+    factory_source: crate::factory_source::Machine,
     bundled_version: Option<String>,
     pairing: PairingJourney,
     pairing_observation: Option<dongle_pairing::Observation>,
@@ -432,6 +433,7 @@ impl Companion {
             bluetooth_connected: false,
             factory_bluetooth_connected: false,
             factory_release: None,
+            factory_source: crate::factory_source::Machine::default(),
             bundled_version: None,
             pairing: PairingJourney::new(),
             pairing_observation: None,
@@ -546,15 +548,16 @@ impl Companion {
             return;
         };
         let existing = self.factory_release.clone();
+        let source_ticket = self.factory_source.ticket();
+        let accepted = selected.clone();
+        let supplied = self.factory_source.source() == crate::factory_source::Source::Supplied;
         cx.spawn(async move |this, cx| {
             let result = cx
                 .background_executor()
                 .spawn(async move {
-                    let mut release = match existing {
-                        Some(r) => r,
-                        None => FactoryRelease::discover()?,
-                    };
+                    let mut release = if selected.is_none() && !supplied { FactoryRelease::discover()? } else { match existing { Some(r) => r, None => FactoryRelease::discover()? } };
                     if let Some((role, path)) = selected {
+                        if !supplied && std::fs::metadata(&path).map_err(|_| "Could not read factory backup.")?.len() != 1728 * 512 { return Err("Choose a complete saved factory backup, or select Supply UF2 files.".into()); }
                         release.import(role, &path)?;
                     }
                     Ok::<_, String>(release)
@@ -565,7 +568,11 @@ impl Companion {
                     return;
                 }
                 match result {
-                    Ok(release) => this.factory_release = Some(release),
+                    Ok(release) if this.factory_source.ticket() == source_ticket => {
+                        this.factory_release = Some(release);
+                        if let Some((role, path)) = accepted { this.factory_source.accept(source_ticket, role, path); }
+                    },
+                    Ok(_) => {},
                     Err(error) => this.operation.fail(error),
                 }
                 cx.notify();
@@ -575,6 +582,7 @@ impl Companion {
         cx.notify();
     }
     fn choose_factory_file(&mut self, role: RecoveryRole, cx: &mut Context<Self>) {
+        let source_ticket = self.factory_source.ticket();
         let paths = cx.prompt_for_paths(gpui::PathPromptOptions {
             files: true,
             directories: false,
@@ -586,23 +594,80 @@ impl Companion {
                 && paths.len() == 1
             {
                 let _ = this.update(cx, |this, cx| {
-                    this.load_factory_sources(Some((role, paths[0].clone())), cx)
+                    if this.factory_source.ticket() == source_ticket {
+                        this.load_factory_sources(Some((role, paths[0].clone())), cx);
+                    }
                 });
             }
         })
         .detach();
     }
+    fn select_factory_source(
+        &mut self,
+        source: crate::factory_source::Source,
+        cx: &mut Context<Self>,
+    ) {
+        if self.operation.busy() || self.factory_source.source() == source {
+            return;
+        }
+        self.factory_source.select(source);
+        self.factory_release = None;
+        self.load_factory_sources(None, cx);
+        cx.notify();
+    }
     fn factory_sources_screen(&self, cx: &mut Context<Self>) -> gpui::Div {
+        let supplied = self.factory_source.source() == crate::factory_source::Source::Supplied;
+        let mut choices = div().flex().gap(px(12.)).w_full();
+        for (source, label, id) in [
+            (
+                crate::factory_source::Source::Backups,
+                "Use saved backups",
+                "factory-use-backups",
+            ),
+            (
+                crate::factory_source::Source::Supplied,
+                "Supply UF2 files",
+                "factory-supply-files",
+            ),
+        ] {
+            choices = choices.child(
+                Button::new(id)
+                    .label(label)
+                    .outline()
+                    .flex_1()
+                    .h(px(64.))
+                    .cursor_pointer()
+                    .disabled(self.operation.busy())
+                    .when(self.factory_source.source() == source, |b| b.primary())
+                    .on_click(
+                        cx.listener(move |this, _, _, cx| this.select_factory_source(source, cx)),
+                    ),
+            );
+        }
         let mut cards = div().flex().gap(px(12.)).w_full();
         for (role, label, id) in [
             (RecoveryRole::Left, "Left half", "factory-left"),
             (RecoveryRole::Right, "Right half", "factory-right"),
             (RecoveryRole::Receiver, "USB dongle", "factory-dongle"),
         ] {
-            let ready = self
-                .factory_release
-                .as_ref()
-                .is_some_and(|release| release.has(role));
+            let ready = if supplied {
+                self.factory_source.file(role).is_some()
+            } else {
+                self.factory_release
+                    .as_ref()
+                    .is_some_and(|release| release.has(role))
+            };
+            let caption = if supplied {
+                self.factory_source
+                    .file(role)
+                    .and_then(|p| p.file_name())
+                    .map(|name| name.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| "Choose or drop a UF2".into())
+            } else if ready {
+                "Factory backup ready".into()
+            } else {
+                "Choose a factory backup".into()
+            };
             let content = div()
                 .flex()
                 .flex_col()
@@ -613,12 +678,10 @@ impl Companion {
                 .child(
                     div()
                         .text_size(px(12.))
+                        .max_w(px(160.))
+                        .overflow_hidden()
                         .text_color(cx.theme().muted_foreground)
-                        .child(if ready {
-                            "Factory backup ready"
-                        } else {
-                            "Choose a factory file"
-                        }),
+                        .child(caption.clone()),
                 );
             cards = cards.child(
                 div()
@@ -626,34 +689,30 @@ impl Companion {
                     .flex_1()
                     .on_drop(
                         cx.listener(move |this, paths: &gpui::ExternalPaths, _, cx| {
-                            if paths.0.len() == 1 {
+                            if (supplied || !ready) && paths.0.len() == 1 {
                                 this.load_factory_sources(Some((role, paths.0[0].clone())), cx);
                             }
                         }),
                     )
                     .child(
                         Button::new(id)
-                            .accessibility_label(format!(
-                                "{label}: {}",
-                                if ready {
-                                    "factory backup ready"
-                                } else {
-                                    "choose factory file"
-                                }
-                            ))
+                            .accessibility_label(format!("{label}: {caption}"))
                             .outline()
                             .w_full()
                             .h(px(225.))
                             .cursor_pointer()
-                            .disabled(self.operation.busy())
+                            .disabled(self.operation.busy() || (!supplied && ready))
+                            .when(!supplied && ready, |b| b.cursor_default())
                             .child(content)
                             .on_click(cx.listener(move |this, _, _, cx| {
-                                this.choose_factory_file(role, cx)
+                                if supplied || !ready {
+                                    this.choose_factory_file(role, cx);
+                                }
                             })),
                     ),
             );
         }
-        let mut body = div().flex().flex_col().gap(px(24.)).child(div().text_center().text_color(cx.theme().muted_foreground).child("Restore your saved factory firmware. Your current RMK firmware will be backed up first.")).child(cards);
+        let mut body = div().flex().flex_col().gap(px(24.)).child(choices).child(div().text_center().text_color(cx.theme().muted_foreground).child(if supplied { "Choose one factory UF2 for each part. Your saved factory backup supplies anything else needed." } else { "Restore your saved factory firmware. Your current RMK firmware will be backed up first." })).child(cards);
         if self.operation.busy() {
             body = body.child(waiting_indicator("Checking factory backups…", cx));
         }
@@ -691,7 +750,7 @@ impl Companion {
                 || !self
                     .factory_release
                     .as_ref()
-                    .is_some_and(FactoryRelease::complete))
+                    .is_some_and(|r| self.factory_source.ready(r.complete())))
         {
             return;
         }
@@ -745,7 +804,7 @@ impl Companion {
                 || (self
                     .factory_release
                     .as_ref()
-                    .is_some_and(FactoryRelease::complete)
+                    .is_some_and(|r| self.factory_source.ready(r.complete()))
                     && self.operation.error().is_none()));
         let next = button("start-journey", "Next")
             .disabled(!enabled)
