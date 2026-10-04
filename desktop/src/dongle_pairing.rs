@@ -15,6 +15,8 @@ use std::time::{Duration, Instant};
 const PREFIX: [u8; 8] = [8, 0x7e, 4, 1, b'N', b'C', b'P', b'R'];
 const REQUEST_AGE: Duration = Duration::from_secs(5);
 const PAIRING_TIMEOUT: Duration = Duration::from_secs(45);
+const USB_CHANGED: &str =
+    "A USB connection changed. Pairing was stopped; it will not retry automatically.";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Link {
@@ -195,6 +197,12 @@ impl StatigState<PairingData> for State {
                 let observed = match observation {
                     Ok(value) => value,
                     Err(error) if error == crate::battery::NATIVE_BUSY => return Handled,
+                    // A mode switch can replace the USB instance while a getter
+                    // runs. Before any write, discard its result and reconnect.
+                    // Once pairing starts, retain the one-shot failure behavior.
+                    Err(error) if error == USB_CHANGED && *self != State::Pairing => {
+                        return Transition(State::Connect);
+                    }
                     Err(error) => return Transition(State::Failed(error.clone())),
                 };
                 if now.saturating_duration_since(observed.seen) >= REQUEST_AGE {
@@ -403,10 +411,7 @@ fn unchanged(expected: &DeviceInfo, role: Role) -> Result<(), String> {
     if target(role)?.is_some_and(|now| now.id() == expected.id()) {
         Ok(())
     } else {
-        Err(
-            "A USB connection changed. Pairing was stopped; it will not retry automatically."
-                .into(),
-        )
+        Err(USB_CHANGED.into())
     }
 }
 fn open(api: &HidApi, target: &DeviceInfo, role: Role) -> Result<HidDevice, String> {
@@ -617,6 +622,59 @@ mod tests {
         bytes[16..22].copy_from_slice(&[1; 6]);
         bytes[22] = 255;
         bytes
+    }
+    #[test]
+    fn mode_switch_usb_reenumeration_before_pairing_returns_to_connection_check() {
+        let now = Instant::now();
+        let mut journey = Journey::new();
+        journey.observe(
+            Ok(observation(
+                Some(snapshot(Link::Idle, false)),
+                Some(snapshot(Link::Searching, false)),
+                now,
+            )),
+            now,
+        );
+        assert_eq!(journey.state(), &State::SwitchMode);
+        journey.observe(
+            Err(
+                "A USB connection changed. Pairing was stopped; it will not retry automatically."
+                    .into(),
+            ),
+            now,
+        );
+        assert_eq!(journey.state(), &State::Connect);
+        assert!(journey.machine.inner().request.is_none());
+        journey.observe(
+            Ok(observation(
+                Some(snapshot(Link::Encrypted, true)),
+                Some(snapshot(Link::Encrypted, false)),
+                now,
+            )),
+            now,
+        );
+        assert_eq!(journey.state(), &State::Connected);
+    }
+    #[test]
+    fn usb_reenumeration_after_pairing_started_is_terminal() {
+        let now = Instant::now();
+        let mut journey = Journey::new();
+        unsafe {
+            *journey.machine.state_mut() = State::Pairing;
+            journey.machine.inner_mut().deadline = Some(now + PAIRING_TIMEOUT);
+        }
+        journey.observe(Err(USB_CHANGED.into()), now);
+        assert_eq!(journey.state(), &State::Failed(USB_CHANGED.into()));
+        journey.observe(
+            Ok(observation(
+                Some(snapshot(Link::Encrypted, true)),
+                Some(snapshot(Link::Encrypted, false)),
+                now,
+            )),
+            now,
+        );
+        journey.accepted(Ok(()), now);
+        assert_eq!(journey.state(), &State::Failed(USB_CHANGED.into()));
     }
     #[test]
     fn unsupported_firmware_echo_has_friendly_update_instruction() {

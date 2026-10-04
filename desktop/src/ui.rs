@@ -2293,6 +2293,18 @@ impl Companion {
             None,
             cx,
         );
+        body = div()
+            .flex()
+            .flex_col()
+            .items_center()
+            .gap(px(16.))
+            .child(
+                div()
+                    .text_size(px(16.))
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .child(view.title.clone()),
+            )
+            .child(body);
         let next = if self.operation.busy() {
             body = body.child(waiting_indicator("Working…", cx));
             None
@@ -2611,44 +2623,12 @@ impl Render for Companion {
                     )),
             );
 
-        let title = if self.firmware_page() && !self.navigation.setup() {
-            match self.install.as_ref().map(InstallMachine::stage) {
-                Some(InstallStage::Pairing) => "Check pairing".to_owned(),
-                Some(InstallStage::Setup(mode)) | Some(InstallStage::Typing(mode)) => {
-                    format!("Test {}", mode.label().to_lowercase())
-                }
-                Some(InstallStage::Complete) => "You’re ready".to_owned(),
-                _ => self
-                    .firmware_view()
-                    .map_or_else(|| "Install RMK".into(), |v| v.title),
-            }
-        } else if self.navigation.page() == Page::Backups
-            && !self.navigation.setup()
-            && self.backup_state.state() == BackupState::Returning
-        {
-            self.backup_view()
-                .map_or_else(|| "Start your keyboard".into(), |view| view.title)
-        } else {
-            (match self.navigation.page() {
-                Page::Backups
-                    if !self.navigation.setup()
-                        && self.backup_state.state() == BackupState::Saving =>
-                {
-                    "Saving your firmware copy"
-                }
-                Page::Backups
-                    if !self.navigation.setup()
-                        && self.backup_state.state() == BackupState::Complete =>
-                {
-                    "Your firmware copy is saved"
-                }
-                Page::Backups | Page::Home => "Backup firmware",
-                Page::Recovery => "Enter recovery mode",
-                Page::Pairing => "Check pairing",
-                Page::Firmware => "Install RMK",
-                Page::Restore => "Restore factory",
-            })
-            .to_owned()
+        let title = match self.navigation.page() {
+            Page::Backups | Page::Home => "Backup firmware",
+            Page::Recovery => "Enter recovery mode",
+            Page::Pairing => "Check pairing",
+            Page::Firmware => "Install RMK",
+            Page::Restore => "Restore factory",
         };
         let mut heading = div().flex().flex_col().gap(px(24.)).w_full().child(
             div()
