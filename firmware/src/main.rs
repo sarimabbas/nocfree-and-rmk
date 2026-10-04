@@ -188,7 +188,7 @@ async fn main(spawner: Spawner) {
                 feature = "usb-rescue-diagnostic"
             )))]
             {
-                "NocFree RMK community"
+                concat!("NocFree RMK;fw=", env!("CARGO_PKG_VERSION"))
             }
         },
         product_name: if cfg!(feature = "receiver") {

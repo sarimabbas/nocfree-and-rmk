@@ -18,3 +18,6 @@ mod recovery;
 pub mod ui;
 
 mod status_strip;
+
+pub mod factory_version;
+pub mod firmware_version;

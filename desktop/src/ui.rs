@@ -73,6 +73,7 @@ pub struct Companion {
     battery_error: Option<String>,
     device_key: Vec<(u64, u64, u64, String)>,
     device_generation: u64,
+    firmware_versions: Vec<crate::firmware_version::Observation>,
     home: Home,
     firmware: Option<FirmwareJourney>,
     firmware_view: Option<FirmwareView>,
@@ -96,6 +97,7 @@ impl Companion {
         let view = session.view();
         let poll = cx.spawn(async move |this, cx| {
             let mut battery_checked = None;
+            let mut version_checked: Option<Instant> = None;
             let mut bluetooth_checked: Option<Instant> = None;
             type BatteryConnection = (u64, Home, Vec<(u64, u64, u64, String)>);
             type BatteryQuery = (
@@ -141,6 +143,8 @@ impl Companion {
                                     this.battery_readings = None;
                                     this.battery_observed = None;
                                     this.battery_error = None;
+                                    this.firmware_versions.clear();
+                                    version_checked = None;
                                     this.device_key = key;
                                     this.device_generation = this.device_generation.wrapping_add(1);
                                 }
@@ -223,6 +227,48 @@ impl Companion {
                         }
                     }
                 }
+                let version_idle = this.update(cx, |this, _| {
+                    (!this.started || this.completed)
+                        && !this.busy
+                        && this.page != Page::Firmware
+                        && !matches!(
+                            this.rescue.state(),
+                            RecoveryState::Identify(_) | RecoveryState::Guiding(_, _)
+                        )
+                });
+                if matches!(version_idle, Ok(true))
+                    && version_checked.is_none_or(|t| t.elapsed() >= Duration::from_secs(30))
+                    && let Ok((generation, key)) = this.update(cx, |this, _| {
+                        (this.device_generation, this.device_key.clone())
+                    })
+                {
+                    let versions = cx
+                        .background_executor()
+                        .spawn(async { crate::firmware_version::read() })
+                        .await;
+                    let _ = this.update(cx, |this, cx| {
+                        if this.device_generation == generation
+                            && this.device_key == key
+                            && (!this.started || this.completed)
+                            && !this.busy
+                            && this.page != Page::Firmware
+                            && !matches!(
+                                this.rescue.state(),
+                                RecoveryState::Identify(_) | RecoveryState::Guiding(_, _)
+                            )
+                        {
+                            this.firmware_versions = versions
+                                .into_iter()
+                                .filter(|v| {
+                                    key.iter()
+                                        .any(|(location, _, _, _)| *location == v.location)
+                                })
+                                .collect();
+                            cx.notify();
+                        }
+                    });
+                    version_checked = Some(Instant::now());
+                }
                 let battery_idle = this.update(cx, |this, _| {
                     (!this.started || this.completed)
                         && this.page != Page::Firmware
@@ -278,6 +324,8 @@ impl Companion {
                         .unwrap_or_default();
                     key.sort();
                     if key != this.device_key {
+                        this.firmware_versions.clear();
+                        version_checked = None;
                         this.device_key = key;
                         this.device_generation = this.device_generation.wrapping_add(1);
                         this.battery_readings = None;
@@ -326,6 +374,7 @@ impl Companion {
             battery_error: None,
             device_key: Vec::new(),
             device_generation: 0,
+            firmware_versions: Vec::new(),
             home: Home::default(),
             firmware: None,
             firmware_view: None,
@@ -1198,10 +1247,12 @@ impl Render for Companion {
             Page::Firmware => canvas.child(self.firmware_screen(cx)),
         };
         let firmware = match self.home {
-            Home::Factory => "Running factory firmware · version unknown",
-            Home::Rmk(_) => "Running RMK firmware · version unknown",
-            _ if self.dongle_connected => "Running RMK firmware · version unknown",
-            _ => "Firmware not detected",
+            Home::Factory => crate::firmware_version::label(true, &self.firmware_versions),
+            Home::Rmk(_) => crate::firmware_version::label(false, &self.firmware_versions),
+            _ if self.dongle_connected => {
+                crate::firmware_version::label(false, &self.firmware_versions)
+            }
+            _ => "Firmware not detected".to_owned(),
         };
         let current = self
             .battery_observed
@@ -1235,7 +1286,7 @@ impl Render for Companion {
             crate::status_strip::Connection::Disconnected
         };
         let status = crate::status_strip::render(
-            firmware.to_owned(),
+            firmware,
             connection,
             crate::status_strip::Peripheral {
                 level: readings.and_then(|r| level(r.left)),
