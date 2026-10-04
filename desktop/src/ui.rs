@@ -235,6 +235,7 @@ impl Companion {
                                                     && d.name == "NocFree AND RMK Receiver")
                                                     || (d.product == 0x4644
                                                         && d.name == "NocFree RMK Receiver"))
+                                                || d.factory_dongle()
                                         })
                                     });
                                 this.latest_discovery = observation.as_ref().ok().cloned();
@@ -1242,10 +1243,18 @@ impl Companion {
                                 | RecoveryState::Failed(_, _)
                         )
                 }
-                Page::Pairing => !matches!(
-                    self.pairing.state(),
-                    PairingState::Connected | PairingState::Cancelled
-                ),
+                Page::Pairing => {
+                    if self.factory_pairing_check_active() {
+                        self.install
+                            .as_ref()
+                            .is_some_and(|m| m.stage() != InstallStage::Complete)
+                    } else {
+                        !matches!(
+                            self.pairing.state(),
+                            PairingState::Connected | PairingState::Cancelled
+                        )
+                    }
+                }
                 Page::Home => false,
             };
         div()
@@ -1703,8 +1712,16 @@ impl Companion {
         (self.navigation.page() == Page::Pairing && !self.navigation.setup())
             || self.install_pairing_active()
     }
+    fn factory_pairing_check_active(&self) -> bool {
+        self.navigation.page() == Page::Pairing
+            && !self.navigation.setup()
+            && self
+                .install
+                .as_ref()
+                .is_some_and(|m| m.target() == install_journey::Target::Factory)
+    }
     fn install_checks_active(&self) -> bool {
-        self.firmware_page()
+        (self.firmware_page() || self.factory_pairing_check_active())
             && self.install.as_ref().is_some_and(|m| {
                 matches!(
                     m.stage(),
@@ -1765,6 +1782,7 @@ impl Companion {
                         name: name.clone(),
                     }
                     .factory_left()
+                        || crate::device::factory_dongle_identity(*v, *id, name)
                 })
                 .count();
             let bt_seen = self
@@ -1784,7 +1802,11 @@ impl Companion {
                 factory_usb_count: usb_fresh.then_some(stock_count),
                 right_link: None,
                 bluetooth_connected: bt_seen.then_some(self.factory_bluetooth_connected),
-                fresh: usb_fresh && bt_seen,
+                fresh: usb_fresh
+                    && bt_seen
+                    && (!self.factory_pairing_check_active()
+                        || (self.dongle_connected
+                            && !crate::device_status::left_usb(&self.device_key))),
                 observed_at: self.discovery_seen.unwrap_or_else(Instant::now),
             }
         } else {
@@ -1948,6 +1970,8 @@ impl Companion {
                         "The selected part’s firmware is verified and it has returned to normal operation."
                     } else if self.navigation.scope() != Some(Scope::Whole) {
                         "The selected parts’ firmware is verified and they have returned to normal operation."
+                    } else if self.factory_pairing_check_active() {
+                        "Factory dongle typing check passed for both halves."
                     } else if self.navigation.page() == Page::Restore {
                         "Factory firmware is restored. Wired, Bluetooth and dongle typing checks are complete."
                     } else {
@@ -1978,6 +2002,26 @@ impl Companion {
     fn start_pairing(&mut self, cx: &mut Context<Self>) {
         if self.operation.busy() {
             return;
+        }
+        if self.navigation.page() == Page::Pairing
+            && self.latest_discovery.as_ref().is_some_and(|snapshot| {
+                snapshot
+                    .devices
+                    .iter()
+                    .any(|d| d.factory_left() || d.factory_dongle())
+            })
+        {
+            self.pairing.cancel();
+            self.pairing_generation += 1;
+            self.pairing_observation = None;
+            self.install = Some(InstallMachine::factory_dongle_check());
+            self.typing_input = None;
+            self.observe_install();
+            cx.notify();
+            return;
+        }
+        if self.navigation.page() == Page::Pairing {
+            self.install = None;
         }
         self.pairing = if self.install_pairing_active() {
             PairingJourney::whole_keyboard()
@@ -2948,6 +2992,9 @@ impl Render for Companion {
                     actions: None,
                 },
                 Page::Recovery => self.recovery_screen(cx),
+                Page::Pairing if self.factory_pairing_check_active() => {
+                    self.install_screen(window, cx)
+                }
                 Page::Pairing => self.pairing_screen(cx),
                 Page::Firmware | Page::Restore => self.install_screen(window, cx),
             }

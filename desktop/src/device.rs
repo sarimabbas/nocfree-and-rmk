@@ -35,12 +35,20 @@ pub(crate) fn factory_keyboard_identity(vendor: u64, product: u64, name: &str) -
     })
 }
 
+/// Exact factory dongle identity observed in macOS USB discovery.
+pub(crate) fn factory_dongle_identity(vendor: u64, product: u64, name: &str) -> bool {
+    (vendor, product, name) == (0x2886, 0x8029, "NocFree_Dongle")
+}
+
 impl Device {
     pub(crate) fn bootloader(&self) -> bool {
         self.vendor == 0x239a && self.product == 0x0029
     }
     pub(crate) fn factory_left(&self) -> bool {
         factory_keyboard_identity(self.vendor, self.product, &self.name)
+    }
+    pub(crate) fn factory_dongle(&self) -> bool {
+        factory_dongle_identity(self.vendor, self.product, &self.name)
     }
     pub(crate) fn rmk_left(&self) -> bool {
         (self.vendor, self.product, self.name.as_str()) == (0x4c4b, 0x4643, "NocFree RMK")
@@ -390,6 +398,27 @@ pub(crate) mod tests {
             );
         }
     }
+    #[test]
+    fn factory_dongle_requires_the_exact_usb_identity() {
+        let device = Device {
+            location: 7,
+            vendor: 0x2886,
+            product: 0x8029,
+            name: "NocFree_Dongle".into(),
+        };
+        assert!(device.factory_dongle());
+        assert!(!device.factory_left());
+        assert_eq!(device.role(), None);
+        for (vendor, product, name) in [
+            (0x2886, 0x8029, "NocFree & ANSI"),
+            (0x2886, 0x8029, "NocFree_Dongle other"),
+            (0x2886, 0x8030, "NocFree_Dongle"),
+            (0x239a, 0x8029, "NocFree_Dongle"),
+        ] {
+            assert!(!factory_dongle_identity(vendor, product, name));
+        }
+    }
+
     #[test]
     fn factory_layout_is_not_a_role_and_unrelated_devices_are_excluded() {
         for prefix in ["NocFree & ", "NocFree _ "] {

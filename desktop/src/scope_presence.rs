@@ -316,7 +316,7 @@ pub(crate) fn derive(
                     entry.0 == location && (bootloader(entry) || index != 1 && shared(entry))
                 })
         });
-        let normal = devices
+        let normal_devices: Vec<_> = devices
             .iter()
             .filter(|(_, vendor, product, name)| {
                 matches!(
@@ -325,9 +325,15 @@ pub(crate) fn derive(
                         | (1, 0x4c4b, 0x4671, "NocFree RMK Right")
                         | (1, 0x239a, 0x80d8, "NocFree nRF52833 Right")
                         | (2, 0x4c4b, 0x4644, "NocFree RMK Receiver")
-                )
+                ) || index == 2 && crate::device::factory_dongle_identity(*vendor, *product, name)
             })
-            .count();
+            .collect();
+        let normal = normal_devices.len();
+        if normal_devices.iter().any(|entry| {
+            !unique_role(entry.0) || devices.iter().filter(|d| d.0 == entry.0).count() != 1
+        }) {
+            return Presence::Unidentified;
+        }
         let recovery = recovery_locations[index].is_some_and(|location| {
             unique_role(location)
                 && recovery_locations
@@ -403,6 +409,41 @@ mod tests {
                 Presence::Disconnected,
                 Presence::Unidentified,
                 Presence::Connected
+            ]
+        );
+    }
+
+    #[test]
+    fn exact_factory_dongle_is_connected_without_guessing_shared_layouts() {
+        let mut devices = vec![(7, 0x2886, 0x8029, "NocFree_Dongle".into())];
+        assert_eq!(
+            derive(&devices, [None; 3], true),
+            [
+                Presence::Disconnected,
+                Presence::Disconnected,
+                Presence::Connected
+            ]
+        );
+        assert_eq!(
+            super::derive(&devices, [None; 3], true, [Some(7), None, None])[2],
+            Presence::Unidentified
+        );
+        assert_eq!(
+            derive(&devices, [Some(7), None, None], true)[2],
+            Presence::Unidentified
+        );
+        devices.push(devices[0].clone());
+        assert_eq!(derive(&devices, [None; 3], true)[2], Presence::Unidentified);
+        devices[1].0 = 8;
+        assert_eq!(derive(&devices, [None; 3], true)[2], Presence::Unidentified);
+        devices.pop();
+        devices.push((7, 0x4c4b, 0x4643, "NocFree RMK".into()));
+        assert_eq!(
+            derive(&devices, [None; 3], true),
+            [
+                Presence::Unidentified,
+                Presence::Disconnected,
+                Presence::Unidentified
             ]
         );
     }

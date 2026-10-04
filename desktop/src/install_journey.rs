@@ -157,6 +157,7 @@ mod machine {
     }
     pub enum Event {
         Installed(Ticket, Result<(), String>),
+        CheckFactoryDongle,
         Paired(Ticket, Result<(), String>),
         Observed(Ticket, Evidence),
         Input(Ticket, String),
@@ -176,6 +177,11 @@ mod machine {
         #[state(superstate = "cancellable")]
         fn installing(&mut self, event: &Event, context: &mut bool) -> Outcome<State> {
             match event {
+                Event::CheckFactoryDongle if self.target == Target::Factory => {
+                    *context = true;
+                    self.advance();
+                    Transition(State::checking(Mode::Dongle, None, String::new(), false))
+                }
                 Event::Installed(ticket, result) if self.current(*ticket) => {
                     *context = true;
                     match result {
@@ -337,6 +343,11 @@ impl Machine {
     pub fn factory() -> Self {
         Self::scoped(Target::Factory, Scope::Whole)
     }
+    pub fn factory_dongle_check() -> Self {
+        let mut machine = Self::scoped(Target::Factory, Scope::Whole);
+        machine.dispatch(machine::Event::CheckFactoryDongle);
+        machine
+    }
     pub fn target(&self) -> Target {
         self.machine.inner().target
     }
@@ -445,6 +456,15 @@ mod tests {
             }
             accepted
         }
+    }
+    #[test]
+    fn standalone_factory_check_starts_at_dongle_setup_without_installing() {
+        let mut machine = Machine::factory_dongle_check();
+        assert_eq!(machine.target(), Target::Factory);
+        assert_eq!(machine.stage(), Stage::Setup(Mode::Dongle));
+        assert!(!machine.can_next());
+        assert!(!machine.next(machine.ticket()));
+        assert_eq!(machine.stage(), Stage::Setup(Mode::Dongle));
     }
     #[test]
     fn observed_valid_route_waits_for_next_and_correct_typing_enables_next_immediately() {
