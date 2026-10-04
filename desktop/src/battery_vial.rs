@@ -165,7 +165,19 @@ pub(super) fn read(started: Instant) -> Result<Readings, String> {
     let length = device
         .read_timeout(&mut reply, 1000)
         .map_err(|_| "Couldn't read the keyboard's battery details.")?;
-    let readings = decode(&reply[..length])?;
+    let mut readings = decode(&reply[..length])?;
+    // An optional, separate getter keeps the original battery protocol intact.
+    // Unknown/older firmware cannot manufacture a switch position.
+    if role == Role::Left && started.elapsed() < Duration::from_secs(3) {
+        let mut mode_request = [0; 33];
+        mode_request[1..9].copy_from_slice(&[8, 0x7e, 3, 1, b'N', b'C', b'M', b'O']);
+        if device.write(&mode_request).ok() == Some(33) {
+            let mut mode_reply = [0; 33];
+            if let Ok(length) = device.read_timeout(&mut mode_reply, 500) {
+                readings.left_mode = decode_mode(&mode_reply[..length]);
+            }
+        }
+    }
     same_usb(&target)?;
     Ok(readings)
 }
@@ -261,7 +273,24 @@ fn decode(reply: &[u8]) -> Result<Readings, String> {
         left,
         right,
         right_connected,
+        left_mode: None,
     })
+}
+
+fn decode_mode(reply: &[u8]) -> Option<crate::device_status::Mode> {
+    use crate::device_status::Mode;
+    if reply.len() != 32
+        || reply[..9] != [8, 0x7e, 3, 1, b'N', b'C', b'M', b'O', 0]
+        || reply[10..].iter().any(|byte| *byte != 0)
+    {
+        return None;
+    }
+    match reply[9] {
+        1 => Some(Mode::Wired),
+        2 => Some(Mode::Bluetooth),
+        3 => Some(Mode::Dongle),
+        _ => None,
+    }
 }
 
 #[cfg(test)]
@@ -275,6 +304,27 @@ mod tests {
         reply[12] = 1;
         reply[13..16].copy_from_slice(&[1, 0xff, 1]);
         reply
+    }
+    #[test]
+    fn mode_requires_a_supported_report_and_never_infers_from_usb() {
+        use crate::device_status::Mode;
+        let mut reply = [0; 32];
+        reply[..9].copy_from_slice(&[8, 0x7e, 3, 1, b'N', b'C', b'M', b'O', 0]);
+        for (byte, mode) in [(1, Mode::Wired), (2, Mode::Bluetooth), (3, Mode::Dongle)] {
+            reply[9] = byte;
+            assert_eq!(decode_mode(&reply), Some(mode));
+        }
+        for byte in [0, 4, 255] {
+            reply[9] = byte;
+            assert_eq!(decode_mode(&reply), None);
+        }
+        reply[9] = 1;
+        reply[31] = 1;
+        assert_eq!(decode_mode(&reply), None);
+        reply[31] = 0;
+        reply[3] = 2;
+        assert_eq!(decode_mode(&reply), None);
+        assert_eq!(decode_mode(&reply[..16]), None);
     }
     #[test]
     fn slow_setup_cannot_submit_after_the_observation_window() {

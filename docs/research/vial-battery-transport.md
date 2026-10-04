@@ -63,3 +63,11 @@ Fork `acd4689a1284f27decd4d0755a1e316fddcbb8ff` adds a separate read-only diagno
 The 32-byte reply keeps that header. Byte 8 is status (0 available, 1 unsupported version, 2 malformed request, 3 unavailable). Bytes 9–10 hold signed little-endian ADC count; 11–14 hold saturating little-endian sample age in milliseconds. Byte 15 holds sampled switch levels (bit 0 present, bit 1 Bluetooth input high, bit 2 receiver input high). Bytes 16–31 hold four little-endian registers: resolution, oversample, channel configuration and positive input selection. Errors contain no measurement payload. Switch levels belong to the cached observation, not a live position query.
 
 The normal LEFT candidate retains Mac keys, backlight, split, Vial, runtime recovery and watchdog without an extra USB logger. A paired raw sample and confirmed cell-voltage measurement are still needed before adjusting scale or estimating real capacity.
+
+### Current selected mode getter
+
+The mode-reporting update adds a separate read-only getter, preserving both battery and ADC replies. Request `08 7e 03 01 4e 43 4d 4f` (`NCMO`) has a zero tail. The 32-byte response retains that header: byte 8 is status (0 supported, 1 unsupported version, 2 malformed request), byte 9 is selected mode (0 unknown/off/automatic, 1 wired, 2 Bluetooth, 3 dongle), and bytes 10–31 are zero.
+
+The getter reads RMK's current output selection, which the left board's debounced physical-switch reader supplies. It does not read GPIO in the host handler, take another ADC sample, select a transport, or change storage. Host connection and selected mode are separate facts: USB can remain connected while the switch selects Bluetooth. Companion reads this getter with the existing USB status snapshot every three seconds; the battery measurement interval remains thirty seconds. Unsupported or malformed mode replies display mode unavailable. Physical mode through a wireless-only host connection is not yet observed by this USB getter.
+
+Focused framework and Companion protocol tests pass; all three roles cross-build and pass their image guards. Hardware acceptance is recorded separately from these checks.

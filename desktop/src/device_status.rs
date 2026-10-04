@@ -1,5 +1,20 @@
 //! Live peripheral status is independent of the firmware journey's eligibility.
 use crate::{device::Device, recovery_journey::State, runtime_recovery::Role};
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Mode {
+    Wired,
+    Bluetooth,
+    Dongle,
+}
+impl Mode {
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::Wired => "Wired mode",
+            Self::Bluetooth => "Bluetooth mode",
+            Self::Dongle => "Dongle mode",
+        }
+    }
+}
 pub(crate) type UsbKey = Vec<(u64, u64, u64, String)>;
 
 fn device(entry: &(u64, u64, u64, String)) -> Device {
@@ -83,6 +98,7 @@ pub(crate) struct Observation<'a> {
     pub devices: &'a UsbKey,
     pub recovery_locations: [Option<u64>; 3],
     pub levels: crate::battery::Levels,
+    pub left_mode: Option<Mode>,
     pub bluetooth_connected: bool,
     pub dongle_connected: bool,
     pub dongle_link_connected: bool,
@@ -124,11 +140,13 @@ impl Observation<'_> {
             connection,
             left: Peripheral {
                 level: levels.left,
+                mode: self.left_mode,
                 usb_connected: left_usb,
                 recovery: recovery[0],
             },
             right: Peripheral {
                 level: levels.right,
+                mode: None,
                 usb_connected: right_usb,
                 recovery: recovery[1],
             },
@@ -181,6 +199,7 @@ mod tests {
             Observation {
                 devices,
                 recovery_locations: locations,
+                left_mode: None,
                 levels: crate::battery::Levels {
                     left: Some(100),
                     right: Some(75),

@@ -21,6 +21,7 @@ pub enum Connection {
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Peripheral {
     pub level: Option<u8>,
+    pub(crate) mode: Option<crate::device_status::Mode>,
     pub usb_connected: bool,
     pub recovery: bool,
 }
@@ -35,7 +36,13 @@ fn segment(
 ) -> Button {
     let mut tooltip = label.to_owned();
     if label == "Left" {
-        tooltip.push_str(". Mode unavailable");
+        tooltip.push_str(". ");
+        tooltip.push_str(
+            battery
+                .and_then(|state| state.mode)
+                .map(|mode| mode.label())
+                .unwrap_or("Mode unavailable"),
+        );
     }
     let mut content = div()
         .flex()

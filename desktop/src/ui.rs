@@ -69,6 +69,7 @@ pub struct Companion {
     stopped: bool,
     message: Option<String>,
     battery_levels: battery::Levels,
+    left_mode: Option<crate::device_status::Mode>,
     right_link_connected: bool,
     dongle_link_connected: bool,
     battery_error: Option<String>,
@@ -213,6 +214,7 @@ impl Companion {
                                             .retain_for_usb_change(&key.2, &this.device_key)
                                             .expect("same battery producer");
                                         this.battery_levels.observe(readings);
+                                        this.left_mode = readings.left_mode;
                                         let levels = this.battery_levels;
                                         cx.background_executor()
                                             .spawn(async move {
@@ -292,7 +294,7 @@ impl Companion {
                 if matches!(battery_idle, Ok(true))
                     && battery_query.is_none()
                     && battery_checked
-                        .is_none_or(|last: Instant| last.elapsed() >= Duration::from_secs(30))
+                        .is_none_or(|last: Instant| last.elapsed() >= Duration::from_secs(3))
                     && let Ok(key) = this.update(cx, |this, _| {
                         (
                             this.battery_generation,
@@ -387,6 +389,7 @@ impl Companion {
             stopped: false,
             message: None,
             battery_levels: crate::status_cache::levels(),
+            left_mode: None,
             right_link_connected: false,
             dongle_link_connected: false,
             battery_error: None,
@@ -411,6 +414,7 @@ impl Companion {
             != crate::device_status::battery_source(&self.device_key);
         if replaced {
             self.dongle_link_connected = false;
+            self.left_mode = None;
             self.battery_error = None;
             self.battery_generation = self.battery_generation.wrapping_add(1);
         }
@@ -1317,6 +1321,7 @@ impl Render for Companion {
             devices: &self.device_key,
             recovery_locations: self.recovery_locations,
             levels: self.battery_levels,
+            left_mode: self.left_mode,
             bluetooth_connected: self.bluetooth_connected,
             dongle_connected: self.dongle_connected,
             dongle_link_connected: self.dongle_link_connected,

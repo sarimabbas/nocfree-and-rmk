@@ -14,6 +14,7 @@ pub(crate) struct Readings {
     pub(crate) left: BatteryStatus,
     pub(crate) right: BatteryStatus,
     pub(crate) right_connected: bool,
+    pub(crate) left_mode: Option<crate::device_status::Mode>,
 }
 
 /// Last valid percentages survive transport changes; visibility follows connection.
@@ -233,6 +234,7 @@ fn convert(
         left,
         right,
         right_connected,
+        left_mode: None,
     })
 }
 
@@ -256,6 +258,7 @@ mod tests {
             left: BatteryStatus::Unavailable,
             right: BatteryStatus::Unavailable,
             right_connected: false,
+            left_mode: None,
         });
         assert_eq!(levels.visible(true, true).left, Some(100));
         assert_eq!(levels.visible(true, true).right, Some(75));

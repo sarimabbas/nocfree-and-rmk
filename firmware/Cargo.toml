@@ -86,7 +86,7 @@ receiver = ["rmk/dongle", "rmk/adafruit_bl", "rmk/vial", "rmk/host_lock"]
 nrf-pac = { version = "=0.4.0", features = ["nrf52833", "rt"], optional = true }
 log = { version = "0.4", optional = true }
 embassy-usb = { version = "=0.6.0", optional = true }
-rmk = { git = "https://github.com/sarimabbas/rmk-nocfree", rev = "acd4689a1284f27decd4d0755a1e316fddcbb8ff", default-features = false, features = ["storage", "nrf52833_ble"] }
+rmk = { git = "https://github.com/sarimabbas/rmk-nocfree", rev = "f8ceb809adf047ee9acca554a81e24d0201ec370", default-features = false, features = ["storage", "nrf52833_ble"] }
 nocfree-input = { path = "../crates/nocfree-input" }
 nrf-sdc = { version = "0.4", features = ["defmt", "peripheral", "central", "nrf52833"] }
 nrf-mpsl = { version = "0.4", features = ["defmt", "critical-section-impl", "nrf52833"] }
