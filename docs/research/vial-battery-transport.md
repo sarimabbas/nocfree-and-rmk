@@ -71,3 +71,29 @@ The mode-reporting update adds a separate read-only getter, preserving both batt
 The getter reads RMK's current output selection, which the left board's debounced physical-switch reader supplies. It does not read GPIO in the host handler, take another ADC sample, select a transport, or change storage. Host connection and selected mode are separate facts: USB can remain connected while the switch selects Bluetooth. Companion reads this getter with the existing USB status snapshot every three seconds; the battery measurement interval remains thirty seconds. Unsupported or malformed mode replies display mode unavailable. Physical mode through a wireless-only host connection is not yet observed by this USB getter.
 
 Focused framework and Companion protocol tests pass; all three roles cross-build and pass their image guards. Hardware acceptance is recorded separately from these checks.
+
+### Status snapshot version two
+
+The battery getter also accepts request version 2 (byte 3); version 1 remains
+unchanged. Successful v2 replies retain the existing battery/link bytes and add:
+
+| Byte | Meaning |
+| --- | --- |
+| 16 | Flags: bit 0 left USB power, bit 1 right USB power, bit 2 active Wired route, bit 3 active direct Bluetooth route, bit 4 active Dongle route |
+| 17 | Selected switch policy: 0 unknown/off/automatic, 1 Wired, 2 Bluetooth, 3 Dongle |
+| 18 | Known mask: bit 0 left USB power known, bit 1 right USB power known, bit 2 active route known, bit 3 switch policy known |
+| 19–31 | Reserved zeroes |
+
+The route uses RMK's existing output-selection decision, not cable presence.
+Local power uses RMK's VBUS snapshot. Right power is an appended split message;
+an older right leaves that fact unknown. Disconnect clears the right-power
+snapshot. Existing split message tags remain unchanged. The dongle transparently
+relays this getter to LEFT, so successful queries are live communication, not
+local receiver-cache reads. This corrects the audit's earlier implication that
+the reply itself could prove no live link.
+
+Companion requests v2, falling back to v1 only after a valid unsupported reply.
+It retains percentages but expires connectivity facts after 45 seconds without
+a successful query, and clears them when the producer changes. USB power,
+selected mode, active typing route and per-part recovery render separately.
+No battery sample timestamp or active charging assertion is added.

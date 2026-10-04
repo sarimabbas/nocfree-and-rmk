@@ -57,12 +57,20 @@ endurance and instrumented wake latency have not been measured.
 
 ## Status indicator trial
 
-LEFT indicates the keyboard's host mode: Bluetooth advertising blinks blue,
-connected Bluetooth is steady blue, and connected Dongle mode on battery mixes
-blue and red. USB power releases the shared red channel for the charger, so the
-observed color can differ while charging. Wired mode turns off the blue output.
+LEFT indicates the selected host link: both wireless modes blink while seeking
+a connection. Bluetooth shows steady blue for 30 seconds after connecting;
+Dongle shows two short pulses every two seconds for 30 seconds, mixing blue and
+red on battery. Both connected indications then turn off. USB power releases
+the shared red channel for the charger, so the observed color can differ while
+charging; the connection pattern remains distinct. Wired turns off the blue output.
 RIGHT's indicator remains unchanged; it connects to LEFT rather than selecting
 a host mode. Physical color and sleep behavior are still under acceptance.
+
+Key backlights remain independent of the status indicator. Off/sleep explicitly
+stops PWM; wake and a nonzero level restart it. A disconnected battery-powered
+RIGHT darkens its backlights while seeking LEFT; local USB power preserves its
+lighting. Stored brightness is retained. A split disconnect cancels any held
+brightness repeat.
 
 ## Factory firmware
 
