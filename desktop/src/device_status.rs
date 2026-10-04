@@ -78,6 +78,65 @@ pub(crate) fn battery_available(devices: &UsbKey, recovery: &State) -> bool {
     )
 }
 
+/// One derived snapshot drives all status-bar visuals. No view mutates connection state.
+pub(crate) struct Observation<'a> {
+    pub devices: &'a UsbKey,
+    pub recovery_locations: [Option<u64>; 3],
+    pub levels: crate::battery::Levels,
+    pub bluetooth_connected: bool,
+    pub dongle_connected: bool,
+    pub dongle_link_connected: bool,
+    pub right_link_connected: bool,
+}
+pub(crate) struct Status {
+    pub connection: crate::status_strip::Connection,
+    pub left: crate::status_strip::Peripheral,
+    pub right: crate::status_strip::Peripheral,
+    pub dongle_recovery: bool,
+}
+impl Observation<'_> {
+    pub(crate) fn derive(self) -> Status {
+        use crate::status_strip::{Connection, Peripheral};
+        let recovery = self.recovery_locations.map(|location| {
+            location.is_some_and(|location| {
+                self.devices
+                    .iter()
+                    .any(|(l, v, p, _)| *l == location && *v == 0x239a && *p == 0x0029)
+            })
+        });
+        let left_usb = left_usb(self.devices) || recovery[0];
+        let connection = if left_usb {
+            Connection::Usb
+        } else if self.bluetooth_connected {
+            Connection::Bluetooth
+        } else if self.dongle_connected && self.dongle_link_connected {
+            Connection::Dongle
+        } else {
+            Connection::Disconnected
+        };
+        let left_connected = connection != Connection::Disconnected;
+        let right_usb = !right_usb(self.devices).is_empty() || recovery[1];
+        let levels = self.levels.visible(
+            left_connected || left_usb,
+            right_usb || left_connected && self.right_link_connected,
+        );
+        Status {
+            connection,
+            left: Peripheral {
+                level: levels.left,
+                usb_connected: left_usb,
+                recovery: recovery[0],
+            },
+            right: Peripheral {
+                level: levels.right,
+                usb_connected: right_usb,
+                recovery: recovery[1],
+            },
+            dongle_recovery: recovery[2],
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -114,6 +173,39 @@ mod tests {
             ),
             key,
         )
+    }
+    #[test]
+    fn one_snapshot_derives_recovery_connection_and_cached_battery() {
+        let (_, devices) = right_recovery();
+        let observe = |devices, locations| {
+            Observation {
+                devices,
+                recovery_locations: locations,
+                levels: crate::battery::Levels {
+                    left: Some(100),
+                    right: Some(75),
+                },
+                bluetooth_connected: false,
+                dongle_connected: false,
+                dongle_link_connected: false,
+                right_link_connected: false,
+            }
+            .derive()
+        };
+        let status = observe(&devices, [None, Some(2), None]);
+        assert_eq!(status.connection, crate::status_strip::Connection::Usb);
+        assert_eq!(status.left.level, Some(100));
+        assert_eq!(status.right.level, Some(75));
+        assert!(status.right.recovery);
+        let empty = vec![];
+        let disconnected = observe(&empty, [None, Some(2), None]);
+        assert_eq!(
+            disconnected.connection,
+            crate::status_strip::Connection::Disconnected
+        );
+        assert!(disconnected.left.level.is_none());
+        assert!(disconnected.right.level.is_none());
+        assert!(!disconnected.right.recovery);
     }
     #[test]
     fn right_recovery_keeps_left_usb_status() {

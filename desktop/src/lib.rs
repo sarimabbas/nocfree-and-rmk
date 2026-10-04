@@ -23,3 +23,5 @@ pub mod factory_version;
 pub mod firmware_version;
 
 mod device_status;
+
+mod status_cache;

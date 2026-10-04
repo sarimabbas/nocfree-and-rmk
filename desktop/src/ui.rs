@@ -126,13 +126,19 @@ impl Companion {
                 }
                 let idle = this.update(cx, |this, _| !this.started || this.completed);
                 if matches!(idle, Ok(true)) {
-                    let observation = cx
+                    let (observation, recovery_locations) = cx
                         .background_executor()
-                        .spawn(async { device::discover() })
+                        .spawn(async {
+                            (
+                                device::discover(),
+                                crate::status_cache::recovery_locations(),
+                            )
+                        })
                         .await;
                     if this
                         .update(cx, |this, cx| {
                             if !this.started || this.completed {
+                                this.recovery_locations = recovery_locations;
                                 let mut key = observation
                                     .as_ref()
                                     .map(|s| {
@@ -207,6 +213,12 @@ impl Companion {
                                             .retain_for_usb_change(&key.2, &this.device_key)
                                             .expect("same battery producer");
                                         this.battery_levels.observe(readings);
+                                        let levels = this.battery_levels;
+                                        cx.background_executor()
+                                            .spawn(async move {
+                                                crate::status_cache::save_levels(levels);
+                                            })
+                                            .detach();
                                         this.right_link_connected = readings.right_connected;
                                         this.dongle_link_connected = key
                                             .1
@@ -306,15 +318,21 @@ impl Companion {
                     }
                     Ok(true) => {}
                 }
-                let result = cx
+                let (result, recovery_locations) = cx
                     .background_executor()
-                    .spawn(async { device::discover() })
+                    .spawn(async {
+                        (
+                            device::discover(),
+                            crate::status_cache::recovery_locations(),
+                        )
+                    })
                     .await;
                 let running = this.update(cx, |this, cx| {
                     if !this.started || this.completed {
                         return false;
                     }
                     // Status remains live while the backup state machine owns the guide.
+                    this.recovery_locations = recovery_locations;
                     let mut key = result
                         .as_ref()
                         .map(|snapshot| {
@@ -368,7 +386,7 @@ impl Companion {
             completed: false,
             stopped: false,
             message: None,
-            battery_levels: battery::Levels::default(),
+            battery_levels: crate::status_cache::levels(),
             right_link_connected: false,
             dongle_link_connected: false,
             battery_error: None,
@@ -1295,55 +1313,23 @@ impl Render for Companion {
         } else {
             "Firmware not detected".to_owned()
         };
-        let usb = |product| {
-            self.device_key
-                .iter()
-                .any(|(_, vendor, p, _)| *vendor == 0x4c4b && *p == product)
-        };
-        let recovering = |role| {
-            self.recovery_locations[role_index(role)].is_some_and(|location| {
-                self.device_key
-                    .iter()
-                    .any(|(l, v, p, _)| *l == location && *v == 0x239a && *p == 0x0029)
-            })
-        };
-        let left_usb = crate::device_status::left_usb(&self.device_key);
-        let connection = if left_usb {
-            crate::status_strip::Connection::Usb
-        } else if self.bluetooth_connected {
-            crate::status_strip::Connection::Bluetooth
-        } else if self.dongle_connected && self.dongle_link_connected {
-            crate::status_strip::Connection::Dongle
-        } else {
-            crate::status_strip::Connection::Disconnected
-        };
-        let left_connected = connection != crate::status_strip::Connection::Disconnected;
-        let left_usb_connected = left_usb || recovering(RecoveryRole::Left);
-        let right_usb_connected = usb(0x4671)
-            || recovering(RecoveryRole::Right)
-            || self
-                .device_key
-                .iter()
-                .any(|(_, v, p, _)| *v == 0x239a && *p == 0x80d8);
-        let levels = self.battery_levels.visible(
-            left_connected || left_usb_connected,
-            right_usb_connected || left_connected && self.right_link_connected,
-        );
+        let observed = crate::device_status::Observation {
+            devices: &self.device_key,
+            recovery_locations: self.recovery_locations,
+            levels: self.battery_levels,
+            bluetooth_connected: self.bluetooth_connected,
+            dongle_connected: self.dongle_connected,
+            dongle_link_connected: self.dongle_link_connected,
+            right_link_connected: self.right_link_connected,
+        }
+        .derive();
         let status = crate::status_strip::render(
             firmware,
-            connection,
-            crate::status_strip::Peripheral {
-                level: levels.left,
-                usb_connected: left_usb_connected,
-                recovery: recovering(RecoveryRole::Left),
-            },
-            crate::status_strip::Peripheral {
-                level: levels.right,
-                usb_connected: right_usb_connected,
-                recovery: recovering(RecoveryRole::Right),
-            },
+            observed.connection,
+            observed.left,
+            observed.right,
             self.dongle_connected,
-            recovering(RecoveryRole::Receiver),
+            observed.dongle_recovery,
             cx,
         );
         div()

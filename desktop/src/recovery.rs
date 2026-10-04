@@ -86,6 +86,11 @@ pub(crate) fn run(
     // A cancelled read-only OS inventory can finish in the background; it never
     // carries an armed request or accepts a recovery drive after cancellation.
     runtime.shutdown_timeout(Duration::from_millis(100));
+    if let Ok(session) = &result
+        && let Ok((role, location, _)) = session.recovery_binding()
+    {
+        crate::status_cache::confirm(role, location);
+    }
     result
 }
 

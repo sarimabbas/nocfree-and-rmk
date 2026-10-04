@@ -17,7 +17,7 @@ pub(crate) struct Readings {
 }
 
 /// Last valid percentages survive transport changes; visibility follows connection.
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Copy, Debug, Default, serde::Serialize, serde::Deserialize)]
 pub(crate) struct Levels {
     pub left: Option<u8>,
     pub right: Option<u8>,
