@@ -11,6 +11,12 @@ use std::time::{Duration, Instant};
 const SIGNATURE: &[u8; 4] = b"NCBT";
 const HEADER: [u8; 4] = [0x08, 0x7e, 1, 1];
 
+fn request_version(version: u8) -> [u8; 33] {
+    let mut value = request();
+    value[4] = version;
+    value
+}
+
 fn request() -> [u8; 33] {
     // HIDAPI requires a zero report-ID prefix; the firmware has no report IDs.
     let mut report = [0; 33];
@@ -152,7 +158,7 @@ pub(super) fn read(started: Instant) -> Result<Readings, String> {
     same_usb(&target)?;
     submission_allowed(started, Instant::now())?;
     if device
-        .write(&request())
+        .write(&request_version(2))
         .map_err(|_| "Couldn't request the keyboard's battery details.")?
         != 33
     {
@@ -165,10 +171,30 @@ pub(super) fn read(started: Instant) -> Result<Readings, String> {
     let length = device
         .read_timeout(&mut reply, 1000)
         .map_err(|_| "Couldn't read the keyboard's battery details.")?;
-    let mut readings = decode(&reply[..length])?;
+    let readings_result = decode(&reply[..length]);
+    let mut readings = if readings_result.is_err()
+        && length == 32
+        && reply[..3] == HEADER[..3]
+        && &reply[4..8] == SIGNATURE
+        && (reply[3] != 2 || reply[8] != 0)
+    {
+        submission_allowed(started, Instant::now())?;
+        if device.write(&request_version(1)).ok() != Some(33) {
+            return Err("The battery request was incomplete.".into());
+        }
+        let length = device
+            .read_timeout(&mut reply, 1000)
+            .map_err(|_| "Couldn't read battery details.")?;
+        decode(&reply[..length])?
+    } else {
+        readings_result?
+    };
     // An optional, separate getter keeps the original battery protocol intact.
     // Unknown/older firmware cannot manufacture a switch position.
-    if role == Role::Left && started.elapsed() < Duration::from_secs(3) {
+    if role == Role::Left
+        && readings.telemetry.is_none()
+        && started.elapsed() < Duration::from_secs(3)
+    {
         let mut mode_request = [0; 33];
         mode_request[1..9].copy_from_slice(&[8, 0x7e, 3, 1, b'N', b'C', b'M', b'O']);
         if device.write(&mode_request).ok() == Some(33) {
@@ -254,13 +280,17 @@ fn decode(reply: &[u8]) -> Result<Readings, String> {
     if reply.len() != 32 || reply[..3] != HEADER[..3] || &reply[4..8] != SIGNATURE {
         return Err("This firmware does not support Companion battery details.".into());
     }
-    if reply[3] != 1 {
+    if !matches!(reply[3], 1 | 2) {
         return Err("This firmware uses an unsupported battery protocol version.".into());
     }
     if reply[8] != 0 {
         return Err("Battery details unavailable with this firmware.".into());
     }
-    if reply[16..].iter().any(|byte| *byte != 0) || reply[12] > 2 {
+    let tail = if reply[3] == 2 { 19 } else { 16 };
+    if reply[tail..].iter().any(|byte| *byte != 0)
+        || reply[12] > 2
+        || (reply[3] == 2 && (reply[16] & !31 != 0 || reply[17] > 3 || reply[18] & !15 != 0))
+    {
         return Err("The keyboard reported invalid battery details.".into());
     }
     let left = entry(&reply[9..12])?;
@@ -273,7 +303,21 @@ fn decode(reply: &[u8]) -> Result<Readings, String> {
         left,
         right,
         right_connected,
-        left_mode: None,
+        right_link_known: reply[12] != 2,
+        left_mode: if reply[3] == 2 && reply[18] & 8 != 0 {
+            match reply[17] {
+                1 => Some(crate::device_status::Mode::Wired),
+                2 => Some(crate::device_status::Mode::Bluetooth),
+                3 => Some(crate::device_status::Mode::Dongle),
+                _ => None,
+            }
+        } else {
+            None
+        },
+        telemetry: (reply[3] == 2).then_some(super::Telemetry {
+            flags: reply[16],
+            known: reply[18],
+        }),
     })
 }
 
@@ -429,7 +473,7 @@ mod tests {
     #[test]
     fn version_unsupported_echo_short_and_invalid_responses_fail_closed() {
         for (index, value) in [
-            (3, 2),
+            (3, 3),
             (8, 1),
             (8, 3),
             (9, 2),
@@ -458,5 +502,34 @@ mod tests {
         assert!(!report_layout_valid(&[
             0xa4, 0x75, 8, 0x95, 32, 0x81, 2, 0x91, 2
         ]));
+    }
+}
+
+#[cfg(test)]
+mod telemetry_tests {
+    use super::*;
+    #[test]
+    fn v2_separates_power_active_route_and_known_switch() {
+        let mut value = [0; 32];
+        value[..4].copy_from_slice(&HEADER);
+        value[3] = 2;
+        value[4..8].copy_from_slice(SIGNATURE);
+        value[9..12].copy_from_slice(&[1, 100, 0]);
+        value[13..16].copy_from_slice(&[0, 255, 0]);
+        value[16] = 1 | 8;
+        value[17] = 2;
+        value[18] = 1 | 4 | 8;
+        let decoded = decode(&value).unwrap();
+        assert_eq!(
+            decoded.left_mode,
+            Some(crate::device_status::Mode::Bluetooth)
+        );
+        assert!(decoded.telemetry.unwrap().has(0));
+        assert!(decoded.telemetry.unwrap().has(3));
+        value[18] = 4;
+        assert_eq!(decode(&value).unwrap().left_mode, None);
+        value[19] = 1;
+        assert!(decode(&value).is_err());
+        assert_eq!(request_version(2)[4], 2);
     }
 }

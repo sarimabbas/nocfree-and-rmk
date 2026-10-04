@@ -16,6 +16,7 @@ pub enum Connection {
     Dongle,
     #[default]
     Disconnected,
+    Unknown,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -24,26 +25,85 @@ pub struct Peripheral {
     pub(crate) mode: Option<crate::device_status::Mode>,
     pub usb_connected: bool,
     pub recovery: bool,
+    pub(crate) link_connected: Option<bool>,
 }
 
+/// Text and icon semantics share the same immutable per-peripheral snapshot.
+fn tooltip(
+    label: &str,
+    connection: Option<Connection>,
+    battery: Option<Peripheral>,
+    recovery: bool,
+) -> String {
+    let mut facts = vec![label.to_owned()];
+    if recovery {
+        facts.push("Recovery mode".into());
+    } else if let Some(route) = connection {
+        let mode_matches = battery.and_then(|b| b.mode).is_some_and(|mode| {
+            matches!(
+                (mode, route),
+                (crate::device_status::Mode::Wired, Connection::Usb)
+                    | (crate::device_status::Mode::Bluetooth, Connection::Bluetooth)
+                    | (crate::device_status::Mode::Dongle, Connection::Dongle)
+            )
+        });
+        if !mode_matches && let Some(mode) = battery.and_then(|b| b.mode) {
+            facts.push(mode.label().into());
+        }
+        facts.push(
+            match route {
+                Connection::Usb if label == "Dongle" => "USB connected",
+                Connection::Usb => "Wired connected",
+                Connection::Bluetooth => "Bluetooth connected",
+                Connection::Dongle => "Connected through dongle",
+                Connection::Disconnected => "Not connected",
+                Connection::Unknown => "Connection unavailable",
+            }
+            .into(),
+        );
+    } else if let Some(state) = battery {
+        facts.push(
+            match state.link_connected {
+                Some(true) => "Connected to left",
+                Some(false) => "Not connected",
+                None => "Connection unavailable",
+            }
+            .into(),
+        );
+    }
+    if let Some(state) = battery {
+        if state.usb_connected && (recovery || connection != Some(Connection::Usb)) {
+            facts.push("USB power connected".into());
+        }
+        if state.level.is_some()
+            || state.usb_connected
+            || state.link_connected == Some(true)
+            || matches!(
+                connection,
+                Some(Connection::Usb | Connection::Bluetooth | Connection::Dongle)
+            )
+        {
+            facts.push(
+                state
+                    .level
+                    .map(|v| format!("Battery {v}%"))
+                    .unwrap_or_else(|| "Battery unavailable".into()),
+            );
+        }
+    } else if recovery {
+        facts.push("USB connected".into());
+    }
+    facts.join(". ")
+}
 fn segment(
     id: &'static str,
     label: &'static str,
-    connection: Option<(IconName, Hsla, &'static str)>,
+    connection: Option<(Connection, IconName, Hsla)>,
     battery: Option<Peripheral>,
     recovery: bool,
     cx: &App,
 ) -> Button {
-    let mut tooltip = label.to_owned();
-    if label == "Left" {
-        tooltip.push_str(". ");
-        tooltip.push_str(
-            battery
-                .and_then(|state| state.mode)
-                .map(|mode| mode.label())
-                .unwrap_or("Mode unavailable"),
-        );
-    }
+    let tooltip = tooltip(label, connection.map(|c| c.0), battery, recovery);
     let mut content = div()
         .flex()
         .items_center()
@@ -51,24 +111,10 @@ fn segment(
         .text_size(px(12.))
         .font_weight(FontWeight::NORMAL)
         .child(div().text_color(cx.theme().muted_foreground).child(label));
-    if let Some((icon, color, description)) = connection {
-        tooltip.push_str(&format!(". {description}"));
+    if !recovery && let Some((_, icon, color)) = connection {
         content = content.child(Icon::new(icon).size(px(14.)).text_color(color));
     }
     if let Some(state) = battery {
-        let level = state
-            .level
-            .map(|v| format!("{v}%"))
-            .unwrap_or_else(|| "—".into());
-        if state.usb_connected && connection.is_none() {
-            tooltip.push_str(". USB connected");
-        }
-        tooltip.push_str(
-            &state
-                .level
-                .map(|v| format!(". Battery {v}%"))
-                .unwrap_or_else(|| ". Battery unavailable".into()),
-        );
         content = content
             .child(
                 Icon::new(if state.usb_connected {
@@ -79,10 +125,16 @@ fn segment(
                 .size(px(14.))
                 .text_color(cx.theme().foreground),
             )
-            .child(div().text_color(cx.theme().foreground).child(level));
+            .child(
+                div().text_color(cx.theme().foreground).child(
+                    state
+                        .level
+                        .map(|v| format!("{v}%"))
+                        .unwrap_or_else(|| "—".into()),
+                ),
+            );
     }
     if recovery {
-        tooltip.push_str(". Recovery mode");
         content = content.child(Icon::new(IconName::HeartPulse).size(px(14.)).text_color(
             gpui::rgb(if cx.theme().is_dark() {
                 0x5eead4
@@ -123,22 +175,17 @@ pub fn render(
         0x15803d
     })
     .into();
-    let (icon, color, connection) = match left_connection {
-        Connection::Usb => (IconName::Plug, plain, "USB connected"),
-        Connection::Bluetooth => (IconName::Bluetooth, blue, "Bluetooth connected"),
-        Connection::Dongle => (IconName::SatelliteDish, green, "Connected through dongle"),
-        Connection::Disconnected => (IconName::Unplug, plain, "Not connected"),
-    };
-    let (icon, color) = match left.mode {
-        Some(crate::device_status::Mode::Wired) => (IconName::Plug, plain),
-        Some(crate::device_status::Mode::Bluetooth) => (IconName::Bluetooth, blue),
-        Some(crate::device_status::Mode::Dongle) => (IconName::SatelliteDish, green),
-        None => (icon, color),
+    let (icon, color) = match left_connection {
+        Connection::Usb => (IconName::Plug, plain),
+        Connection::Bluetooth => (IconName::Bluetooth, blue),
+        Connection::Dongle => (IconName::SatelliteDish, green),
+        Connection::Disconnected => (IconName::Unplug, plain),
+        Connection::Unknown => (IconName::CircleDashed, plain),
     };
     let left_segment = segment(
         "left-status",
         "Left",
-        Some((icon, color, connection)),
+        Some((left_connection, icon, color)),
         Some(left),
         left.recovery,
         cx,
@@ -155,16 +202,20 @@ pub fn render(
         "dongle-status",
         "Dongle",
         Some((
-            if dongle_connected {
+            if dongle_connected || dongle_recovery {
+                Connection::Usb
+            } else {
+                Connection::Disconnected
+            },
+            if dongle_connected || dongle_recovery {
                 IconName::Plug
             } else {
                 IconName::Unplug
             },
-            if dongle_connected { green } else { plain },
-            if dongle_connected {
-                "USB connected"
+            if dongle_connected || dongle_recovery {
+                green
             } else {
-                "Not connected"
+                plain
             },
         )),
         None,
@@ -181,4 +232,100 @@ pub fn render(
         .right(right_segment)
         .right(Separator::vertical().h(px(16.)).mx(px(6.)))
         .right(dongle_segment)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::device_status::Mode;
+    fn half(mode: Option<Mode>, usb: bool, recovery: bool) -> Peripheral {
+        Peripheral {
+            mode,
+            usb_connected: usb,
+            recovery,
+            level: Some(100),
+            link_connected: Some(true),
+        }
+    }
+    #[test]
+    fn tooltip_matrix_keeps_route_power_and_recovery_independent() {
+        for mode in [
+            None,
+            Some(Mode::Wired),
+            Some(Mode::Bluetooth),
+            Some(Mode::Dongle),
+        ] {
+            for usb in [false, true] {
+                for recovery in [false, true] {
+                    for route in [
+                        Connection::Usb,
+                        Connection::Bluetooth,
+                        Connection::Dongle,
+                        Connection::Disconnected,
+                        Connection::Unknown,
+                    ] {
+                        let text = tooltip(
+                            "Left",
+                            Some(route),
+                            Some(half(mode, usb, recovery)),
+                            recovery,
+                        );
+                        assert_eq!(text.matches("Battery 100%").count(), 1);
+                        assert_eq!(
+                            text.matches("USB power connected").count(),
+                            usize::from(usb && (recovery || route != Connection::Usb))
+                        );
+                        if recovery {
+                            assert_eq!(
+                                text,
+                                format!(
+                                    "Left. Recovery mode{}{}. Battery 100%",
+                                    if usb { ". USB power connected" } else { "" },
+                                    ""
+                                )
+                            );
+                        }
+                        if !recovery
+                            && matches!(
+                                (mode, route),
+                                (Some(Mode::Bluetooth), Connection::Bluetooth)
+                                    | (Some(Mode::Dongle), Connection::Dongle)
+                                    | (Some(Mode::Wired), Connection::Usb)
+                            )
+                        {
+                            assert!(!text.contains("mode"));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    #[test]
+    fn disconnected_unknown_right_and_recovery_dongle_do_not_lie() {
+        let right = Peripheral {
+            link_connected: Some(false),
+            ..Default::default()
+        };
+        assert_eq!(
+            tooltip("Right", None, Some(right), false),
+            "Right. Not connected"
+        );
+        assert_eq!(
+            tooltip("Right", None, Some(Peripheral::default()), false),
+            "Right. Connection unavailable"
+        );
+        assert_eq!(
+            tooltip("Dongle", Some(Connection::Disconnected), None, true),
+            "Dongle. Recovery mode. USB connected"
+        );
+        assert_eq!(
+            tooltip(
+                "Left",
+                Some(Connection::Bluetooth),
+                Some(half(Some(Mode::Bluetooth), true, false)),
+                false
+            ),
+            "Left. Bluetooth connected. USB power connected. Battery 100%"
+        );
+    }
 }

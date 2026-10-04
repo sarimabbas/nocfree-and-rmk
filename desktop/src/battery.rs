@@ -10,11 +10,24 @@ use std::time::{Duration, Instant};
 use tokio::time::timeout;
 
 #[derive(Clone, Copy, Debug)]
+pub(crate) struct Telemetry {
+    pub(crate) flags: u8,
+    pub(crate) known: u8,
+}
+impl Telemetry {
+    pub(crate) fn has(self, bit: u8) -> bool {
+        self.flags & (1 << bit) != 0
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
 pub(crate) struct Readings {
     pub(crate) left: BatteryStatus,
     pub(crate) right: BatteryStatus,
     pub(crate) right_connected: bool,
+    pub(crate) right_link_known: bool,
     pub(crate) left_mode: Option<crate::device_status::Mode>,
+    pub(crate) telemetry: Option<Telemetry>,
 }
 
 /// Last valid percentages survive transport changes; visibility follows connection.
@@ -59,6 +72,7 @@ impl Readings {
         }
         if crate::device_status::right_usb(before) != crate::device_status::right_usb(after) {
             self.right_connected = false;
+            self.right_link_known = false;
             self.right = BatteryStatus::Unavailable;
         }
         Some(self)
@@ -234,7 +248,9 @@ fn convert(
         left,
         right,
         right_connected,
+        right_link_known: true,
         left_mode: None,
+        telemetry: None,
     })
 }
 
@@ -258,7 +274,9 @@ mod tests {
             left: BatteryStatus::Unavailable,
             right: BatteryStatus::Unavailable,
             right_connected: false,
+            right_link_known: false,
             left_mode: None,
+            telemetry: None,
         });
         assert_eq!(levels.visible(true, true).left, Some(100));
         assert_eq!(levels.visible(true, true).right, Some(75));

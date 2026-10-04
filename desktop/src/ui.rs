@@ -20,7 +20,6 @@ use crate::{
 };
 use gpui_kit as gpui;
 use gpui_kit::assets::IconName;
-use rynk::rmk_types::battery::BatteryStatus;
 
 use crate::{
     battery,
@@ -70,8 +69,10 @@ pub struct Companion {
     message: Option<String>,
     battery_levels: battery::Levels,
     left_mode: Option<crate::device_status::Mode>,
+    telemetry: Option<battery::Telemetry>,
+    telemetry_seen: Option<Instant>,
     right_link_connected: bool,
-    dongle_link_connected: bool,
+    right_link_known: bool,
     battery_error: Option<String>,
     device_key: Vec<(u64, u64, u64, String)>,
     device_generation: u64,
@@ -215,6 +216,8 @@ impl Companion {
                                             .expect("same battery producer");
                                         this.battery_levels.observe(readings);
                                         this.left_mode = readings.left_mode;
+                                        this.telemetry = readings.telemetry;
+                                        this.telemetry_seen = Some(Instant::now());
                                         let levels = this.battery_levels;
                                         cx.background_executor()
                                             .spawn(async move {
@@ -222,11 +225,7 @@ impl Companion {
                                             })
                                             .detach();
                                         this.right_link_connected = readings.right_connected;
-                                        this.dongle_link_connected = key
-                                            .1
-                                            .iter()
-                                            .any(|(_, _, product, _)| *product == 0x4644)
-                                            && !matches!(readings.left, BatteryStatus::Unavailable);
+                                        this.right_link_known = readings.right_link_known;
                                         this.battery_error = None;
                                     }
                                     Err(error) => {
@@ -390,8 +389,10 @@ impl Companion {
             message: None,
             battery_levels: crate::status_cache::levels(),
             left_mode: None,
+            telemetry: None,
+            telemetry_seen: None,
             right_link_connected: false,
-            dongle_link_connected: false,
+            right_link_known: false,
             battery_error: None,
             device_key: Vec::new(),
             device_generation: 0,
@@ -413,13 +414,17 @@ impl Companion {
         let replaced = crate::device_status::battery_source(&key)
             != crate::device_status::battery_source(&self.device_key);
         if replaced {
-            self.dongle_link_connected = false;
+            self.right_link_connected = false;
+            self.right_link_known = false;
+            self.telemetry = None;
+            self.telemetry_seen = None;
             self.left_mode = None;
             self.battery_error = None;
             self.battery_generation = self.battery_generation.wrapping_add(1);
         }
         if crate::device_status::factory_left(&key) {
             self.right_link_connected = false;
+            self.right_link_known = false;
         }
         self.firmware_versions.retain(|v| {
             key.iter().any(|(location, vendor, product, name)| {
@@ -1324,8 +1329,12 @@ impl Render for Companion {
             left_mode: self.left_mode,
             bluetooth_connected: self.bluetooth_connected,
             dongle_connected: self.dongle_connected,
-            dongle_link_connected: self.dongle_link_connected,
             right_link_connected: self.right_link_connected,
+            right_link_known: self.right_link_known,
+            telemetry: self.telemetry,
+            links_fresh: self
+                .telemetry_seen
+                .is_some_and(|t| t.elapsed() < Duration::from_secs(45)),
         }
         .derive();
         let status = crate::status_strip::render(

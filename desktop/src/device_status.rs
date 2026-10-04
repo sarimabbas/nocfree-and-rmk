@@ -101,8 +101,10 @@ pub(crate) struct Observation<'a> {
     pub left_mode: Option<Mode>,
     pub bluetooth_connected: bool,
     pub dongle_connected: bool,
-    pub dongle_link_connected: bool,
     pub right_link_connected: bool,
+    pub right_link_known: bool,
+    pub telemetry: Option<crate::battery::Telemetry>,
+    pub links_fresh: bool,
 }
 pub(crate) struct Status {
     pub connection: crate::status_strip::Connection,
@@ -121,38 +123,62 @@ impl Observation<'_> {
             })
         });
         let left_usb = left_usb(self.devices) || recovery[0];
-        let connection = if left_usb {
+        // Cable presence proves power, never the selected typing route.
+        let telemetry = self.telemetry.filter(|_| self.links_fresh);
+        let bt = telemetry
+            .filter(|t| t.known & 4 != 0)
+            .map(|t| t.has(3))
+            .unwrap_or(
+                self.bluetooth_connected
+                    && (!self.links_fresh
+                        || !matches!(self.left_mode, Some(Mode::Wired | Mode::Dongle))),
+            );
+        let dongle =
+            self.dongle_connected && telemetry.is_some_and(|t| t.known & 4 != 0 && t.has(4));
+        let wired = telemetry.is_some_and(|t| t.known & 4 != 0 && t.has(2));
+        let routes = u8::from(bt) + u8::from(dongle) + u8::from(wired);
+        let connection = if recovery[0] || routes > 1 {
+            Connection::Unknown
+        } else if wired {
             Connection::Usb
-        } else if self.bluetooth_connected {
+        } else if bt {
             Connection::Bluetooth
-        } else if self.dongle_connected && self.dongle_link_connected {
+        } else if dongle {
             Connection::Dongle
-        } else {
+        } else if telemetry.is_some_and(|t| t.known & 4 != 0) {
             Connection::Disconnected
+        } else {
+            Connection::Unknown
         };
-        let left_connected = connection != Connection::Disconnected;
+        let left_connected = matches!(
+            connection,
+            Connection::Usb | Connection::Bluetooth | Connection::Dongle
+        );
         let right_usb = !right_usb(self.devices).is_empty() || recovery[1];
         let levels = self.levels.visible(
-            left_connected || left_usb,
-            right_usb || left_connected && self.right_link_connected,
+            left_connected
+                || left_usb
+                || self.links_fresh && !battery_source(self.devices).is_empty()
+                || telemetry.is_some_and(|t| t.known & 1 != 0 && t.has(0)),
+            right_usb
+                || telemetry.is_some_and(|t| t.known & 2 != 0 && t.has(1))
+                || self.links_fresh && self.right_link_connected,
         );
         Status {
             connection,
             left: Peripheral {
                 level: levels.left,
-                mode: self.left_mode.or(match connection {
-                    Connection::Dongle => Some(Mode::Dongle),
-                    Connection::Bluetooth => Some(Mode::Bluetooth),
-                    // USB can power a half in any switch position.
-                    Connection::Usb | Connection::Disconnected => None,
-                }),
-                usb_connected: left_usb,
+                mode: self.left_mode.filter(|_| self.links_fresh),
+                usb_connected: left_usb || telemetry.is_some_and(|t| t.known & 1 != 0 && t.has(0)),
+                link_connected: None,
                 recovery: recovery[0],
             },
             right: Peripheral {
                 level: levels.right,
                 mode: None,
-                usb_connected: right_usb,
+                usb_connected: right_usb || telemetry.is_some_and(|t| t.known & 2 != 0 && t.has(1)),
+                link_connected: (self.links_fresh && self.right_link_known)
+                    .then_some(self.right_link_connected),
                 recovery: recovery[1],
             },
             dongle_recovery: recovery[2],
@@ -168,7 +194,7 @@ mod tests {
         home::{Home, UpdateAssessment},
     };
     #[test]
-    fn confirmed_dongle_link_supplies_missing_mode() {
+    fn confirmed_dongle_route_does_not_invent_switch_position() {
         let devices = vec![];
         let status = Observation {
             devices: &devices,
@@ -180,13 +206,82 @@ mod tests {
             left_mode: None,
             bluetooth_connected: false,
             dongle_connected: true,
-            dongle_link_connected: true,
             right_link_connected: true,
+            right_link_known: true,
+            telemetry: Some(crate::battery::Telemetry {
+                flags: 16,
+                known: 4,
+            }),
+            links_fresh: true,
         }
         .derive();
         assert_eq!(status.connection, crate::status_strip::Connection::Dongle);
-        assert_eq!(status.left.mode, Some(Mode::Dongle));
+        assert_eq!(status.left.mode, None);
         assert_eq!(status.left.level, Some(100));
+    }
+    #[test]
+    fn live_route_flags_override_stale_os_link_without_turning_power_into_typing() {
+        use crate::status_strip::Connection;
+        let (_, devices) = right_recovery();
+        let derive = |flags, known, fresh| {
+            Observation {
+                devices: &devices,
+                recovery_locations: [None; 3],
+                levels: crate::battery::Levels {
+                    left: Some(0),
+                    right: Some(75),
+                },
+                left_mode: Some(Mode::Dongle),
+                bluetooth_connected: true,
+                dongle_connected: true,
+                right_link_connected: true,
+                right_link_known: true,
+                telemetry: Some(crate::battery::Telemetry { flags, known }),
+                links_fresh: fresh,
+            }
+            .derive()
+        };
+        assert_eq!(
+            derive(1 | 16, 1 | 4 | 8, true).connection,
+            Connection::Dongle
+        );
+        assert_eq!(
+            derive(1, 1 | 4 | 8, true).connection,
+            Connection::Disconnected
+        );
+        assert_eq!(derive(1, 1, true).connection, Connection::Unknown);
+        assert_eq!(
+            derive(1 | 4 | 8, 1 | 4, true).connection,
+            Connection::Unknown
+        );
+        let stale = derive(1 | 16, 1 | 4 | 8, false);
+        assert_eq!(stale.connection, Connection::Bluetooth);
+        assert_eq!(stale.left.mode, None);
+        assert_eq!(stale.right.level, None);
+        assert_eq!(stale.right.link_connected, None);
+        assert_eq!(derive(1 | 16, 1 | 4 | 8, true).left.level, Some(0));
+    }
+    #[test]
+    fn factory_usb_without_known_switch_is_power_only() {
+        let devices = vec![(1, 0x2886, 0x8029, "NocFree & ANSI".into())];
+        let observed = Observation {
+            devices: &devices,
+            recovery_locations: [None; 3],
+            levels: crate::battery::Levels::default(),
+            left_mode: None,
+            bluetooth_connected: false,
+            dongle_connected: false,
+            right_link_connected: false,
+            right_link_known: false,
+            telemetry: None,
+            links_fresh: false,
+        }
+        .derive();
+        assert_eq!(
+            observed.connection,
+            crate::status_strip::Connection::Unknown
+        );
+        assert!(observed.left.usb_connected);
     }
     fn right_recovery() -> (Home, UsbKey) {
         let devices = vec![
@@ -232,13 +327,15 @@ mod tests {
                 },
                 bluetooth_connected: false,
                 dongle_connected: false,
-                dongle_link_connected: false,
                 right_link_connected: false,
+                right_link_known: true,
+                telemetry: None,
+                links_fresh: true,
             }
             .derive()
         };
         let status = observe(&devices, [None, Some(2), None]);
-        assert_eq!(status.connection, crate::status_strip::Connection::Usb);
+        assert_eq!(status.connection, crate::status_strip::Connection::Unknown);
         assert_eq!(status.left.level, Some(100));
         assert_eq!(status.right.level, Some(75));
         assert!(status.right.recovery);
@@ -246,7 +343,7 @@ mod tests {
         let disconnected = observe(&empty, [None, Some(2), None]);
         assert_eq!(
             disconnected.connection,
-            crate::status_strip::Connection::Disconnected
+            crate::status_strip::Connection::Unknown
         );
         assert!(disconnected.left.level.is_none());
         assert!(disconnected.right.level.is_none());
