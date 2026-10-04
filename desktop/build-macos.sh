@@ -3,7 +3,7 @@ set -eu
 
 case "${1:-}" in
   -h|--help)
-    echo 'Build the local read-only NocFree Companion macOS app.'
+    echo 'Build the local NocFree Companion macOS app.'
     echo 'Usage: desktop/build-macos.sh [--help | --version]'
     echo 'Requires Rust, macOS and Apple command-line tools. Creates dist/NocFree Companion.app.'
     exit 0 ;;
@@ -14,7 +14,7 @@ esac
 [ "$#" -le 1 ] || { echo 'Unexpected arguments. Use --help.' >&2; exit 2; }
 [ "$(uname -s)" = Darwin ] || { echo 'This prototype supports macOS only.' >&2; exit 1; }
 cd "$(dirname "$0")"
-echo 'Building the read-only companion…'
+echo 'Building NocFree Companion…'
 cargo build --locked
 bundle='../dist/NocFree Companion.app'
 mkdir -p "$bundle/Contents/MacOS" "$bundle/Contents/Resources"

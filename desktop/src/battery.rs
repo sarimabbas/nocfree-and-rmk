@@ -31,7 +31,17 @@ async fn read_usb() -> Result<Readings, String> {
         .collect();
     if selected.len() != 1 {
         return Err(if selected.is_empty() {
-            "Connect the left half by USB to check both batteries.".to_owned()
+            let normal = timeout(Duration::from_secs(5), nusb::list_devices())
+                .await
+                .map_err(|_| "Checking USB battery support took too long.".to_owned())?
+                .map_err(|_| "Couldn't inspect USB battery support.".to_owned())?;
+            missing_service_message(normal.into_iter().any(|device| {
+                nocfree_companion::runtime_recovery::matches(
+                    nocfree_companion::runtime_recovery::Role::Left,
+                    &device,
+                )
+            }))
+            .to_owned()
         } else {
             "Connect only one NocFree RMK keyboard to check its batteries.".to_owned()
         });
@@ -74,6 +84,16 @@ async fn read_usb() -> Result<Readings, String> {
         return Err("The keyboard connection changed during the battery check.".to_owned());
     }
     Ok(result)
+}
+
+/// A connected normal runtime interface without Rynk is supported by the Vial
+/// firmware, but Vial does not supply the Rynk battery getters.
+fn missing_service_message(local_runtime_connected: bool) -> &'static str {
+    if local_runtime_connected {
+        "Battery details unavailable with this firmware."
+    } else {
+        "Connect the left half by USB to check both batteries."
+    }
 }
 
 fn same_connection<T: PartialEq>(expected: &T, observed: impl IntoIterator<Item = T>) -> bool {
@@ -120,6 +140,18 @@ mod tests {
             charge_state: ChargeState::Unknown,
             level: value,
         }
+    }
+
+    #[test]
+    fn connected_runtime_without_battery_service_is_not_reported_as_disconnected() {
+        assert_eq!(
+            missing_service_message(true),
+            "Battery details unavailable with this firmware."
+        );
+        assert_eq!(
+            missing_service_message(false),
+            "Connect the left half by USB to check both batteries."
+        );
     }
 
     #[test]

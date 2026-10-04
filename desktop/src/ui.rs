@@ -13,8 +13,8 @@ use crate::flow_presentation::{self, FlowProgress};
 use gpui_kit as gpui;
 use gpui_kit::assets::IconName;
 use nocfree_companion::{
-    experimental_recovery::Role as RecoveryRole,
     recovery_journey::{Attempt, RecoveryJourney, State as RecoveryState},
+    runtime_recovery::Role as RecoveryRole,
 };
 use rynk::rmk_types::battery::{BatteryStatus, ChargeState};
 
@@ -34,6 +34,7 @@ use gpui::{
 use gpui_kit::component::{
     ActiveTheme, Disableable, Icon, Sizable, Theme,
     button::{Button, ButtonVariants},
+    popover::Popover,
     sidebar::{Sidebar, SidebarGroup, SidebarMenuItem},
     spinner::Spinner,
     status_bar::StatusBar,
@@ -121,8 +122,10 @@ impl Companion {
                                     observation.as_ref().is_ok_and(|snapshot| {
                                         snapshot.devices.iter().any(|d| {
                                             d.vendor == 0x4c4b
-                                                && d.product == 0x4643
-                                                && d.name == "NocFree AND RMK Receiver"
+                                                && ((d.product == 0x4643
+                                                    && d.name == "NocFree AND RMK Receiver")
+                                                    || (d.product == 0x4644
+                                                        && d.name == "NocFree RMK Receiver"))
                                         })
                                     });
                                 let next = Home::observe(
@@ -665,7 +668,7 @@ impl Companion {
                 BatteryStatus::Unavailable => "Unknown".into(),
             };
         }
-        if right {
+        if right || self.battery_error.is_some() {
             "Unknown".into()
         } else {
             self.home
@@ -825,6 +828,20 @@ impl Render for Companion {
             .left(firmware)
             .right(format!("Left: {}", self.battery_summary(false)))
             .right(format!("Right: {}", self.battery_summary(true)))
+            .when_some(self.battery_error.clone(), |status, error| {
+                status.right(
+                    Popover::new("battery-details")
+                        .trigger(
+                            Button::new("show-battery-details")
+                                .label("Details")
+                                .ghost()
+                                .small(),
+                        )
+                        .content(move |_, _, _| {
+                            div().w(px(280.)).text_size(px(13.)).child(error.clone())
+                        }),
+                )
+            })
             .right(if self.dongle_connected {
                 "Receiver: USB"
             } else {

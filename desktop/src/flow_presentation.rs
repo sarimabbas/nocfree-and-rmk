@@ -47,8 +47,8 @@ fn backup_view(state: BackupState, copy_saved: bool) -> FlowProgress {
 mod tests {
     use super::*;
     use crate::{
-        experimental_recovery::Role,
         recovery_journey::{Procedure, RecoveryJourney},
+        runtime_recovery::Role,
     };
     #[test]
     fn recovery_progress_waits_for_actual_drive_result_and_cancel_clears_it() {

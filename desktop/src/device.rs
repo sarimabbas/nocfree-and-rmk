@@ -45,6 +45,7 @@ impl Device {
             (0x2886, 0x8029, "NocFree _ ANSI" | "NocFree & ANSI") => Some(Role::Left),
             (0x4c4b, 0x4643, "NocFree RMK") => Some(Role::Left),
             (0x4c4b, 0x4651, "NocFree Input Probe Right Mac") => Some(Role::Right),
+            (0x4c4b, 0x4671, "NocFree RMK Right") => Some(Role::Right),
             _ => None,
         }
     }
@@ -229,6 +230,32 @@ pub(crate) mod tests {
             .role(),
             None
         );
+    }
+    #[test]
+    fn right_management_identity_cannot_identify_left_or_legacy_stage() {
+        let right = Device {
+            location: 7,
+            vendor: 0x4c4b,
+            product: 0x4671,
+            name: "NocFree RMK Right".into(),
+        };
+        assert_eq!(right.role(), Some(Role::Right));
+        assert!(!right.rmk_left());
+        for (product, name) in [
+            (0x4661, "NocFree RMK Right"),
+            (0x4671, "NocFree RMK"),
+            (0x4644, "NocFree RMK Receiver"),
+        ] {
+            assert_eq!(
+                Device {
+                    product,
+                    name: name.into(),
+                    ..right.clone()
+                }
+                .role(),
+                None
+            );
+        }
     }
     #[test]
     fn full_rmk_left_identity_excludes_receiver_and_near_matches() {

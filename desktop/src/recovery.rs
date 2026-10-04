@@ -1,7 +1,7 @@
 //! Explicitly armed recovery guide. Requests recovery only; never writes firmware.
 use crate::{device, session::Session};
-use nocfree_companion::experimental_recovery::{ArmedRequest, Role};
 use nocfree_companion::recovery_journey::Procedure;
+use nocfree_companion::runtime_recovery::{ArmedRequest, Role, matches as runtime_matches};
 use std::{
     sync::{
         Arc,
@@ -31,7 +31,7 @@ pub(crate) fn run(
         let mut requested_at=None;
         let mut inventory = DiscoveryPoll::default();
         // Wait for the user's physical action without expiring while they read.
-        // Once a matching stage appears, dispatch exactly once; the armed request
+        // Once a matching runtime device appears, dispatch exactly once; the armed request
         // and subsequent drive observation retain their finite deadlines.
         loop {
             if cancelled.load(Ordering::Relaxed) { return Err("Recovery cancelled.".into()); }
@@ -41,7 +41,7 @@ pub(crate) fn run(
             if requested_at.is_none() && !matches!(last_procedure, Some(Procedure::FactoryLeft | Procedure::FactoryRight | Procedure::FactoryReceiver)) {
                 let devices=tokio::time::timeout(Duration::from_secs(2),nusb::list_devices()).await
                     .map_err(|_| "USB discovery took too long.")?.map_err(|_| "Couldn’t inspect USB devices.")?;
-                let mut targets=devices.filter(|d| d.vendor_id()==0x4c4b && d.product_id()==role.product());
+                let mut targets=devices.filter(|d| runtime_matches(role,d));
                 if let Some(target)=targets.next() {
                     if targets.next().is_some() { return Err("Connect only one of the selected component.".into()); }
                     let request=ArmedRequest::arm(role,&target).map_err(str::to_owned)?;
@@ -49,7 +49,7 @@ pub(crate) fn run(
                     #[cfg(target_os="macos")]
                     { requested_location=Some(u64::from(target.location_id())); }
                     requested_at=Some(Instant::now());
-                    let _ = progress.send(Procedure::StartupApp);
+                    let _ = progress.send(Procedure::RuntimeApp);
                     // A successful reset may disconnect before acknowledgement.
                     // Only the subsequently correlated drive determines success.
                     let _=request.request_detach(&cancelled).await;
@@ -63,11 +63,11 @@ pub(crate) fn run(
             let snapshot = snapshot?;
             if cancelled.load(Ordering::Relaxed) { return Err("Recovery cancelled.".into()); }
             if let Some(location)=requested_location {
-                // The startup endpoint itself is transitional, not a normal keyboard.
+                // The runtime endpoint is bound locally before requesting recovery.
                 // Bind and validate when recovery begins enumerating; discovery may
-                // still see the stage until its detach/reset has taken effect.
+                // still see the runtime device until its detach/reset has taken effect.
                 if snapshot.devices.iter().any(|device| device.bootloader()) || !snapshot.mounts.is_empty() {
-                    session.bind_startup(location);
+                    session.bind_recovery(location);
                     session.observe(Ok(snapshot));
                     if let Some(error) = session.view().error { return Err(error); }
                     if session.view().can_save { return Ok(session); }
@@ -89,8 +89,8 @@ pub(crate) fn run(
     result
 }
 
-// Only one read-only inventory runs at a time. Slow ioreg must not consume
-// the startup endpoint's two-second window. An inventory started before a
+// Only one read-only inventory runs at a time. Slow ioreg must not block
+// USB recovery polling. An inventory started before a
 // detach request cannot prove that request's resulting recovery drive.
 #[derive(Default)]
 struct DiscoveryPoll {
@@ -146,7 +146,12 @@ fn factory_observation(
         {
             *disconnected = true;
         }
-        return Ok((None, false));
+        let procedure = snapshot
+            .devices
+            .iter()
+            .any(|d| d.role() == Some(normal_role))
+            .then_some(Procedure::Reconnect);
+        return Ok((procedure, false));
     }
     session.observe(Ok(snapshot.clone()));
     let view = session.view();
@@ -220,7 +225,7 @@ mod tests {
             assert_eq!(
                 factory_observation(&mut session, role, &mut disconnected, factory_normal(role))
                     .unwrap(),
-                (None, false)
+                (Some(Procedure::Reconnect), false)
             );
             factory_observation(
                 &mut session,
@@ -309,7 +314,7 @@ mod tests {
         ));
     }
     #[test]
-    fn drive_must_follow_the_selected_stage_on_the_same_usb_connection() {
+    fn drive_must_follow_the_selected_runtime_on_the_same_usb_connection() {
         let mut snapshot = device::Snapshot {
             devices: vec![device::Device {
                 location: 10,
@@ -325,12 +330,12 @@ mod tests {
         };
         let mut session = Session::new();
         session.select(device::Role::Left);
-        session.bind_startup(10);
+        session.bind_recovery(10);
         session.observe(Ok(snapshot.clone()));
         assert!(session.view().can_save);
         let mut wrong_port = Session::new();
         wrong_port.select(device::Role::Left);
-        wrong_port.bind_startup(11);
+        wrong_port.bind_recovery(11);
         wrong_port.observe(Ok(snapshot.clone()));
         assert!(!wrong_port.view().can_save);
         assert!(wrong_port.view().error.is_some());

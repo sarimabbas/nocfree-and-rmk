@@ -44,9 +44,9 @@ impl Session {
     pub fn new() -> Self {
         Self::default()
     }
-    /// Adopt the USB location of a freshly validated, role-specific startup endpoint.
+    /// Adopt the USB location of a freshly validated, role-specific local USB endpoint.
     /// The caller must arm that endpoint first; product strings alone are not evidence.
-    pub fn bind_startup(&mut self, location: u64) {
+    pub fn bind_recovery(&mut self, location: u64) {
         self.location = Some(location);
         self.rmk_left = self.role == Some(Role::Left);
         self.factory_right = false;
@@ -695,7 +695,7 @@ mod tests {
     fn shared_recovery_is_adopted_only_before_saving_for_the_selected_half() {
         let mut recovered = Session::new();
         recovered.select(Role::Left);
-        recovered.bind_startup(7);
+        recovered.bind_recovery(7);
         recovered.observe(Ok(boot(true)));
         let mut journey = crate::journey::Journey::backup();
         assert!(journey.accept_recovery(recovered));
@@ -703,7 +703,7 @@ mod tests {
 
         let mut wrong_role = Session::new();
         wrong_role.select(Role::Right);
-        wrong_role.bind_startup(7);
+        wrong_role.bind_recovery(7);
         wrong_role.observe(Ok(boot(true)));
         let mut fresh = crate::journey::Journey::backup();
         assert!(!fresh.accept_recovery(wrong_role));
@@ -712,15 +712,15 @@ mod tests {
         assert_eq!(fresh.state(), crate::journey::State::Paused);
     }
     #[test]
-    fn startup_binding_rejects_wrong_port_or_unreviewed_board_metadata() {
+    fn local_recovery_binding_rejects_wrong_port_or_unreviewed_board_metadata() {
         let mut session = Session::new();
         session.select(Role::Left);
-        session.bind_startup(8);
+        session.bind_recovery(8);
         session.observe(Ok(boot(true)));
         assert!(!session.view().can_save);
         assert!(session.view().error.is_some());
         session.select(Role::Left);
-        session.bind_startup(7);
+        session.bind_recovery(7);
         let mut unknown = boot(true);
         unknown.mounts[0].info = "UF2 Bootloader 0.9.2-39-g0147d71\nModel: NocFree &".into();
         session.observe(Ok(unknown));

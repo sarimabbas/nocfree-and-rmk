@@ -66,7 +66,7 @@ impl Journey {
             return false;
         }
         self.session = session;
-        // A startup endpoint proves only this selected component, not an unseen partner.
+        // A local recovery endpoint proves only this selected component, not an unseen partner.
         self.plan_known = true;
         self.advance();
         true

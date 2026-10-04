@@ -2,9 +2,9 @@ mod battery;
 mod device;
 mod flow_presentation;
 mod home;
-#[cfg(test)]
-use nocfree_companion::experimental_recovery;
 use nocfree_companion::recovery_journey;
+#[cfg(test)]
+use nocfree_companion::runtime_recovery;
 mod journey;
 mod recovery;
 mod session;

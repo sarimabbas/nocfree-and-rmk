@@ -19,8 +19,8 @@ pub enum ImagePolicy {
     ReceiverProtected,
 }
 impl ImagePolicy {
-    pub fn role(self) -> crate::experimental_recovery::Role {
-        use crate::experimental_recovery::Role;
+    pub fn role(self) -> crate::runtime_recovery::Role {
+        use crate::runtime_recovery::Role;
         match self {
             Self::LegacyLeftMigration | Self::LeftStartup => Role::Left,
             Self::RightStartup => Role::Right,
@@ -106,7 +106,7 @@ impl ValidatedImage {
     pub fn policy(&self) -> ImagePolicy {
         self.policy
     }
-    pub fn role(&self) -> crate::experimental_recovery::Role {
+    pub fn role(&self) -> crate::runtime_recovery::Role {
         self.policy.role()
     }
     pub fn sha256(&self) -> &str {

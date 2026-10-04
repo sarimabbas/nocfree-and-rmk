@@ -1,6 +1,6 @@
 //! One explicitly selected component and one bounded recovery attempt at a time.
 //! Ready means the transport observed a correlated recovery drive, not a firmware update.
-use crate::experimental_recovery::Role;
+use crate::runtime_recovery::Role;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum State {
@@ -13,16 +13,28 @@ pub enum State {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Procedure {
+    Reconnect,
     FactoryLeft,
     FactoryRight,
     FactoryReceiver,
     Manual,
-    StartupApp,
+    RuntimeApp,
 }
 
 impl Procedure {
     pub fn instruction(self, role: Role) -> &'static str {
         match self {
+            Self::Reconnect => match role {
+                Role::Left => {
+                    "Disconnect the other parts from USB. Unplug the left USB cable, then reconnect it to the same port."
+                }
+                Role::Right => {
+                    "Disconnect the other parts from USB. Unplug the right USB cable, then reconnect it to the same port."
+                }
+                Role::Receiver => {
+                    "Disconnect both halves from USB. Unplug the receiver, then reconnect it to the same port."
+                }
+            },
             Self::FactoryLeft => {
                 "Keep USB connected and the switch in WIRED. Hold Fn + 5 for five seconds, then release."
             }
@@ -35,7 +47,7 @@ impl Procedure {
             Self::Manual => {
                 "Use the recovery procedure for your installed firmware, keeping the same USB port."
             }
-            Self::StartupApp => instruction(role),
+            Self::RuntimeApp => "Keep USB connected. We’re opening its recovery drive.",
         }
     }
 }
@@ -116,18 +128,12 @@ impl RecoveryJourney {
     }
 }
 
-/// A physical cold-start guide. USB reconnection alone does not reset battery-powered halves.
+/// Only physical connection is required; normal RMK recovery has no startup window.
 pub fn instruction(role: Role) -> &'static str {
     match role {
-        Role::Left => {
-            "Disconnect the right USB cable and receiver. Move the left switch to WIRED. Unplug its USB cable for five seconds, then reconnect it."
-        }
-        Role::Right => {
-            "Disconnect the left USB cable and receiver. Turn the right half OFF. Unplug its USB cable for five seconds, then reconnect it while still OFF."
-        }
-        Role::Receiver => {
-            "Disconnect both halves’ USB cables. Unplug the receiver for five seconds, then plug it back in."
-        }
+        Role::Left => "Connect the left half by USB. We’ll find the steps for its firmware.",
+        Role::Right => "Connect the right half by USB. We’ll find the steps for its firmware.",
+        Role::Receiver => "Plug in the USB receiver. We’ll find the steps for its firmware.",
     }
 }
 
@@ -145,7 +151,7 @@ mod tests {
         );
         flow.cancel();
         let current = flow.start(Role::Left).unwrap();
-        assert!(!flow.observe(old, Role::Left, Procedure::StartupApp));
+        assert!(!flow.observe(old, Role::Left, Procedure::RuntimeApp));
         assert!(!flow.complete(old, Role::Left, Ok(())));
         assert!(flow.observe(current, Role::Left, Procedure::FactoryLeft));
         assert!(flow.complete(current, Role::Left, Err("Different USB connection".into())));
@@ -193,7 +199,7 @@ mod tests {
         assert!(flow.complete(
             attempt,
             Role::Left,
-            Err("Unsupported firmware or no cold start".into())
+            Err("Unsupported firmware or missing USB connection".into())
         ));
         assert!(matches!(flow.state(), State::Failed(Role::Left, _)));
     }
