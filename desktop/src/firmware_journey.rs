@@ -61,6 +61,7 @@ struct FirmwareData {
     baseline: Option<Baseline>,
     error: Option<String>,
     attempted: bool,
+    install_authorized: bool,
     // This is failure history, not a second mutable current state.
     retry_phase: Option<Phase>,
 }
@@ -71,6 +72,7 @@ impl FirmwareData {
 }
 
 enum FirmwareEvent<'a> {
+    AuthorizeInstall,
     RecoverySaved(&'a Baseline, bool),
     TransferAttempted,
     TransferResult(&'a Result<(), String>),
@@ -97,6 +99,12 @@ impl StatigState<FirmwareData> for Phase {
     ) -> Outcome<Self> {
         use Outcome::{Handled, Transition};
         match event {
+            FirmwareEvent::AuthorizeInstall => {
+                if !matches!(self, Phase::Cancelled | Phase::Complete) {
+                    data.install_authorized = true;
+                }
+                return Handled;
+            }
             FirmwareEvent::Cancel => {
                 data.retry_phase = None;
                 return Transition(Phase::Cancelled);
@@ -168,6 +176,27 @@ impl StatigState<FirmwareData> for Phase {
             .devices
             .iter()
             .any(|d| d.location == baseline.location);
+        // Verification already proved the installed image. A fresh normal
+        // descriptor on its bound port proves it returned; an unplug can occur
+        // entirely between discovery polls, so do not require observing absence.
+        let returned = matches!(
+            phase,
+            Phase::Disconnect
+                | Phase::OffWait(_)
+                | Phase::PowerOn
+                | Phase::StartWait(_)
+                | Phase::Reconnect
+        ) && normal_return(snapshot, data.role(), baseline.location);
+        if returned {
+            return if data.index == PLAN.len() - 1 {
+                Transition(Phase::Complete)
+            } else {
+                data.index += 1;
+                data.baseline = None;
+                data.attempted = false;
+                Transition(Phase::Recovery)
+            };
+        }
         let next = match phase {
             Phase::Disconnect if !connected => Phase::OffWait(*now),
             Phase::OffWait(_) | Phase::PowerOn | Phase::StartWait(_) if connected => {
@@ -187,33 +216,7 @@ impl StatigState<FirmwareData> for Phase {
             {
                 Phase::Reconnect
             }
-            Phase::Reconnect if connected => {
-                let normal: Vec<_> = snapshot
-                    .devices
-                    .iter()
-                    .filter(|d| {
-                        d.vendor == 0x4c4b
-                            && d.product == data.role().product() as u64
-                            && d.name == data.role().name()
-                    })
-                    .collect();
-                if normal.len() == 1
-                    && normal[0].location == baseline.location
-                    && snapshot.mounts.is_empty()
-                    && !snapshot.devices.iter().any(|d| d.bootloader())
-                {
-                    if data.index == PLAN.len() - 1 {
-                        Phase::Complete
-                    } else {
-                        data.index += 1;
-                        data.baseline = None;
-                        data.attempted = false;
-                        Phase::Recovery
-                    }
-                } else {
-                    Phase::Disconnect
-                }
-            }
+            Phase::Reconnect if connected => Phase::Disconnect,
             phase => phase,
         };
         if next == *self {
@@ -299,6 +302,15 @@ fn correlated(snapshot: &Snapshot, location: u64, mount: &BootMount) -> bool {
         && boots[0].location == location
         && snapshot.mounts.as_slice() == [mount.clone()]
 }
+fn normal_return(snapshot: &Snapshot, role: Role, location: u64) -> bool {
+    let mut normal = snapshot.devices.iter().filter(|d| {
+        d.vendor == 0x4c4b && d.product == role.product() as u64 && d.name == role.name()
+    });
+    normal.next().is_some_and(|d| d.location == location)
+        && normal.next().is_none()
+        && snapshot.mounts.is_empty()
+        && !snapshot.devices.iter().any(|d| d.bootloader())
+}
 // An app restart does not erase uncertainty. A pending journal for this part
 // must reconcile against its original backup and the same pinned target.
 fn reconcile_prior(
@@ -369,10 +381,23 @@ impl FirmwareJourney {
                 baseline: None,
                 error: None,
                 attempted: false,
+                install_authorized: false,
                 retry_phase: None,
             }
             .state_machine(),
         }
+    }
+    /// Overall install approval authorizes subsequent guarded per-part copies.
+    /// Readback, fresh backup, bound port and durable one-shot intent still apply.
+    pub fn authorize_install(&mut self) {
+        self.machine.handle(&FirmwareEvent::AuthorizeInstall);
+    }
+    pub fn transfer_if_ready(&mut self) -> Result<bool, String> {
+        if !self.machine.inner().install_authorized || !self.view().can_transfer {
+            return Ok(false);
+        }
+        self.transfer()?;
+        Ok(true)
     }
     pub fn role(&self) -> Role {
         PLAN[self.machine.inner().index]
@@ -400,10 +425,7 @@ impl FirmwareJourney {
                 "Set its switch to middle WIRED, then unplug USB.",
             ),
             Phase::Disconnect => ("Unplug the dongle", "Unplug the dongle for five seconds."),
-            Phase::OffWait(_) => (
-                "Keep it unplugged",
-                "Wait five seconds before reconnecting.",
-            ),
+            Phase::OffWait(_) => ("Keep it unplugged", "Keep USB unplugged for five seconds."),
             Phase::PowerOn => (
                 "Turn the right half ON",
                 "Keep USB unplugged. Turn it ON, then continue.",
@@ -765,6 +787,43 @@ mod tests {
         assert!(matches!(*journey.machine.state(), Phase::OffWait(_)));
     }
     #[test]
+    fn verified_fresh_normal_return_can_finish_between_discovery_polls() {
+        for role in PLAN {
+            for phase in [
+                Phase::Disconnect,
+                Phase::OffWait(Instant::now()),
+                Phase::PowerOn,
+                Phase::StartWait(Instant::now()),
+                Phase::Reconnect,
+            ] {
+                let mut journey = model(role);
+                unsafe {
+                    *journey.machine.state_mut() = phase;
+                }
+                journey.observe(Ok(normal(role, 10)));
+                assert!(journey.view().complete || journey.view().needs_recovery);
+                assert_ne!(*journey.machine.state(), phase);
+            }
+        }
+        let mut journey = model(Role::Right);
+        let mut ambiguous = normal(Role::Right, 10);
+        ambiguous.devices.extend(normal(Role::Right, 11).devices);
+        journey.observe(Ok(ambiguous));
+        assert_eq!(*journey.machine.state(), Phase::Disconnect);
+        journey.observe(Ok(normal(Role::Right, 11)));
+        assert!(matches!(journey.machine.state(), Phase::OffWait(_)));
+        assert_eq!(journey.role(), Role::Right);
+    }
+    #[test]
+    fn automatic_transfer_requires_overall_approval_and_a_ready_phase() {
+        let mut journey = FirmwareJourney::new(crate::release::fixture());
+        assert!(!journey.transfer_if_ready().unwrap());
+        journey.authorize_install();
+        assert!(!journey.transfer_if_ready().unwrap());
+        journey.cancel();
+        assert!(!journey.transfer_if_ready().unwrap());
+    }
+    #[test]
     fn factory_plan_keeps_left_until_dongle_entry_is_finished() {
         assert_eq!(PLAN, [Role::Receiver, Role::Right, Role::Left]);
     }
@@ -899,12 +958,11 @@ mod tests {
             journey.observe_at(Err("USB inventory unavailable.".into()), now);
             assert_eq!(*journey.machine.state(), Phase::Failed);
             assert_eq!(journey.machine.inner().retry_phase, Some(Phase::Disconnect));
-            // An already attached board cannot bypass the restart dance.
-            journey.observe_at(Ok(normal(Role::Right, 10)), now + Duration::from_secs(60));
-            assert_eq!(*journey.machine.state(), Phase::Disconnect);
+            // Errors cannot supply evidence of a power-off interval. A new
+            // successful observation starts its own interval.
+            journey.observe_at(Ok(Snapshot::default()), now + Duration::from_secs(61));
             assert_eq!(journey.role(), Role::Right);
             assert!(journey.machine.inner().attempted);
-            journey.observe_at(Ok(Snapshot::default()), now + Duration::from_secs(61));
             assert_eq!(
                 *journey.machine.state(),
                 Phase::OffWait(now + Duration::from_secs(61))

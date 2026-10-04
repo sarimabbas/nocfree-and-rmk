@@ -9,7 +9,7 @@ use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use std::path::{Component, Path, PathBuf};
 
-const MANIFEST_SHA256: &str = "2012f3cbcb2f904a9b9e920bc99af0d982ec4b0d587b1bd6e77a6999971129a8";
+const MANIFEST_SHA256: &str = "f2b333a0060fe2771bbabe16eda08ee976e4a186e482674297dab26110ed1f20";
 const MAX_FILE: u64 = 1024 * 1024;
 
 #[derive(Clone, Debug, Deserialize)]
@@ -30,6 +30,9 @@ pub struct ImageMetadata {
     pub rmk_revision: String,
     pub battery_calibration: String,
     pub storage_revision: String,
+    pub storage_preserved: bool,
+    pub recovery_evidence: String,
+    pub current_image_runtime_recovery: bool,
     pub bootloader: String,
     pub board_id: String,
     pub family_id: u32,
@@ -234,6 +237,9 @@ pub(crate) fn fixture() -> FirmwareRelease {
                 rmk_revision: "synthetic".into(),
                 battery_calibration: "none".into(),
                 storage_revision: "synthetic".into(),
+                storage_preserved: true,
+                recovery_evidence: "synthetic".into(),
+                current_image_runtime_recovery: false,
                 bootloader: "0.9.2-39-g0147d71".into(),
                 board_id: "NocFree &".into(),
                 family_id: proof.family_id(),

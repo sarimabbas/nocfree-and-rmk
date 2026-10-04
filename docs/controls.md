@@ -93,3 +93,27 @@ Use the [factory manual](https://www.nocfree.com/pages/nocfree-and-manual) and
 [firmware guide](https://www.nocfree.com/blogs/news/nocfree-firmware-update-guide)
 for complete vendor procedures. Do not assume a factory shortcut recovers a
 crashed replacement application.
+
+## Install RMK in Companion
+
+Choose **Install RMK**, then **Next**. Opening the page does not start recovery
+or installation. Companion uses its bundled, hash-pinned local release; it does
+not download firmware or embed factory firmware.
+
+The journey handles the dongle first, then right and left. This keeps the factory
+left available for the factory dongle's recovery shortcut. Each part shares the
+recovery guide, saves a fresh local backup, installs once, and verifies the actual
+readback before proceeding. Only the physical steps that cannot be done by the app
+need user action. An exact installed image skips copying. Returning to the
+journey reconciles pending writes using their original backup and fresh readback;
+USB names or version strings alone never count as installed-image proof.
+
+After installation, Companion runs Check pairing for both halves and the dongle.
+It automatically repairs the dongle link when needed, then guides wired,
+Bluetooth and dongle checks. For each, type `qwert HJKL h` using left letters,
+left Shift with right capitals, and right lowercase after releasing Shift.
+Next becomes available only with the expected connection and matching text.
+A changed or lost connection clears that confirmation. The Bluetooth check uses
+fresh macOS connection discovery and owner typing because USB telemetry is
+unavailable with every cable and dongle unplugged. These are functional owner
+checks, not measured latency or current tests.

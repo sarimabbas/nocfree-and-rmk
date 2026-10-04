@@ -32,3 +32,5 @@ pub mod dongle_pairing;
 mod navigation;
 mod operation;
 mod return_flow;
+
+mod install_journey;

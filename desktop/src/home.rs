@@ -101,7 +101,7 @@ impl Home {
 
     pub fn action(self) -> Option<&'static str> {
         match self {
-            Self::Factory => Some("Switch to RMK"),
+            Self::Factory => Some("Install RMK"),
             Self::Rmk(UpdateAssessment::Available) => Some("Update RMK"),
             _ => None,
         }
