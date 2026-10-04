@@ -701,7 +701,9 @@ mod tests {
         session.observe_at(Ok(normal()), now + Duration::from_secs(6));
         assert!(session.view().return_complete);
         let mut journey = crate::journey::Journey::from_saved_test_session(session, true);
+        assert_eq!(journey.component_progress(), Some((0, 2)));
         journey.observe(Ok(normal()));
+        assert_eq!(journey.component_progress(), Some((1, 2)));
         assert_eq!(journey.role(), Role::Right);
         assert_eq!(journey.state(), crate::journey::State::Guiding);
         journey.pause();
@@ -719,7 +721,9 @@ mod tests {
         session.observe_at(Ok(Snapshot::default()), now + Duration::from_secs(5));
         session.observe_at(Ok(normal()), now + Duration::from_secs(6));
         let mut journey = crate::journey::Journey::from_saved_test_session(session, false);
+        assert_eq!(journey.component_progress(), Some((0, 1)));
         journey.observe(Ok(normal()));
+        assert_eq!(journey.component_progress(), Some((1, 1)));
         assert!(journey.is_complete());
         assert_eq!(journey.role(), Role::Left);
         assert_eq!(journey.archives(), &[PathBuf::from("/private/test-copy")]);

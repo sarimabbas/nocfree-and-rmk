@@ -1,29 +1,32 @@
 mod battery;
 mod device;
+mod flow_presentation;
 mod home;
+#[cfg(test)]
+use nocfree_companion::experimental_recovery;
+use nocfree_companion::recovery_journey;
 mod journey;
 mod recovery;
 mod session;
 mod ui;
 
-use gpui::{
-    App, AppContext, Application, Bounds, Focusable, KeyBinding, Menu, MenuItem, TitlebarOptions,
-    WindowAppearance, WindowBounds, WindowOptions, actions, px, size,
+use gpui_kit::{
+    App, AppContext, Bounds, Focusable, KeyBinding, Menu, MenuItem, TitlebarOptions, WindowBounds,
+    WindowOptions, actions, px, size,
 };
 
 actions!(nocfree_companion, [Quit]);
 
 fn main() {
-    Application::with_platform(gpui_platform::current_platform(false))
-        .with_assets(gpuikit::assets())
+    gpui_kit::application()
+        .with_assets(gpui_kit::assets::AllAssets)
         .run(|cx: &mut App| {
-            gpuikit::init(cx);
-            cx.set_window_appearance(Some(WindowAppearance::Light));
+            gpui_kit::init(cx);
             cx.on_action(|_: &Quit, cx| cx.quit());
             cx.bind_keys([KeyBinding::new("cmd-q", Quit, None)]);
             cx.set_menus([Menu::new("NocFree Companion")
                 .items([MenuItem::action("Quit NocFree Companion", Quit)])]);
-            cx.open_window(
+            gpui_kit::open_window(
                 WindowOptions {
                     window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
                         None,
@@ -37,6 +40,7 @@ fn main() {
                     window_min_size: Some(size(px(800.), px(560.))),
                     ..Default::default()
                 },
+                cx,
                 |window, cx| {
                     let view = cx.new(ui::Companion::new);
                     window.focus(&view.focus_handle(cx), cx);

@@ -4,11 +4,11 @@ The user's supplied sidebar wireframe defines the composition. Preserve the exis
 
 ## Surface
 
-Operate: a newcomer connects a keyboard, sees its state, and follows one clear next action. A fixed approximately 220 px sidebar provides Keyboard and Backups navigation, with the relevant firmware task only when supported by evidence. Recovery mode is a first-class utility alongside Backup firmware and Keyboard status. Development trials stay out of navigation.
+Operate: a newcomer connects a keyboard, sees its state, and follows one clear next action. A fixed approximately 220 px sidebar provides Backup firmware and Recovery mode navigation, with the relevant firmware task only when supported by evidence. Sidebar items use the component’s natural padding. Keyboard status and observed firmware live in a persistent bottom status bar. Development trials stay out of navigation.
 
 ## Visual system
 
-Use the system sans-serif, compact native type sizes, a pale neutral sidebar, a white content surface, restrained blue selected states and primary buttons. Default text remains dark and readable. Action buttons use a consistent 32 px control scale and natural widths. Use consistent 8 px spacing increments and approximately 28–32 px content insets. Group by alignment and space rather than nested cards. Preserve the existing accurate left/right SVG assets. Avoid large hero headlines, decorative badges, ambiguous progress indicators, and blocks of technical disclosure.
+Use the system sans-serif, compact native type sizes, a pale neutral sidebar, a white content surface, restrained blue selected states and primary buttons. Follow system appearance automatically at launch and when it changes; use GPUI Kit theme roles for readable surfaces and text in both modes. Action buttons use a consistent 32 px control scale and natural widths. Use consistent 8 px spacing increments and approximately 28–32 px content insets. Use GPUI Kit selection cards for parallel choices, with authentic component drawings and one clear action per card. Preserve the existing accurate left/right SVG assets. Avoid large hero headlines, decorative badges, ambiguous progress indicators, and blocks of technical disclosure.
 
 ## Journey canvas
 
@@ -23,3 +23,7 @@ Show left, right, and receiver separately using real observations. Unavailable o
 Recovery is a state machine with component selection, firmware identification, the applicable entry procedure, verified readiness and explicit failure/retry/cancel transitions. Opaque attempt identities reject late results after cancellation or changing components. Use one illustrated guide in the standalone utility and journey prerequisites; let reliable device observations advance it. Firmware writes remain separate guarded operations. Waiting for a person does not expire; dispatched USB requests and drive observation do.
 
 Factory key-chord entry and compatible RMK app entry converge on the same recovery-ready state. Detect supported factory identities before showing their shortcuts; never infer a component or firmware capability from a recovery drive alone. Receiver entry retains its factory-left pairing and mapping prerequisite. Keep installation policy outside this entry primitive.
+
+## Flow feedback
+
+Use the linked GPUI Kit library exclusively for the app’s component system. Each actual workflow has a read-only Stepper derived from its state machine. Never let visual navigation bypass recovery or verification. Show Progress only for measurable completed work; show Spinner while discovery, USB negotiation, readback or saving has no measurable progress. Do not fabricate byte percentages or completion from elapsed time. StatusBar carries observed firmware, per-half battery availability and receiver connection without duplicating a status page.

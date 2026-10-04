@@ -9,6 +9,9 @@ use std::{
     time::{Duration, Instant},
 };
 
+use crate::flow_presentation::{self, FlowProgress};
+use gpui_kit as gpui;
+use gpui_kit::assets::IconName;
 use nocfree_companion::{
     experimental_recovery::Role as RecoveryRole,
     recovery_journey::{Attempt, RecoveryJourney, State as RecoveryState},
@@ -26,25 +29,28 @@ use crate::{
 use gpui::{
     App, Context, FocusHandle, Focusable, FontWeight, Image, ImageFormat, InteractiveElement,
     IntoElement, ParentElement, Render, StatefulInteractiveElement, Styled, Task, Window, div, img,
-    prelude::FluentBuilder, px, rems, rgb,
+    prelude::FluentBuilder, px,
 };
-use gpuikit::{
-    a11y::FocusNavigation,
-    elements::{button::button, separator::separator, sidebar::sidebar},
-    icons::Icons,
-    theme::{GlobalTheme, Theme, ThemeVariant},
+use gpui_kit::component::{
+    ActiveTheme, Disableable, Icon, Sizable, Theme,
+    button::{Button, ButtonVariants},
+    progress::Progress,
+    sidebar::{Sidebar, SidebarGroup, SidebarMenuItem},
+    spinner::Spinner,
+    status_bar::StatusBar,
+    stepper::{Stepper, StepperItem},
 };
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Page {
-    Keyboard,
+    Home,
     Backups,
     Recovery,
 }
 
 pub struct Companion {
     page: Page,
-    nav_focus: Vec<FocusHandle>,
+    appearance_subscription: Option<gpui::Subscription>,
     dongle_connected: bool,
     rescue: RecoveryJourney,
     rescue_cancel: Option<Arc<AtomicBool>>,
@@ -77,25 +83,7 @@ impl Drop for Companion {
 
 impl Companion {
     pub fn new(cx: &mut Context<Self>) -> Self {
-        let mut theme = Theme::new(
-            "NocFree",
-            ThemeVariant::Light,
-            rgb(0xffffff).into(),
-            rgb(0xffffff).into(),
-            rgb(0xf5f5f4).into(),
-            rgb(0xe3e6ea).into(),
-            rgb(0x007aff).into(),
-        );
-        theme.controls.medium.height = rems(2.0);
-        theme.controls.medium.padding_x = rems(0.875);
-        theme.controls.medium.radius = rems(0.375);
-        theme.controls.medium.text_size = rems(0.8125);
-        theme.controls.medium.line_height = rems(1.125);
-        theme.fg_muted_color = Some(rgb(0x626870).into());
-        theme.button_bg_color = Some(rgb(0x007aff).into());
-        theme.button_bg_hover_color = Some(rgb(0x0068da).into());
-        theme.button_bg_active_color = Some(rgb(0x005bc2).into());
-        cx.set_global(GlobalTheme(Arc::new(theme)));
+        Theme::sync_system_appearance(None, cx);
         let session = Journey::backup();
         let view = session.view();
         let poll = cx.spawn(async move |this, cx| {
@@ -251,8 +239,8 @@ impl Companion {
             }
         });
         Self {
-            page: Page::Keyboard,
-            nav_focus: (0..3).map(|_| cx.focus_handle().tab_stop(true)).collect(),
+            page: Page::Home,
+            appearance_subscription: None,
             dongle_connected: false,
             rescue: RecoveryJourney::new(),
             rescue_cancel: None,
@@ -335,12 +323,7 @@ impl Companion {
             .flex()
             .flex_col()
             .gap(px(16.))
-            .child(
-                div()
-                    .text_size(px(13.))
-                    .text_color(rgb(0x626870))
-                    .child(label),
-            )
+            .child(waiting_indicator(label, cx))
             .child(action_row(button("cancel-recovery", "Cancel").on_click(
                 cx.listener(|this, _, _, cx| {
                     this.cancel_recovery();
@@ -349,37 +332,66 @@ impl Companion {
             )))
     }
 
+    fn recovery_card(
+        &self,
+        role: RecoveryRole,
+        label: &'static str,
+        cx: &mut Context<Self>,
+    ) -> Button {
+        let artwork = match role {
+            RecoveryRole::Left => img(keyboard_image(Role::Left))
+                .w(px(140.))
+                .h(px(100.))
+                .into_any_element(),
+            RecoveryRole::Right => img(keyboard_image(Role::Right))
+                .w(px(140.))
+                .h(px(100.))
+                .into_any_element(),
+            RecoveryRole::Receiver => div()
+                .w(px(140.))
+                .h(px(100.))
+                .flex()
+                .items_center()
+                .justify_center()
+                .child(
+                    Icon::new(IconName::Usb)
+                        .size(px(44.))
+                        .text_color(cx.theme().muted_foreground),
+                )
+                .into_any_element(),
+        };
+        Button::new(match role {
+            RecoveryRole::Left => "recover-left",
+            RecoveryRole::Right => "recover-right",
+            RecoveryRole::Receiver => "recover-receiver",
+        })
+        .secondary()
+        .outline()
+        .flex_1()
+        .h(px(170.))
+        .accessibility_label(label)
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .items_center()
+                .gap(px(14.))
+                .child(artwork)
+                .child(div().font_weight(FontWeight::MEDIUM).child(label)),
+        )
+        .on_click(cx.listener(move |this, _, _, cx| this.start_recovery(role, cx)))
+    }
+
     fn recovery_screen(&self, cx: &mut Context<Self>) -> impl IntoElement {
         match self.rescue.state() {
-            RecoveryState::Choose => recovery_guide(
-                None,
-                "Open recovery mode",
-                "Choose the part you want to recover. We’ll find the right steps for its firmware.",
-                Some(
-                    (div()
-                        .flex()
-                        .gap(px(8.))
-                        .child(button("recover-left", "Left half").on_click(cx.listener(
-                            |this, _, _, cx| this.start_recovery(RecoveryRole::Left, cx),
-                        )))
-                        .child(button("recover-right", "Right half").on_click(cx.listener(
-                            |this, _, _, cx| this.start_recovery(RecoveryRole::Right, cx),
-                        )))
-                        .child(
-                            button("recover-receiver", "USB receiver").on_click(cx.listener(
-                                |this, _, _, cx| this.start_recovery(RecoveryRole::Receiver, cx),
-                            )),
-                        ))
-                    .into_any_element(),
-                ),
-            )
-            .child(
-                div()
-                    .text_size(px(12.))
-                    .line_height(px(18.))
-                    .text_color(rgb(0x626870))
-                    .child("Your firmware stays unchanged. We’ll only open its recovery drive."),
-            ),
+            RecoveryState::Choose => div().flex().flex_col().gap(px(24.))
+                .child(div().text_size(px(23.)).font_weight(FontWeight::SEMIBOLD).child("Open recovery mode"))
+                .child(div().text_size(px(14.)).line_height(px(22.)).text_color(cx.theme().muted_foreground).child("Choose the part you want to recover. We’ll find the right steps for its firmware."))
+                .child(div().flex().gap(px(12.))
+                    .child(self.recovery_card(RecoveryRole::Left, "Left half", cx))
+                    .child(self.recovery_card(RecoveryRole::Right, "Right half", cx))
+                    .child(self.recovery_card(RecoveryRole::Receiver, "USB receiver", cx)))
+                .child(div().text_size(px(12.)).text_color(cx.theme().muted_foreground).child("Your firmware stays unchanged. We’ll only open its recovery drive.")),
             RecoveryState::Identify(role) => recovery_guide(
                 Some(*role),
                 "Connect your device",
@@ -388,6 +400,7 @@ impl Companion {
                     self.recovery_waiting("Checking its firmware…", cx)
                         .into_any_element(),
                 ),
+                cx,
             ),
             RecoveryState::Guiding(role, procedure) => recovery_guide(
                 Some(*role),
@@ -397,6 +410,7 @@ impl Companion {
                     self.recovery_waiting("Waiting for the recovery drive…", cx)
                         .into_any_element(),
                 ),
+                cx,
             ),
             RecoveryState::Ready(role) => recovery_guide(
                 Some(*role),
@@ -406,12 +420,13 @@ impl Companion {
                     (action_row(button("recovery-done", "Done").on_click(cx.listener(
                         |this, _, _, cx| {
                             this.cancel_recovery();
-                            this.page = Page::Keyboard;
+                            this.page = Page::Home;
                             cx.notify();
                         },
                     ))))
                     .into_any_element(),
                 ),
+                cx,
             ),
             RecoveryState::Failed(role, error) => recovery_guide(
                 Some(*role),
@@ -436,6 +451,7 @@ impl Companion {
                         ))))
                     .into_any_element(),
                 ),
+                cx,
             ),
         }
     }
@@ -590,18 +606,18 @@ impl Companion {
                     charge_state,
                 } => {
                     let mut text = level
-                        .map(|v| format!("{v}% estimated"))
-                        .unwrap_or_else(|| "Level unavailable".into());
+                        .map(|v| format!("{v}% est."))
+                        .unwrap_or_else(|| "Level unknown".into());
                     if charge_state == ChargeState::Charging {
                         text.push_str(" · Charging");
                     }
                     text
                 }
-                BatteryStatus::Unavailable => "Battery unavailable".into(),
+                BatteryStatus::Unavailable => "Unknown".into(),
             };
         }
         if right {
-            "Status unavailable".into()
+            "Unknown".into()
         } else {
             self.home
                 .connection_label()
@@ -629,141 +645,64 @@ impl Companion {
 
     fn nav_row(
         &self,
-        id: &'static str,
         label: &'static str,
         page: Page,
-        icon: gpui::Svg,
+        icon: IconName,
         cx: &mut Context<Self>,
-    ) -> impl IntoElement {
-        div()
-            .id(id)
-            .track_focus(&self.nav_focus[page as usize])
-            .tab_stop(true)
-            .moves_focus_on_tab()
-            .w_full()
-            .h(px(36.))
-            .px(px(10.))
-            .rounded(px(7.))
-            .flex()
-            .items_center()
-            .gap(px(10.))
-            .text_size(px(13.))
-            .bg(if self.page == page {
-                rgb(0xe4eaf3)
-            } else {
-                rgb(0xf5f5f4)
-            })
-            .text_color(if self.page == page {
-                rgb(0x164d91)
-            } else {
-                rgb(0x42464d)
-            })
-            .role(gpui::Role::Button)
-            .aria_label(label)
-            .cursor_pointer()
-            .hover(|s| s.bg(rgb(0xe8e9eb)))
-            .focus(|s| s.bg(rgb(0xe4eaf3)).text_color(rgb(0x164d91)))
-            .on_key_down(cx.listener(move |this, event: &gpui::KeyDownEvent, _, cx| {
-                if event.keystroke.key == "enter" || event.keystroke.key == "space" {
-                    this.navigate(page, cx);
-                    cx.stop_propagation();
-                }
-            }))
-            .child(icon.size(px(17.)))
-            .child(label)
+    ) -> SidebarMenuItem {
+        SidebarMenuItem::new(label)
+            .icon(icon)
+            .active(self.page == page)
+            .disable(self.busy)
             .on_click(cx.listener(move |this, _, _, cx| this.navigate(page, cx)))
     }
 }
 
 impl Render for Companion {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if self.appearance_subscription.is_none() {
+            Theme::sync_system_appearance(Some(window), cx);
+            self.appearance_subscription =
+                Some(cx.observe_window_appearance(window, |_, window, cx| {
+                    Theme::sync_system_appearance(Some(window), cx);
+                    cx.notify();
+                }));
+        }
         let page_title = match self.page {
-            Page::Keyboard => "Keyboard status",
+            Page::Home => "NocFree Companion",
             Page::Backups => "Backup firmware",
             Page::Recovery => "Recovery mode",
         };
-        let navigation = sidebar("navigation")
-            .label("NocFree Companion navigation")
-            .width(rems(13.75))
-            .never_overlay()
-            .child(
-                div()
-                    .pt(px(18.))
-                    .pb(px(24.))
-                    .px(px(10.))
-                    .flex()
-                    .items_center()
-                    .gap(px(10.))
-                    .child(Icons::keyboard().size(px(21.)).text_color(rgb(0x32629b)))
-                    .child(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .gap(px(3.))
-                            .child(
-                                div()
-                                    .text_size(px(14.))
-                                    .font_weight(FontWeight::SEMIBOLD)
-                                    .child("NocFree"),
-                            )
-                            .child(
-                                div()
-                                    .text_size(px(11.))
-                                    .text_color(rgb(0x747982))
-                                    .child("Companion"),
-                            ),
-                    ),
+        let mut tasks = SidebarGroup::new("Tasks");
+        if let Some(label) = self.home.action() {
+            tasks = tasks.child(
+                SidebarMenuItem::new(label)
+                    .icon(IconName::Download)
+                    .disable(true),
+            );
+        }
+        if self.home.can_restore() {
+            tasks = tasks.child(
+                SidebarMenuItem::new("Restore factory")
+                    .icon(IconName::Undo)
+                    .disable(true),
+            );
+        }
+        let navigation = Sidebar::new("navigation")
+            .w(px(220.))
+            .collapsible(false)
+            .header(
+                Button::new("home")
+                    .ghost()
+                    .w_full()
+                    .label("NocFree Companion")
+                    .on_click(cx.listener(|this, _, _, cx| this.navigate(Page::Home, cx))),
             )
-            .child(sidebar_label("Tasks"))
-            .when_some(self.home.action(), |nav, label| {
-                nav.child(unavailable_task(
-                    label,
-                    if self.home == Home::Rmk(UpdateAssessment::Available) {
-                        Icons::update()
-                    } else {
-                        Icons::download()
-                    },
-                ))
-            })
-            .when(self.home.can_restore(), |nav| {
-                nav.child(unavailable_task("Restore factory", Icons::reset()))
-            })
-            .child(div().h(px(18.)))
-            .child(sidebar_label("Additional utilities"))
-            .child(self.nav_row(
-                "nav-backups",
-                "Backup firmware",
-                Page::Backups,
-                Icons::archive(),
-                cx,
-            ))
-            .child(self.nav_row(
-                "nav-keyboard",
-                "Keyboard status",
-                Page::Keyboard,
-                Icons::dashboard(),
-                cx,
-            ))
-            .child(self.nav_row(
-                "nav-recovery",
-                "Recovery mode",
-                Page::Recovery,
-                Icons::reset(),
-                cx,
-            ))
-            .child(div().flex_1())
+            .child(tasks)
             .child(
-                div()
-                    .px(px(10.))
-                    .pb(px(10.))
-                    .text_size(px(11.))
-                    .text_color(rgb(0x737881))
-                    .child(match self.home {
-                        Home::Factory => "Running factory firmware",
-                        Home::Rmk(_) => "Running RMK",
-                        Home::Recovery => "Recovery mode",
-                        Home::Connect => "Keyboard not detected",
-                    }),
+                SidebarGroup::new("Additional utilities")
+                    .child(self.nav_row("Backup firmware", Page::Backups, IconName::Folder, cx))
+                    .child(self.nav_row("Recovery mode", Page::Recovery, IconName::RefreshCw, cx)),
             );
 
         let mut canvas = div()
@@ -772,84 +711,118 @@ impl Render for Companion {
             .w_full()
             .max_w(px(620.))
             .gap(px(24.));
-        {
-            canvas = match self.page {
-                Page::Keyboard => canvas
-                    .child(div().text_size(px(23.)).font_weight(FontWeight::SEMIBOLD).child(self.home.title()))
-                    .child(div().text_size(px(14.)).text_color(rgb(0x626870)).line_height(px(22.)).child(self.home.description()))
-                    .child(div().flex().gap(px(32.)).py(px(16.))
-                        .child(half_status(Role::Left, self.battery_summary(false), match self.home { Home::Rmk(_) => "RMK firmware", Home::Factory => "Factory firmware", _ => "Firmware unknown" }))
-                        .child(half_status(Role::Right, self.battery_summary(true), if self.battery_readings.as_ref().is_some_and(|r| r.right_connected) { "RMK firmware" } else { "Firmware unknown" })))
-                    .child(separator())
-                    .child(status_row("USB receiver", if self.dongle_connected { "RMK · Connected by USB" } else { "Not detected" }))
-                    .when_some(self.battery_error.clone(), |c, text| c.child(div().text_size(px(12.)).line_height(px(18.)).text_color(rgb(0x626870)).child(text)))
-                    .child(div().text_size(px(12.)).text_color(rgb(0x737881)).child("Battery levels are estimates.")),
-                Page::Backups if self.started || self.completed => {
-                    let title: String = if self.completed { if self.session.as_ref().is_some_and(|j| j.archives().len() == 1) { "Your copy is saved".into() } else { "Your copies are saved".into() } } else if self.stopped { "Let’s reconnect".into() } else if self.busy { "Saving a copy…".into() } else { self.view.title.clone() };
-                    let instruction: String = if self.completed { "Your firmware copies are saved privately on this Mac.".into() } else if self.stopped { self.message.clone().unwrap_or_default() } else if self.busy { "Keep the USB cable connected.".into() } else { self.view.instruction.clone() };
-                    canvas.child(recovery_guide(self.role.map(|role| if role == Role::Left { RecoveryRole::Left } else { RecoveryRole::Right }), title, instruction, None))
-                        .when(self.view.needs_power_on_ack && !self.stopped && !self.completed, |c| c.child(action_row(button("power-on", "It’s switched on").disabled(self.busy).on_click(cx.listener(|this, _, _, cx| {
-                            if let Some(journey) = this.session.as_mut() { journey.confirm_power_on(); this.view = journey.view(); cx.notify(); }
-                        })))))
-                        .when(self.stopped, |c| c.child(action_row(button("retry", "Try again").on_click(cx.listener(|this, _, _, cx| this.retry(cx))))))
-                        .when(self.completed, |c| c.when_some(self.copies_folder.clone(), |c, path| c.child(action_row(button("open-copies", "Show in Finder").on_click(cx.listener(move |this, _, _, cx| this.open_folder(path.clone(), cx)))))))
-                        .when(self.completed, |c| c.child(action_row(button("new-backup", "Save new copies").on_click(cx.listener(|this, _, _, cx| this.start_copies(cx))))))
-                        .when(!self.completed, |c| c.child(action_row(button("pause-backup", "Pause").disabled(self.busy).on_click(cx.listener(|this, _, _, cx| this.navigate(Page::Keyboard, cx))))))
-                },
-                Page::Backups => canvas
-                    .child(div().text_size(px(23.)).font_weight(FontWeight::SEMIBOLD).child("Keep a copy of your firmware"))
-                    .child(div().text_size(px(14.)).line_height(px(22.)).text_color(rgb(0x626870)).child("Save a private copy of the connected keyboard’s firmware before making changes."))
-                    .child(div().flex().gap(px(12.)).py(px(16.)).child(img(keyboard_image(Role::Left)).w(px(160.)).h(px(115.))).child(img(keyboard_image(Role::Right)).w(px(160.)).h(px(115.))))
-                    .child(action_row(button("start-backup", if self.session.as_ref().is_some_and(|j| j.state() == crate::journey::State::Paused) { "Resume backup" } else { "Save firmware copies" }).on_click(cx.listener(|this, _, _, cx| this.start_copies(cx)))))
-                    .when_some(self.copies_folder.clone(), |c, path| c.child(action_row(button("browse-backups", "Show saved copies").on_click(cx.listener(move |this, _, _, cx| this.open_folder(path.clone(), cx))))))
-                    .child(div().text_size(px(12.)).text_color(rgb(0x737881)).child("Saving a copy doesn’t change your keyboard.")),
-                Page::Recovery => canvas.child(self.recovery_screen(cx)),
-            };
+        match self.page {
+            Page::Backups => {
+                if let Some(journey) = &self.session {
+                    canvas = canvas.child(flow_indicator(
+                        flow_presentation::backup(journey),
+                        "backup-steps",
+                        cx,
+                    ));
+                }
+            }
+            Page::Recovery => {
+                canvas = canvas.child(flow_indicator(
+                    flow_presentation::recovery(self.rescue.state()),
+                    "recovery-steps",
+                    cx,
+                ));
+            }
+            Page::Home => {}
         }
+        canvas = match self.page {
+            Page::Home => canvas
+                .child(div().text_size(px(23.)).font_weight(FontWeight::SEMIBOLD).child(self.home.title()))
+                .child(div().text_size(px(14.)).text_color(cx.theme().muted_foreground).line_height(px(22.)).child(self.home.description()))
+                .child(div().flex().gap(px(16.)).py(px(16.))
+                    .child(img(keyboard_image(Role::Left)).w(px(230.)).h(px(165.)))
+                    .child(img(keyboard_image(Role::Right)).w(px(230.)).h(px(165.))))
+                .child(action_row(button("home-backup", "Save firmware copies").on_click(cx.listener(|this, _, _, cx| this.navigate(Page::Backups, cx))))),
+            Page::Backups if self.started || self.completed => {
+                let title: String = if self.completed { if self.session.as_ref().is_some_and(|j| j.archives().len() == 1) { "Your copy is saved".into() } else { "Your copies are saved".into() } } else if self.stopped { "Let’s reconnect".into() } else if self.busy { "Saving a copy…".into() } else { self.view.title.clone() };
+                let instruction: String = if self.completed { "Your firmware copies are saved privately on this Mac.".into() } else if self.stopped { self.message.clone().unwrap_or_default() } else if self.busy { "Keep the USB cable connected.".into() } else { self.view.instruction.clone() };
+                canvas.child(recovery_guide(self.role.map(|role| if role == Role::Left { RecoveryRole::Left } else { RecoveryRole::Right }), title, instruction, None, cx))
+                    .when(!self.completed && !self.stopped && !self.view.needs_power_on_ack, |c| c.child(waiting_indicator(if self.busy { "Saving your firmware copy…" } else { "Waiting for the keyboard…" }, cx)))
+                    .when(self.view.needs_power_on_ack && !self.stopped && !self.completed, |c| c.child(action_row(button("power-on", "It’s switched on").disabled(self.busy).on_click(cx.listener(|this, _, _, cx| {
+                        if let Some(journey) = this.session.as_mut() { journey.confirm_power_on(); this.view = journey.view(); cx.notify(); }
+                    })))))
+                    .when(self.stopped, |c| c.child(action_row(button("retry", "Try again").on_click(cx.listener(|this, _, _, cx| this.retry(cx))))))
+                    .when(self.completed, |c| c.when_some(self.copies_folder.clone(), |c, path| c.child(action_row(button("open-copies", "Show in Finder").on_click(cx.listener(move |this, _, _, cx| this.open_folder(path.clone(), cx)))))))
+                    .when(self.completed, |c| c.child(action_row(button("new-backup", "Save new copies").on_click(cx.listener(|this, _, _, cx| this.start_copies(cx))))))
+                    .when(!self.completed, |c| c.child(action_row(Button::new("pause-backup").label("Pause").ghost().small().disabled(self.busy).on_click(cx.listener(|this, _, _, cx| this.navigate(Page::Home, cx))))))
+            },
+            Page::Backups => canvas
+                .child(div().text_size(px(23.)).font_weight(FontWeight::SEMIBOLD).child("Keep a copy of your firmware"))
+                .child(div().text_size(px(14.)).line_height(px(22.)).text_color(cx.theme().muted_foreground).child("Save a private copy of the connected keyboard’s firmware before making changes."))
+                .child(div().flex().gap(px(12.)).py(px(16.)).child(img(keyboard_image(Role::Left)).w(px(160.)).h(px(115.))).child(img(keyboard_image(Role::Right)).w(px(160.)).h(px(115.))))
+                .child(action_row(button("start-backup", if self.session.as_ref().is_some_and(|j| j.state() == crate::journey::State::Paused) { "Resume backup" } else { "Save firmware copies" }).on_click(cx.listener(|this, _, _, cx| this.start_copies(cx)))))
+                .when_some(self.copies_folder.clone(), |c, path| c.child(action_row(button("browse-backups", "Show saved copies").on_click(cx.listener(move |this, _, _, cx| this.open_folder(path.clone(), cx))))))
+                .child(div().text_size(px(12.)).text_color(cx.theme().muted_foreground).child("Saving a copy doesn’t change your keyboard.")),
+            Page::Recovery => canvas.child(self.recovery_screen(cx)),
+        };
+        let firmware = match self.home {
+            Home::Factory => "Factory firmware",
+            Home::Rmk(_) => "RMK firmware",
+            Home::Recovery => "Recovery mode",
+            Home::Connect => "Keyboard not detected",
+        };
+        let status = StatusBar::new()
+            .h(px(36.))
+            .px(px(16.))
+            .flex_none()
+            .left(firmware)
+            .right(format!("Left: {}", self.battery_summary(false)))
+            .right(format!("Right: {}", self.battery_summary(true)))
+            .right(if self.dongle_connected {
+                "Receiver: USB"
+            } else {
+                "Receiver: unknown"
+            });
         div()
             .id("companion")
             .track_focus(&self.focus_handle)
-            .moves_focus_on_tab()
             .size_full()
             .flex()
-            .bg(rgb(0xffffff))
-            .text_color(rgb(0x23262b))
-            .font_family(".AppleSystemUIFont")
+            .flex_col()
+            .bg(cx.theme().background)
+            .text_color(cx.theme().foreground)
+            .font_family(cx.theme().font_family.clone())
             .text_size(px(14.))
-            .child(navigation)
             .child(
-                div()
-                    .flex_1()
-                    .h_full()
-                    .flex()
-                    .flex_col()
-                    .overflow_hidden()
-                    .child(
-                        div()
-                            .h(px(64.))
-                            .flex_none()
-                            .px(px(32.))
-                            .flex()
-                            .items_center()
-                            .border_b_1()
-                            .border_color(rgb(0xeeeeef))
-                            .child(
-                                div()
-                                    .text_size(px(15.))
-                                    .font_weight(FontWeight::SEMIBOLD)
-                                    .child(page_title),
-                            ),
-                    )
-                    .child(
-                        div()
-                            .id("journey-canvas")
-                            .flex_1()
-                            .overflow_y_scroll()
-                            .p(px(32.))
-                            .child(canvas),
-                    ),
+                div().flex().flex_1().min_h_0().child(navigation).child(
+                    div()
+                        .flex_1()
+                        .h_full()
+                        .flex()
+                        .flex_col()
+                        .overflow_hidden()
+                        .child(
+                            div()
+                                .h(px(64.))
+                                .flex_none()
+                                .px(px(32.))
+                                .flex()
+                                .items_center()
+                                .border_b_1()
+                                .border_color(cx.theme().border)
+                                .child(
+                                    div()
+                                        .text_size(px(15.))
+                                        .font_weight(FontWeight::SEMIBOLD)
+                                        .child(page_title),
+                                ),
+                        )
+                        .child(
+                            div()
+                                .id("journey-canvas")
+                                .flex_1()
+                                .overflow_y_scroll()
+                                .p(px(32.))
+                                .child(canvas),
+                        ),
+                ),
             )
-            .into_any_element()
+            .child(status)
     }
 }
 
@@ -860,10 +833,11 @@ fn recovery_guide(
     title: impl Into<gpui::SharedString>,
     instruction: impl Into<gpui::SharedString>,
     controls: Option<gpui::AnyElement>,
+    cx: &App,
 ) -> gpui::Div {
     let picture = match role {
-        Some(RecoveryRole::Left) => keyboard_picture(Some(Role::Left)).into_any_element(),
-        Some(RecoveryRole::Right) => keyboard_picture(Some(Role::Right)).into_any_element(),
+        Some(RecoveryRole::Left) => keyboard_picture(Some(Role::Left), cx).into_any_element(),
+        Some(RecoveryRole::Right) => keyboard_picture(Some(Role::Right), cx).into_any_element(),
         Some(RecoveryRole::Receiver) => div()
             .h(px(190.))
             .flex()
@@ -871,11 +845,15 @@ fn recovery_guide(
             .items_center()
             .justify_center()
             .gap(px(12.))
-            .child(Icons::component_1().size(px(64.)).text_color(rgb(0x626870)))
+            .child(
+                Icon::new(IconName::Usb)
+                    .size(px(64.))
+                    .text_color(cx.theme().muted_foreground),
+            )
             .child(
                 div()
                     .text_size(px(12.))
-                    .text_color(rgb(0x626870))
+                    .text_color(cx.theme().muted_foreground)
                     .child("USB receiver"),
             )
             .into_any_element(),
@@ -903,92 +881,78 @@ fn recovery_guide(
             div()
                 .text_size(px(15.))
                 .line_height(px(23.))
-                .text_color(rgb(0x626870))
+                .text_color(cx.theme().muted_foreground)
                 .child(instruction.into()),
         )
         .when_some(controls, |guide, controls| guide.child(controls))
 }
 
-fn action_row(control: impl IntoElement) -> impl IntoElement {
-    div().flex().items_center().gap(px(8.)).child(control)
+fn flow_indicator(flow: FlowProgress, id: &'static str, cx: &App) -> gpui::Div {
+    div()
+        .flex()
+        .flex_col()
+        .gap(px(12.))
+        .child(
+            Stepper::new(id)
+                .small()
+                .selected_index(flow.current)
+                .disabled(true)
+                .items(
+                    flow.labels
+                        .into_iter()
+                        .map(|label| StepperItem::new().child(label)),
+                ),
+        )
+        .when(flow.attention, |d| {
+            d.child(
+                div()
+                    .text_size(px(12.))
+                    .text_color(cx.theme().muted_foreground)
+                    .child("Follow the step below to continue."),
+            )
+        })
+        .when_some(flow.components, |d, components| {
+            d.child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(6.))
+                    .child(
+                        Progress::new(format!("{id}-components"))
+                            .value(components.fraction() * 100.)
+                            .small()
+                            .accessibility_label("Verified components"),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(11.))
+                            .text_color(cx.theme().muted_foreground)
+                            .child(format!(
+                                "{} of {} components verified",
+                                components.completed, components.total
+                            )),
+                    ),
+            )
+        })
 }
 
-fn sidebar_label(label: &'static str) -> impl IntoElement {
+fn waiting_indicator(label: &'static str, cx: &App) -> gpui::Div {
     div()
-        .px(px(10.))
-        .pb(px(6.))
-        .text_size(px(11.))
-        .font_weight(FontWeight::SEMIBOLD)
-        .text_color(rgb(0x626870))
+        .flex()
+        .items_center()
+        .gap(px(8.))
+        .text_size(px(13.))
+        .text_color(cx.theme().muted_foreground)
+        .child(Spinner::new().small())
         .child(label)
 }
 
-fn unavailable_task(label: &'static str, icon: gpui::Svg) -> impl IntoElement {
-    div()
-        .h(px(42.))
-        .px(px(10.))
-        .flex()
-        .items_center()
-        .gap(px(10.))
-        .text_color(rgb(0x626870))
-        .child(icon.size(px(17.)))
-        .child(
-            div()
-                .flex()
-                .flex_col()
-                .gap(px(2.))
-                .child(div().text_size(px(13.)).child(label))
-                .child(div().text_size(px(10.)).child("Not available yet")),
-        )
+fn button(id: &'static str, label: impl Into<gpui::SharedString>) -> Button {
+    Button::new(id).label(label).primary().small()
 }
 
-fn half_status(role: Role, battery: String, firmware: &'static str) -> impl IntoElement {
-    div()
-        .flex_1()
-        .flex()
-        .flex_col()
-        .items_center()
-        .gap(px(7.))
-        .child(img(keyboard_image(role)).w(px(200.)).h(px(144.)))
-        .child(
-            div()
-                .mt(px(6.))
-                .text_size(px(14.))
-                .font_weight(FontWeight::SEMIBOLD)
-                .child(if role == Role::Left {
-                    "Left half"
-                } else {
-                    "Right half"
-                }),
-        )
-        .child(
-            div()
-                .text_size(px(13.))
-                .text_color(rgb(0x626870))
-                .child(battery),
-        )
-        .child(
-            div()
-                .text_size(px(12.))
-                .text_color(rgb(0x626870))
-                .child(firmware),
-        )
-}
-
-fn status_row(label: &'static str, value: impl Into<gpui::SharedString>) -> impl IntoElement {
-    div()
-        .w_full()
-        .flex()
-        .justify_between()
-        .items_center()
-        .py(px(3.))
-        .child(div().text_size(px(14.)).child(label))
-        .child(
-            div()
-                .text_size(px(13.))
-                .text_color(rgb(0x626870))
-                .child(value.into()),
-        )
+fn action_row(control: impl IntoElement) -> impl IntoElement {
+    div().flex().items_center().gap(px(8.)).child(control)
 }
 
 // Photo-based orientation sketches; their appearance never represents device status.
@@ -1012,7 +976,7 @@ fn keyboard_image(role: Role) -> Arc<Image> {
     sketch.clone()
 }
 
-fn keyboard_picture(role: Option<Role>) -> impl IntoElement {
+fn keyboard_picture(role: Option<Role>, cx: &App) -> impl IntoElement {
     let sketch = keyboard_image(role.unwrap_or(Role::Left));
     div()
         .flex()
@@ -1024,7 +988,7 @@ fn keyboard_picture(role: Option<Role>) -> impl IntoElement {
         .child(
             div()
                 .text_size(px(12.))
-                .text_color(rgb(0x626870))
+                .text_color(cx.theme().muted_foreground)
                 .child(match role {
                     Some(Role::Left) => "Left half",
                     Some(Role::Right) => "Right half",

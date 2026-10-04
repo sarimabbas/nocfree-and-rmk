@@ -16,7 +16,7 @@ Guide owners between factory and RMK firmware, maintain recoverable firmware cop
 
 ## Stack
 
-Existing native Rust GPUI application using gpuikit. macOS is the current observed platform; Windows and Linux remain release work.
+Native Rust application using the GPUI Kit library documented at gpui-kit.com. macOS is the current observed platform; Windows and Linux remain release work.
 
 ## Operating Context
 

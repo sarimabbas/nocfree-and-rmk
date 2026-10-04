@@ -1,6 +1,6 @@
 # NocFree Companion
 
-A native macOS GPUI application using GPUKit. The sidebar follows the owner’s flow sketches: contextual firmware tasks, Backup firmware, Keyboard status, and the observed firmware state. The same workspace presents each physical step. Recovery mode is a first-class utility; development trial flows stay out of navigation.
+A native macOS application using [GPUI Kit](https://gpui-kit.com/) 0.7.0. The sidebar follows the owner’s flow sketches: contextual firmware tasks, Backup firmware and Recovery mode, with keyboard observations and firmware in a persistent status bar. The same workspace presents each physical step through GPUI Kit Stepper, Spinner and Progress components. Component selection uses illustrated cards. System appearance chooses the light or dark theme automatically. Recovery mode is a first-class utility; development trial flows stay out of navigation.
 
 ## What works
 

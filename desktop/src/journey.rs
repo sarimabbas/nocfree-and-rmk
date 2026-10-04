@@ -62,6 +62,19 @@ impl Journey {
     pub fn is_complete(&self) -> bool {
         self.state == State::Complete
     }
+    /// Count only components observed back in normal operation after their copy was saved.
+    pub fn component_progress(&self) -> Option<(usize, usize)> {
+        if !self.plan_known {
+            return None;
+        }
+        let total = 1 + usize::from(self.include_right);
+        let completed = if self.is_complete() {
+            total
+        } else {
+            usize::from(self.role == Role::Right)
+        };
+        Some((completed, total))
+    }
     pub fn archives(&self) -> &[PathBuf] {
         &self.archives
     }
