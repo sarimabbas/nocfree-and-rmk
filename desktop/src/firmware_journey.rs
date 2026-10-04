@@ -496,7 +496,8 @@ fn normal_return(snapshot: &Snapshot, role: Role, location: u64, factory: bool) 
             d.location == location
                 && match role {
                     Role::Right => d.factory_right(),
-                    Role::Left | Role::Receiver => d.factory_left(),
+                    Role::Left => d.factory_left(),
+                    Role::Receiver => d.factory_dongle() || d.factory_left(),
                 }
         } else {
             d.vendor == 0x4c4b && d.product == role.product() as u64 && d.name == role.name()
@@ -1692,6 +1693,33 @@ mod tests {
         assert!(!journey.transfer_if_ready().unwrap());
         journey.cancel();
         assert!(!journey.transfer_if_ready().unwrap());
+    }
+    #[test]
+    fn exact_factory_dongle_normal_return_is_receiver_only_and_bound_to_its_port() {
+        let mut snapshot = Snapshot {
+            devices: vec![Device {
+                location: 10,
+                vendor: 0x2886,
+                product: 0x8029,
+                name: "NocFree_Dongle".into(),
+            }],
+            mounts: vec![],
+        };
+        assert!(normal_return(&snapshot, Role::Receiver, 10, true));
+        assert!(!normal_return(&snapshot, Role::Left, 10, true));
+        assert!(!normal_return(&snapshot, Role::Right, 10, true));
+        assert!(!normal_return(&snapshot, Role::Receiver, 11, true));
+        assert!(!normal_return(&snapshot, Role::Receiver, 10, false));
+        snapshot.devices.push(snapshot.devices[0].clone());
+        assert!(!normal_return(&snapshot, Role::Receiver, 10, true));
+        snapshot.devices.pop();
+        snapshot.devices.push(Device {
+            location: 20,
+            vendor: 0x239a,
+            product: 0x29,
+            name: "UF2".into(),
+        });
+        assert!(!normal_return(&snapshot, Role::Receiver, 10, true));
     }
     #[test]
     fn factory_shared_left_and_dongle_identity_requires_the_bound_port() {

@@ -226,7 +226,9 @@ fn factory_observation(
         && snapshot
             .devices
             .iter()
-            .filter(|device| device.factory_left())
+            .filter(|device| {
+                device.factory_left() || role == Role::Receiver && device.factory_dongle()
+            })
             .count()
             > 1;
     if ambiguous_stock || session.shared_factory_connection_conflicts(&snapshot) {
@@ -241,6 +243,7 @@ fn factory_observation(
         if !snapshot.devices.iter().any(|d| {
             d.role() == Some(normal_role)
                 || role != Role::Right && d.factory_left()
+                || role == Role::Receiver && d.factory_dongle()
                 || d.bootloader()
         }) && snapshot.mounts.is_empty()
         {
@@ -252,6 +255,7 @@ fn factory_observation(
             .any(|d| {
                 d.role() == Some(normal_role)
                     || role != Role::Right && d.factory_left()
+                    || role == Role::Receiver && d.factory_dongle()
                     || d.bootloader()
             })
             .then_some(Procedure::Reconnect);
@@ -315,6 +319,89 @@ mod tests {
             }],
         }
     }
+    #[test]
+    fn exact_factory_dongle_requires_isolation_then_correlated_recovery() {
+        let mut normal = factory_normal(Role::Receiver);
+        normal.devices[0].name = "NocFree_Dongle".into();
+        let mut session = Session::new();
+        session.select_recovery_role(Role::Receiver);
+        let mut disconnected = false;
+        assert_eq!(
+            factory_observation(
+                &mut session,
+                Role::Receiver,
+                &mut disconnected,
+                normal.clone()
+            )
+            .unwrap(),
+            (Some(Procedure::Reconnect), false)
+        );
+        assert!(!disconnected);
+        factory_observation(
+            &mut session,
+            Role::Receiver,
+            &mut disconnected,
+            device::Snapshot::default(),
+        )
+        .unwrap();
+        assert!(disconnected);
+        assert_eq!(
+            factory_observation(&mut session, Role::Receiver, &mut disconnected, normal).unwrap(),
+            (Some(Procedure::FactoryReceiver), false)
+        );
+        assert!(
+            factory_observation(
+                &mut session,
+                Role::Receiver,
+                &mut disconnected,
+                factory_boot(10)
+            )
+            .unwrap()
+            .1
+        );
+        assert_eq!(session.recovery_binding().unwrap().0, Role::Receiver);
+        assert_eq!(session.factory_recovery_role(), Some(Role::Receiver));
+    }
+
+    #[test]
+    fn exact_factory_dongle_rejects_multiple_candidates_and_wrong_port() {
+        let mut dongle = factory_normal(Role::Receiver);
+        dongle.devices[0].name = "NocFree_Dongle".into();
+        for second in [
+            dongle.devices[0].clone(),
+            factory_normal(Role::Left).devices[0].clone(),
+        ] {
+            let mut both = dongle.clone();
+            let mut second = second;
+            second.location = 11;
+            both.devices.push(second);
+            let mut session = Session::new();
+            session.select_recovery_role(Role::Receiver);
+            let mut disconnected = true;
+            assert_eq!(
+                factory_observation(&mut session, Role::Receiver, &mut disconnected, both).unwrap(),
+                (Some(Procedure::Reconnect), false)
+            );
+            assert!(!disconnected);
+            assert!(!session.identified_normal());
+        }
+        let mut session = Session::new();
+        session.select_recovery_role(Role::Receiver);
+        let mut disconnected = true;
+        factory_observation(&mut session, Role::Receiver, &mut disconnected, dongle).unwrap();
+        assert!(
+            factory_observation(
+                &mut session,
+                Role::Receiver,
+                &mut disconnected,
+                factory_boot(11)
+            )
+            .is_err()
+        );
+        assert!(session.recovery_binding().is_err());
+        assert_eq!(session.factory_recovery_role(), None);
+    }
+
     #[test]
     fn backup_does_not_relabel_a_known_other_component() {
         let snapshot = factory_boot(10);

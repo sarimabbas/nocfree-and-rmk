@@ -38,6 +38,7 @@ pub struct Session {
     rmk_left: bool,
     rmk_receiver: bool,
     shared_factory_origin: bool,
+    factory_dongle_origin: bool,
     legacy_left_start: bool,
     factory_right: bool,
     connection_present: bool,
@@ -62,6 +63,7 @@ impl Session {
         self.rmk_receiver = self.role == Some(Role::Receiver);
         self.factory_right = false;
         self.shared_factory_origin = false;
+        self.factory_dongle_origin = false;
     }
     pub(crate) fn selected_component(&self) -> Option<Role> {
         self.role
@@ -219,6 +221,7 @@ impl Session {
                 self.rmk_left = normal[0].rmk_left();
                 self.rmk_receiver = normal[0].rmk_receiver();
                 self.factory_right = normal[0].factory_right();
+                self.factory_dongle_origin = normal[0].factory_dongle();
                 self.shared_factory_origin = normal[0].factory_left();
                 self.normal_present = true;
                 self.connection_present = true;
@@ -274,6 +277,7 @@ impl Session {
             self.rmk_left = normal.rmk_left();
             self.rmk_receiver = normal.rmk_receiver();
             self.factory_right = normal.factory_right();
+            self.factory_dongle_origin = normal.factory_dongle();
             self.shared_factory_origin = normal.factory_left();
             self.normal_present = true;
             self.problem = None;
@@ -468,6 +472,7 @@ impl Session {
         }
         match self.role {
             Some(Role::Right) if self.factory_right => Some(Role::Right),
+            Some(Role::Receiver) if self.factory_dongle_origin => Some(Role::Receiver),
             Some(role @ (Role::Left | Role::Receiver)) if self.shared_factory_origin => Some(role),
             _ => None,
         }
@@ -696,7 +701,7 @@ fn normal_matches(device: &device::Device, role: Role) -> bool {
     match role {
         Role::Left => device.role() == Some(KeyboardRole::Left) || device.factory_left(),
         Role::Right => device.role() == Some(KeyboardRole::Right),
-        Role::Receiver => device.rmk_receiver() || device.factory_left(),
+        Role::Receiver => device.rmk_receiver() || device.factory_left() || device.factory_dongle(),
     }
 }
 
@@ -848,6 +853,24 @@ mod tests {
         session.observe_advance_at(Ok(boot(true)), now);
         assert!(!session.view().return_complete);
     }
+    #[test]
+    fn exact_factory_dongle_normal_identity_preserves_receiver_role() {
+        let mut dongle = normal();
+        dongle.devices[0].name = "NocFree_Dongle".into();
+        let mut session = Session::new();
+        session.select_recovery_role(Role::Receiver);
+        session.observe(Ok(dongle.clone()));
+        assert!(session.identified_normal());
+        assert_eq!(session.factory_role(), Some(KeyboardRole::Left));
+        session.observe(Ok(boot(true)));
+        assert_eq!(session.recovery_binding().unwrap().0, Role::Receiver);
+        assert_eq!(session.factory_recovery_role(), Some(Role::Receiver));
+        let mut wrong_role = Session::new();
+        wrong_role.select_recovery_role(Role::Left);
+        wrong_role.observe(Ok(dongle));
+        assert!(!wrong_role.identified_normal());
+    }
+
     #[test]
     fn receiver_runtime_binding_and_normal_observation_keep_firmware_identity() {
         let mut session = Session::new();

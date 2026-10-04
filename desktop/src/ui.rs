@@ -1630,8 +1630,15 @@ impl Companion {
                     "Open the recovery drive",
                     procedure.instruction(role),
                     Some(
-                        self.recovery_waiting("Waiting for the recovery drive…", cx)
-                            .into_any_element(),
+                        self.recovery_waiting(
+                            if procedure == crate::recovery_journey::Procedure::Reconnect {
+                                "Watching USB connections…"
+                            } else {
+                                "Waiting for the recovery drive…"
+                            },
+                            cx,
+                        )
+                        .into_any_element(),
                     ),
                     recovery_ready,
                     cx,
