@@ -44,6 +44,16 @@ impl Session {
     pub fn new() -> Self {
         Self::default()
     }
+    /// Adopt the USB location of a freshly validated, role-specific startup endpoint.
+    /// The caller must arm that endpoint first; product strings alone are not evidence.
+    pub fn bind_startup(&mut self, location: u64) {
+        self.location = Some(location);
+        self.rmk_left = self.role == Some(Role::Left);
+        self.factory_right = false;
+    }
+    pub(crate) fn selected_role(&self) -> Option<Role> {
+        self.role
+    }
     pub fn select(&mut self, role: Role) {
         *self = Self {
             role: Some(role),
@@ -429,7 +439,9 @@ impl Session {
 }
 pub(crate) fn validate_metadata(info: &str) -> Result<(), String> {
     let lines: Vec<_> = info.lines().map(str::trim).collect();
-    if !lines.contains(&"UF2 Bootloader 0.9.2-39-g0147d71") || !lines.contains(&"Model: NocFree &")
+    if !lines.contains(&"UF2 Bootloader 0.9.2-39-g0147d71")
+        || !lines.contains(&"Model: NocFree &")
+        || !lines.contains(&"Board-ID: NocFree &")
     {
         return Err("This bootloader version/model has not been inspected for this prototype. Saving is unavailable.".into());
     }
@@ -519,7 +531,7 @@ mod tests {
             mounts: if mounted {
                 vec![BootMount {
                     path: PathBuf::from("/test/recovery"),
-                    info: "UF2 Bootloader 0.9.2-39-g0147d71\r\nModel: NocFree &\r\n".into(),
+                    info: "UF2 Bootloader 0.9.2-39-g0147d71\r\nModel: NocFree &\r\nBoard-ID: NocFree &\r\n".into(),
                 }]
             } else {
                 vec![]
@@ -680,6 +692,42 @@ mod tests {
         s
     }
     #[test]
+    fn shared_recovery_is_adopted_only_before_saving_for_the_selected_half() {
+        let mut recovered = Session::new();
+        recovered.select(Role::Left);
+        recovered.bind_startup(7);
+        recovered.observe(Ok(boot(true)));
+        let mut journey = crate::journey::Journey::backup();
+        assert!(journey.accept_recovery(recovered));
+        assert_eq!(journey.state(), crate::journey::State::ReadyToSave);
+
+        let mut wrong_role = Session::new();
+        wrong_role.select(Role::Right);
+        wrong_role.bind_startup(7);
+        wrong_role.observe(Ok(boot(true)));
+        let mut fresh = crate::journey::Journey::backup();
+        assert!(!fresh.accept_recovery(wrong_role));
+        fresh.pause();
+        assert!(!fresh.accept_recovery(identified()));
+        assert_eq!(fresh.state(), crate::journey::State::Paused);
+    }
+    #[test]
+    fn startup_binding_rejects_wrong_port_or_unreviewed_board_metadata() {
+        let mut session = Session::new();
+        session.select(Role::Left);
+        session.bind_startup(8);
+        session.observe(Ok(boot(true)));
+        assert!(!session.view().can_save);
+        assert!(session.view().error.is_some());
+        session.select(Role::Left);
+        session.bind_startup(7);
+        let mut unknown = boot(true);
+        unknown.mounts[0].info = "UF2 Bootloader 0.9.2-39-g0147d71\nModel: NocFree &".into();
+        session.observe(Ok(unknown));
+        assert!(!session.view().can_save);
+        assert!(session.view().error.is_some());
+    }
+    #[test]
     fn factory_right_identity_selects_its_hold_shortcut() {
         let mut snapshot = normal();
         snapshot.devices[0].vendor = 0x239a;
@@ -701,9 +749,7 @@ mod tests {
         session.observe_at(Ok(normal()), now + Duration::from_secs(6));
         assert!(session.view().return_complete);
         let mut journey = crate::journey::Journey::from_saved_test_session(session, true);
-        assert_eq!(journey.component_progress(), Some((0, 2)));
         journey.observe(Ok(normal()));
-        assert_eq!(journey.component_progress(), Some((1, 2)));
         assert_eq!(journey.role(), Role::Right);
         assert_eq!(journey.state(), crate::journey::State::Guiding);
         journey.pause();
@@ -721,9 +767,7 @@ mod tests {
         session.observe_at(Ok(Snapshot::default()), now + Duration::from_secs(5));
         session.observe_at(Ok(normal()), now + Duration::from_secs(6));
         let mut journey = crate::journey::Journey::from_saved_test_session(session, false);
-        assert_eq!(journey.component_progress(), Some((0, 1)));
         journey.observe(Ok(normal()));
-        assert_eq!(journey.component_progress(), Some((1, 1)));
         assert!(journey.is_complete());
         assert_eq!(journey.role(), Role::Left);
         assert_eq!(journey.archives(), &[PathBuf::from("/private/test-copy")]);

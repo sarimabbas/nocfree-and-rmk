@@ -53,6 +53,24 @@ impl Journey {
             plan_known: true,
         }
     }
+    /// Compose the shared recovery worker with this journey. An asynchronous result
+    /// may be adopted only while this component is still waiting for recovery.
+    /// Saving then performs fresh discovery before and after reading the archive.
+    pub fn accept_recovery(&mut self, session: Session) -> bool {
+        if self.state != State::Guiding
+            || session.selected_role() != Some(self.role)
+            || !session.view().can_save
+            || session.view().backup_path.is_some()
+            || self.session.view().backup_path.is_some()
+        {
+            return false;
+        }
+        self.session = session;
+        // A startup endpoint proves only this selected component, not an unseen partner.
+        self.plan_known = true;
+        self.advance();
+        true
+    }
     pub fn role(&self) -> Role {
         self.role
     }
@@ -61,19 +79,6 @@ impl Journey {
     }
     pub fn is_complete(&self) -> bool {
         self.state == State::Complete
-    }
-    /// Count only components observed back in normal operation after their copy was saved.
-    pub fn component_progress(&self) -> Option<(usize, usize)> {
-        if !self.plan_known {
-            return None;
-        }
-        let total = 1 + usize::from(self.include_right);
-        let completed = if self.is_complete() {
-            total
-        } else {
-            usize::from(self.role == Role::Right)
-        };
-        Some((completed, total))
     }
     pub fn archives(&self) -> &[PathBuf] {
         &self.archives

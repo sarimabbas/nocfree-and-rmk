@@ -14,7 +14,7 @@ pub(crate) fn run(
     role: Role,
     cancelled: Arc<AtomicBool>,
     progress: std::sync::mpsc::Sender<Procedure>,
-) -> Result<(), String> {
+) -> Result<Session, String> {
     if !cfg!(target_os = "macos") {
         return Err("Recovery mode currently supports macOS only.".into());
     }
@@ -22,13 +22,14 @@ pub(crate) fn run(
         .enable_all()
         .build()
         .map_err(|_| "Couldn’t start recovery.".to_owned())?;
-    runtime.block_on(async move {
+    let result = runtime.block_on(async move {
         let mut session = Session::new();
         session.select(if role == Role::Right { device::Role::Right } else { device::Role::Left });
         let mut disconnected = false;
         let mut last_procedure = None;
         let mut requested_location=None;
         let mut requested_at=None;
+        let mut inventory = DiscoveryPoll::default();
         // Wait for the user's physical action without expiring while they read.
         // Once a matching stage appears, dispatch exactly once; the armed request
         // and subsequent drive observation retain their finite deadlines.
@@ -54,20 +55,74 @@ pub(crate) fn run(
                     let _=request.request_detach(&cancelled).await;
                 }
             }
-            let snapshot = device::discover()?;
+            if cancelled.load(Ordering::Relaxed) { return Err("Recovery cancelled.".into()); }
+            let Some(snapshot) = inventory.poll(requested_at).await else {
+                tokio::time::sleep(Duration::from_millis(100)).await;
+                continue;
+            };
+            let snapshot = snapshot?;
+            if cancelled.load(Ordering::Relaxed) { return Err("Recovery cancelled.".into()); }
             if let Some(location)=requested_location {
-                if correlated_drive(&snapshot,location) { return Ok(()); }
+                // The startup endpoint itself is transitional, not a normal keyboard.
+                // Bind and validate when recovery begins enumerating; discovery may
+                // still see the stage until its detach/reset has taken effect.
+                if snapshot.devices.iter().any(|device| device.bootloader()) || !snapshot.mounts.is_empty() {
+                    session.bind_startup(location);
+                    session.observe(Ok(snapshot));
+                    if let Some(error) = session.view().error { return Err(error); }
+                    if session.view().can_save { return Ok(session); }
+                }
             } else {
                 let (procedure, ready) = factory_observation(&mut session, role, &mut disconnected, snapshot)?;
                 if let Some(procedure) = procedure && last_procedure != Some(procedure) {
                     let _ = progress.send(procedure);
                     last_procedure = Some(procedure);
                 }
-                if ready { return Ok(()); }
+                if ready { return Ok(session); }
             }
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
-    })
+    });
+    // A cancelled read-only OS inventory can finish in the background; it never
+    // carries an armed request or accepts a recovery drive after cancellation.
+    runtime.shutdown_timeout(Duration::from_millis(100));
+    result
+}
+
+// Only one read-only inventory runs at a time. Slow ioreg must not consume
+// the startup endpoint's two-second window. An inventory started before a
+// detach request cannot prove that request's resulting recovery drive.
+#[derive(Default)]
+struct DiscoveryPoll {
+    pending: Option<(
+        Instant,
+        tokio::task::JoinHandle<Result<device::Snapshot, String>>,
+    )>,
+}
+impl DiscoveryPoll {
+    async fn poll(&mut self, after: Option<Instant>) -> Option<Result<device::Snapshot, String>> {
+        if self.pending.is_none() {
+            self.pending = Some((
+                Instant::now(),
+                tokio::task::spawn_blocking(device::discover),
+            ));
+        }
+        let (started, task) = self.pending.as_ref()?;
+        if !task.is_finished() {
+            if started.elapsed() >= Duration::from_secs(3) {
+                return Some(Err(
+                    "USB discovery took too long. Try recovery again.".into()
+                ));
+            }
+            return None;
+        }
+        let stale = after.is_some_and(|after| *started < after);
+        let (_, task) = self.pending.take()?;
+        let result = task
+            .await
+            .unwrap_or_else(|_| Err("Couldn’t inspect USB devices.".into()));
+        if stale { None } else { Some(result) }
+    }
 }
 
 // Session remains the single source of normal-device/port and boot metadata binding.
@@ -105,32 +160,12 @@ fn factory_observation(
         None if session.identified_normal() => Some(Procedure::Manual),
         _ => None,
     };
-    if view.can_save
-        && !snapshot.mounts[0]
-            .info
-            .lines()
-            .any(|l| l.trim() == "Board-ID: NocFree &")
-    {
-        return Err("This recovery drive’s board identity is unfamiliar.".into());
-    }
     Ok((procedure, view.can_save))
 }
 
 fn drive_deadline_passed(requested_at: Option<Instant>, now: Instant) -> bool {
     requested_at
         .is_some_and(|start| now.saturating_duration_since(start) >= Duration::from_secs(15))
-}
-
-fn correlated_drive(snapshot: &device::Snapshot, location: u64) -> bool {
-    let boots: Vec<_> = snapshot.devices.iter().filter(|d| d.bootloader()).collect();
-    boots.len() == 1
-        && boots[0].location == location
-        && snapshot.mounts.len() == 1
-        && crate::session::validate_metadata(&snapshot.mounts[0].info).is_ok()
-        && snapshot.mounts[0]
-            .info
-            .lines()
-            .any(|l| l.trim() == "Board-ID: NocFree &")
 }
 
 #[cfg(test)]
@@ -288,12 +323,83 @@ mod tests {
                     .into(),
             }],
         };
-        assert!(correlated_drive(&snapshot, 10));
-        assert!(!correlated_drive(&snapshot, 11));
+        let mut session = Session::new();
+        session.select(device::Role::Left);
+        session.bind_startup(10);
+        session.observe(Ok(snapshot.clone()));
+        assert!(session.view().can_save);
+        let mut wrong_port = Session::new();
+        wrong_port.select(device::Role::Left);
+        wrong_port.bind_startup(11);
+        wrong_port.observe(Ok(snapshot.clone()));
+        assert!(!wrong_port.view().can_save);
+        assert!(wrong_port.view().error.is_some());
         snapshot.devices.push(snapshot.devices[0].clone());
-        assert!(!correlated_drive(&snapshot, 10));
+        session.observe(Ok(snapshot.clone()));
+        assert!(!session.view().can_save);
         snapshot.devices.pop();
         snapshot.mounts.clear();
-        assert!(!correlated_drive(&snapshot, 10));
+        session.observe(Ok(snapshot.clone()));
+        assert!(!session.view().can_save);
+    }
+    #[tokio::test]
+    async fn slow_inventory_does_not_block_hot_polling_or_start_another_inventory() {
+        let (release, wait) = std::sync::mpsc::channel();
+        let started = Instant::now();
+        let task = tokio::task::spawn_blocking(move || {
+            wait.recv().unwrap();
+            Ok(device::Snapshot::default())
+        });
+        let mut inventory = DiscoveryPoll {
+            pending: Some((started, task)),
+        };
+        assert!(inventory.poll(None).await.is_none());
+        tokio::time::sleep(Duration::from_millis(5)).await;
+        assert!(inventory.poll(None).await.is_none());
+        assert_eq!(inventory.pending.as_ref().unwrap().0, started);
+        release.send(()).unwrap();
+        while !inventory.pending.as_ref().unwrap().1.is_finished() {
+            tokio::task::yield_now().await;
+        }
+        assert!(inventory.poll(None).await.unwrap().is_ok());
+        assert!(inventory.pending.is_none());
+    }
+    #[tokio::test]
+    async fn inventory_started_before_detach_is_discarded_even_if_it_finishes_afterward() {
+        let started = Instant::now();
+        let requested = started + Duration::from_millis(1);
+        let task = tokio::task::spawn_blocking(|| Ok(device::Snapshot::default()));
+        while !task.is_finished() {
+            tokio::task::yield_now().await;
+        }
+        let mut inventory = DiscoveryPoll {
+            pending: Some((started, task)),
+        };
+        assert!(inventory.poll(Some(requested)).await.is_none());
+        assert!(inventory.pending.is_none());
+        let task = tokio::task::spawn_blocking(|| Ok(device::Snapshot::default()));
+        while !task.is_finished() {
+            tokio::task::yield_now().await;
+        }
+        inventory.pending = Some((requested, task));
+        assert!(inventory.poll(Some(requested)).await.unwrap().is_ok());
+    }
+    #[test]
+    fn cancellation_shutdown_does_not_wait_for_a_blocked_read_only_inventory() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let (release, wait) = std::sync::mpsc::channel();
+        let (started, ready) = std::sync::mpsc::channel();
+        runtime.spawn_blocking(move || {
+            started.send(()).unwrap();
+            wait.recv().unwrap();
+        });
+        ready.recv_timeout(Duration::from_secs(1)).unwrap();
+        let cancelled_at = Instant::now();
+        runtime.shutdown_timeout(Duration::from_millis(100));
+        release.send(()).unwrap();
+        assert!(cancelled_at.elapsed() < Duration::from_secs(1));
     }
 }

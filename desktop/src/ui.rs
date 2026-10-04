@@ -34,7 +34,6 @@ use gpui::{
 use gpui_kit::component::{
     ActiveTheme, Disableable, Icon, Sizable, Theme,
     button::{Button, ButtonVariants},
-    progress::Progress,
     sidebar::{Sidebar, SidebarGroup, SidebarMenuItem},
     spinner::Spinner,
     status_bar::StatusBar,
@@ -54,6 +53,7 @@ pub struct Companion {
     dongle_connected: bool,
     rescue: RecoveryJourney,
     rescue_cancel: Option<Arc<AtomicBool>>,
+    backup_recovery: bool,
     session: Option<Journey>,
     view: View,
     role: Option<Role>,
@@ -219,7 +219,9 @@ impl Companion {
                     if !this.started || this.completed {
                         return false;
                     }
-                    if let Some(session) = this.session.as_mut() {
+                    if !this.backup_recovery
+                        && let Some(session) = this.session.as_mut()
+                    {
                         session.observe(result);
                         this.view = session.view();
                         if let Some(error) = this.view.error.clone() {
@@ -244,6 +246,7 @@ impl Companion {
             dongle_connected: false,
             rescue: RecoveryJourney::new(),
             rescue_cancel: None,
+            backup_recovery: false,
             session: Some(session),
             view,
             role: None,
@@ -266,11 +269,19 @@ impl Companion {
 
     fn start_recovery(&mut self, role: RecoveryRole, cx: &mut Context<Self>) {
         if let Some(attempt) = self.rescue.start(role) {
-            self.run_recovery(role, attempt, cx);
+            self.run_recovery(role, attempt, false, cx);
         }
     }
 
-    fn run_recovery(&mut self, role: RecoveryRole, attempt: Attempt, cx: &mut Context<Self>) {
+    fn run_recovery(
+        &mut self,
+        role: RecoveryRole,
+        attempt: Attempt,
+        backup: bool,
+        cx: &mut Context<Self>,
+    ) {
+        self.backup_recovery = backup;
+        self.stopped = false;
         let cancelled = Arc::new(AtomicBool::new(false));
         self.rescue_cancel = Some(cancelled.clone());
         cx.notify();
@@ -284,10 +295,24 @@ impl Companion {
                 tokio::select! {
                     result = &mut worker => {
                         let _ = this.update(cx, |this, cx| {
-                            if this.rescue_cancel.as_ref().is_some_and(|current| Arc::ptr_eq(current, &cancelled))
-                                && !cancelled.load(Ordering::Relaxed)
-                                && this.rescue.complete(attempt, role, result)
-                            {
+                            if !this.rescue_cancel.as_ref().is_some_and(|current| Arc::ptr_eq(current, &cancelled))
+                                || cancelled.load(Ordering::Relaxed)
+                            { return; }
+                            let result = result.and_then(|session| {
+                                if !backup { return Ok(()); }
+                                if this.started && this.page == Page::Backups
+                                    && this.session.as_mut().is_some_and(|journey| journey.accept_recovery(session))
+                                { Ok(()) } else { Err("This recovery result no longer belongs to the active backup.".into()) }
+                            });
+                            if this.rescue.complete(attempt, role, result.clone()) {
+                                this.rescue_cancel = None;
+                                if backup {
+                                    this.backup_recovery = result.is_err();
+                                    if let Err(error) = result {
+                                        this.stopped = true;
+                                        this.message = Some(error);
+                                    } else { this.advance(cx); }
+                                }
                                 cx.notify();
                             }
                         });
@@ -316,6 +341,7 @@ impl Companion {
             cancelled.store(true, Ordering::Relaxed);
         }
         self.rescue.cancel();
+        self.backup_recovery = false;
     }
 
     fn recovery_waiting(&self, label: &'static str, cx: &mut Context<Self>) -> gpui::Div {
@@ -326,8 +352,12 @@ impl Companion {
             .child(waiting_indicator(label, cx))
             .child(action_row(button("cancel-recovery", "Cancel").on_click(
                 cx.listener(|this, _, _, cx| {
-                    this.cancel_recovery();
-                    cx.notify();
+                    if this.backup_recovery {
+                        this.navigate(Page::Home, cx);
+                    } else {
+                        this.cancel_recovery();
+                        cx.notify();
+                    }
                 }),
             )))
     }
@@ -439,7 +469,7 @@ impl Companion {
                         .child(button("retry-recovery", "Try again").on_click(cx.listener(
                             |this, _, _, cx| {
                                 if let Some((role, attempt)) = this.rescue.retry() {
-                                    this.run_recovery(role, attempt, cx);
+                                    this.run_recovery(role, attempt, this.backup_recovery, cx);
                                 }
                             },
                         )))
@@ -470,6 +500,7 @@ impl Companion {
             self.stopped = false;
             self.message = None;
             self.page = Page::Backups;
+            self.advance(cx);
             cx.notify();
             return;
         }
@@ -482,6 +513,7 @@ impl Companion {
         self.role = Some(Role::Left);
         self.started = true;
         self.page = Page::Backups;
+        self.advance(cx);
         cx.notify();
     }
 
@@ -493,6 +525,23 @@ impl Companion {
             self.role = Some(journey.role());
             self.completed = journey.is_complete();
             self.view = journey.view();
+        }
+        if self
+            .session
+            .as_ref()
+            .is_some_and(|j| j.state() == crate::journey::State::Guiding)
+            && !self.backup_recovery
+        {
+            self.cancel_recovery();
+            let role = if self.role == Some(Role::Right) {
+                RecoveryRole::Right
+            } else {
+                RecoveryRole::Left
+            };
+            if let Some(attempt) = self.rescue.start(role) {
+                self.run_recovery(role, attempt, true, cx);
+            }
+            return;
         }
         if self.view.can_save && !self.completed {
             self.save(cx);
@@ -636,7 +685,9 @@ impl Companion {
             }
             self.started = false;
         }
-        if self.page == Page::Recovery && page != Page::Recovery {
+        if (self.page == Page::Recovery && page != Page::Recovery)
+            || (self.backup_recovery && page != Page::Backups)
+        {
             self.cancel_recovery();
         }
         self.page = page;
@@ -738,6 +789,7 @@ impl Render for Companion {
                     .child(img(keyboard_image(Role::Left)).w(px(230.)).h(px(165.)))
                     .child(img(keyboard_image(Role::Right)).w(px(230.)).h(px(165.))))
                 .child(action_row(button("home-backup", "Save firmware copies").on_click(cx.listener(|this, _, _, cx| this.navigate(Page::Backups, cx))))),
+            Page::Backups if self.backup_recovery => canvas.child(self.recovery_screen(cx)),
             Page::Backups if self.started || self.completed => {
                 let title: String = if self.completed { if self.session.as_ref().is_some_and(|j| j.archives().len() == 1) { "Your copy is saved".into() } else { "Your copies are saved".into() } } else if self.stopped { "Let’s reconnect".into() } else if self.busy { "Saving a copy…".into() } else { self.view.title.clone() };
                 let instruction: String = if self.completed { "Your firmware copies are saved privately on this Mac.".into() } else if self.stopped { self.message.clone().unwrap_or_default() } else if self.busy { "Keep the USB cable connected.".into() } else { self.view.instruction.clone() };
@@ -887,53 +939,18 @@ fn recovery_guide(
         .when_some(controls, |guide, controls| guide.child(controls))
 }
 
-fn flow_indicator(flow: FlowProgress, id: &'static str, cx: &App) -> gpui::Div {
-    div()
-        .flex()
-        .flex_col()
-        .gap(px(12.))
-        .child(
-            Stepper::new(id)
-                .small()
-                .selected_index(flow.current)
-                .disabled(true)
-                .items(
-                    flow.labels
-                        .into_iter()
-                        .map(|label| StepperItem::new().child(label)),
-                ),
-        )
-        .when(flow.attention, |d| {
-            d.child(
-                div()
-                    .text_size(px(12.))
-                    .text_color(cx.theme().muted_foreground)
-                    .child("Follow the step below to continue."),
-            )
-        })
-        .when_some(flow.components, |d, components| {
-            d.child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap(px(6.))
-                    .child(
-                        Progress::new(format!("{id}-components"))
-                            .value(components.fraction() * 100.)
-                            .small()
-                            .accessibility_label("Verified components"),
-                    )
-                    .child(
-                        div()
-                            .text_size(px(11.))
-                            .text_color(cx.theme().muted_foreground)
-                            .child(format!(
-                                "{} of {} components verified",
-                                components.completed, components.total
-                            )),
-                    ),
-            )
-        })
+fn flow_indicator(flow: FlowProgress, id: &'static str, _cx: &App) -> gpui::Div {
+    div().flex().flex_col().gap(px(12.)).child(
+        Stepper::new(id)
+            .small()
+            .selected_index(flow.current)
+            .disabled(true)
+            .items(
+                flow.labels
+                    .into_iter()
+                    .map(|label| StepperItem::new().child(label)),
+            ),
+    )
 }
 
 fn waiting_indicator(label: &'static str, cx: &App) -> gpui::Div {
