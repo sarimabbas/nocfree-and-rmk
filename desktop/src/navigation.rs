@@ -39,14 +39,50 @@ pub enum Stage {
 }
 enum Event {
     Navigate(Page),
+    #[cfg(test)]
     Select(Scope),
+    Available([bool; 3]),
+    Checked(Role, bool),
+    ChooseNext,
     Next,
     Previous,
     Reset,
     Observe(Readiness),
 }
 #[derive(Default)]
-struct Storage;
+struct Storage {
+    available: [bool; 3],
+    checked: [bool; 3],
+    customized: bool,
+}
+fn role_index(role: Role) -> usize {
+    match role {
+        Role::Left => 0,
+        Role::Right => 1,
+        Role::Receiver => 2,
+    }
+}
+impl Storage {
+    fn draft(&self) -> Option<Scope> {
+        Scope::from_roles(
+            [Role::Left, Role::Right, Role::Receiver]
+                .into_iter()
+                .filter(|role| {
+                    self.checked[role_index(*role)] && self.available[role_index(*role)]
+                }),
+        )
+    }
+    fn connected(&self, scope: Scope) -> bool {
+        scope
+            .roles()
+            .into_iter()
+            .all(|role| self.available[role_index(role)])
+    }
+    fn reset_selection(&mut self) {
+        self.checked = self.available;
+        self.customized = false;
+    }
+}
 fn select(page: &Page) -> Outcome<State> {
     let stage = if *page == Page::Pairing {
         Stage::Setup {
@@ -65,16 +101,56 @@ fn select(page: &Page) -> Outcome<State> {
     })
 }
 fn entry(
+    storage: &mut Storage,
     page: Page,
     stage: &mut Stage,
     event: &Event,
     context: &mut Option<Start>,
 ) -> Outcome<State> {
     match event {
-        Event::Reset => select(&page),
-        Event::Navigate(next) if *next != page => select(next),
+        Event::Reset => {
+            storage.reset_selection();
+            select(&page)
+        }
+        Event::Navigate(next) if *next != page => {
+            storage.reset_selection();
+            select(next)
+        }
+        Event::Available(available) => {
+            storage.available = *available;
+            if matches!(stage, Stage::Choose(_)) {
+                for (index, connected) in available.iter().copied().enumerate() {
+                    if !connected || !storage.customized {
+                        storage.checked[index] = connected;
+                    }
+                }
+            }
+            Handled
+        }
+        Event::Checked(role, checked) if matches!(stage, Stage::Choose(_)) => {
+            let index = role_index(*role);
+            if storage.available[index] {
+                storage.checked[index] = *checked;
+                storage.customized = true;
+            }
+            Handled
+        }
+        Event::ChooseNext if page != Page::Pairing => {
+            if let Stage::Choose(readiness) = *stage
+                && let Some(scope) = storage.draft()
+            {
+                *stage = Stage::Setup { scope, readiness };
+            }
+            Handled
+        }
+        #[cfg(test)]
         Event::Select(scope) if page != Page::Pairing => {
-            if let Stage::Choose(readiness) = *stage {
+            if let Stage::Choose(readiness) = *stage
+                && storage.connected(*scope)
+            {
+                storage.checked =
+                    [Role::Left, Role::Right, Role::Receiver].map(|role| scope.contains(role));
+                storage.customized = true;
                 *stage = Stage::Setup {
                     scope: *scope,
                     readiness,
@@ -90,12 +166,16 @@ fn entry(
             Handled
         }
         Event::Previous if page != Page::Pairing && matches!(stage, Stage::Setup { .. }) => {
+            for index in 0..3 {
+                storage.checked[index] &= storage.available[index];
+            }
             *stage = Stage::Choose(Readiness::Unknown);
             Handled
         }
         Event::Next => {
             if let Stage::Setup { scope, readiness } = *stage
                 && readiness.permits_start()
+                && (page == Page::Pairing || storage.connected(scope))
             {
                 *context = Some(match page {
                     Page::Home | Page::Backups => Start::Backup(scope),
@@ -114,30 +194,55 @@ fn entry(
 #[state_machine(initial = "State::backups(Stage::Choose(Readiness::Unknown))")]
 impl Storage {
     #[state]
-    fn backups(stage: &mut Stage, event: &Event, context: &mut Option<Start>) -> Outcome<State> {
-        entry(Page::Backups, stage, event, context)
+    fn backups(
+        &mut self,
+        stage: &mut Stage,
+        event: &Event,
+        context: &mut Option<Start>,
+    ) -> Outcome<State> {
+        entry(self, Page::Backups, stage, event, context)
     }
     #[state]
-    fn recovery(stage: &mut Stage, event: &Event, context: &mut Option<Start>) -> Outcome<State> {
-        entry(Page::Recovery, stage, event, context)
+    fn recovery(
+        &mut self,
+        stage: &mut Stage,
+        event: &Event,
+        context: &mut Option<Start>,
+    ) -> Outcome<State> {
+        entry(self, Page::Recovery, stage, event, context)
     }
     #[state]
-    fn pairing(stage: &mut Stage, event: &Event, context: &mut Option<Start>) -> Outcome<State> {
-        entry(Page::Pairing, stage, event, context)
+    fn pairing(
+        &mut self,
+        stage: &mut Stage,
+        event: &Event,
+        context: &mut Option<Start>,
+    ) -> Outcome<State> {
+        entry(self, Page::Pairing, stage, event, context)
     }
     #[state]
-    fn restore(stage: &mut Stage, event: &Event, context: &mut Option<Start>) -> Outcome<State> {
-        entry(Page::Restore, stage, event, context)
+    fn restore(
+        &mut self,
+        stage: &mut Stage,
+        event: &Event,
+        context: &mut Option<Start>,
+    ) -> Outcome<State> {
+        entry(self, Page::Restore, stage, event, context)
     }
     #[state]
-    fn firmware(stage: &mut Stage, event: &Event, context: &mut Option<Start>) -> Outcome<State> {
-        entry(Page::Firmware, stage, event, context)
+    fn firmware(
+        &mut self,
+        stage: &mut Stage,
+        event: &Event,
+        context: &mut Option<Start>,
+    ) -> Outcome<State> {
+        entry(self, Page::Firmware, stage, event, context)
     }
 }
 pub struct Navigation(StateMachine<Storage>);
 impl Default for Navigation {
     fn default() -> Self {
-        Self(Storage.state_machine())
+        Self(Storage::default().state_machine())
     }
 }
 impl Navigation {
@@ -149,6 +254,28 @@ impl Navigation {
             State::Firmware { stage } => (Page::Firmware, *stage),
             State::Restore { stage } => (Page::Restore, *stage),
         }
+    }
+    pub fn observe_available(&mut self, available: [bool; 3]) {
+        self.0
+            .handle_with_context(&Event::Available(available), &mut None);
+    }
+    pub fn available(&self, role: Role) -> bool {
+        self.0.inner().available[role_index(role)]
+    }
+    pub fn checked(&self, role: Role) -> bool {
+        self.0.inner().checked[role_index(role)]
+    }
+    pub fn set_checked(&mut self, role: Role, checked: bool) {
+        self.0
+            .handle_with_context(&Event::Checked(role, checked), &mut None);
+    }
+    pub fn draft_scope(&self) -> Option<Scope> {
+        self.0.inner().draft()
+    }
+    pub fn choose_next(&mut self) -> bool {
+        let before = self.choosing();
+        self.0.handle_with_context(&Event::ChooseNext, &mut None);
+        before && !self.choosing()
     }
     pub fn page(&self) -> Page {
         self.snapshot().0
@@ -166,6 +293,7 @@ impl Navigation {
             Stage::Choose(_) => None,
         }
     }
+    #[cfg(test)]
     pub fn selected(&self) -> Option<Role> {
         match self.scope() {
             Some(Scope::Part(role)) => Some(role),
@@ -183,7 +311,7 @@ impl Navigation {
             .handle_with_context(&Event::Observe(readiness), &mut None);
     }
     pub fn can_start(&self) -> bool {
-        matches!(self.snapshot().1, Stage::Setup { readiness, .. } if readiness.permits_start())
+        matches!(self.snapshot().1, Stage::Setup { scope, readiness } if readiness.permits_start() && (self.page() == Page::Pairing || self.0.inner().connected(scope)))
     }
     pub fn navigate(&mut self, page: Page) {
         self.0
@@ -196,6 +324,7 @@ impl Navigation {
     pub fn select(&mut self, role: Role) {
         self.select_scope(Scope::Part(role));
     }
+    #[cfg(test)]
     pub fn select_scope(&mut self, scope: Scope) {
         self.0.handle_with_context(&Event::Select(scope), &mut None);
     }
@@ -215,6 +344,87 @@ impl Navigation {
 mod tests {
     use super::*;
     #[test]
+    fn checkbox_selection_is_passive_and_empty_selection_cannot_proceed() {
+        let mut nav = Navigation::default();
+        assert_eq!(nav.draft_scope(), None);
+        assert!(!nav.choose_next());
+        nav.observe_available([true; 3]);
+        assert_eq!(nav.draft_scope(), Some(Scope::Whole));
+        for role in [Role::Left, Role::Right, Role::Receiver] {
+            nav.set_checked(role, false);
+            assert!(nav.choosing());
+            assert_eq!(nav.next(), None);
+        }
+        assert_eq!(nav.draft_scope(), None);
+        assert!(!nav.choose_next());
+        nav.set_checked(Role::Left, true);
+        nav.set_checked(Role::Receiver, true);
+        assert_eq!(
+            nav.draft_scope(),
+            Some(Scope::Pair(Role::Left, Role::Receiver))
+        );
+        assert!(nav.choose_next());
+        assert!(!nav.choose_next());
+        assert_eq!(
+            nav.next(),
+            Some(Start::Backup(Scope::Pair(Role::Left, Role::Receiver)))
+        );
+        assert_eq!(nav.next(), None);
+    }
+    #[test]
+    fn available_parts_default_selected_until_owner_customizes() {
+        let mut nav = Navigation::default();
+        nav.observe_available([true, false, false]);
+        assert_eq!(nav.draft_scope(), Some(Scope::Part(Role::Left)));
+        nav.set_checked(Role::Right, true);
+        assert!(!nav.checked(Role::Right));
+        nav.observe_available([true, true, false]);
+        assert!(nav.checked(Role::Right));
+        nav.set_checked(Role::Right, false);
+        nav.observe_available([true; 3]);
+        assert!(!nav.checked(Role::Receiver));
+        assert_eq!(nav.draft_scope(), Some(Scope::Part(Role::Left)));
+        nav.observe_available([false, true, true]);
+        assert!(!nav.checked(Role::Left));
+        assert_eq!(nav.draft_scope(), None);
+        nav.observe_available([true; 3]);
+        assert!(!nav.checked(Role::Left));
+    }
+    #[test]
+    fn availability_gates_setup_but_active_disconnect_never_changes_plan() {
+        let mut nav = Navigation::default();
+        nav.observe_available([true; 3]);
+        assert!(nav.choose_next());
+        nav.observe_available([true, false, true]);
+        assert_eq!(nav.scope(), Some(Scope::Whole));
+        assert!(!nav.can_start());
+        assert_eq!(nav.next(), None);
+        nav.observe_available([true; 3]);
+        assert_eq!(nav.next(), Some(Start::Backup(Scope::Whole)));
+        nav.observe_available([false; 3]);
+        nav.set_checked(Role::Left, false);
+        assert_eq!(nav.scope(), Some(Scope::Whole));
+        assert_eq!(nav.next(), None);
+        nav.reset();
+        assert_eq!(nav.draft_scope(), None);
+    }
+    #[test]
+    fn every_nonempty_subset_has_an_explicit_setup_then_start() {
+        for mask in 1..8 {
+            let mut nav = Navigation::default();
+            let available = std::array::from_fn(|index| mask & (1 << index) != 0);
+            nav.observe_available(available);
+            let scope = nav.draft_scope().unwrap();
+            assert_eq!(
+                scope.roles().len(),
+                available.into_iter().filter(|v| *v).count()
+            );
+            assert_eq!(nav.next(), None);
+            assert!(nav.choose_next());
+            assert_eq!(nav.next(), Some(Start::Backup(scope)));
+        }
+    }
+    #[test]
     fn all_task_cards_are_passive_and_next_starts_selected_scope_once() {
         for page in [
             Page::Home,
@@ -230,6 +440,7 @@ mod tests {
                 Scope::Part(Role::Receiver),
             ] {
                 let mut nav = Navigation::default();
+                nav.observe_available([true; 3]);
                 nav.navigate(page);
                 assert!(nav.choosing());
                 assert!(nav.setup());
@@ -266,6 +477,7 @@ mod tests {
     #[test]
     fn previous_returns_to_picker_without_starting_and_clears_scope() {
         let mut nav = Navigation::default();
+        nav.observe_available([true; 3]);
         nav.navigate(Page::Firmware);
         nav.select_scope(Scope::Whole);
         nav.observe(Readiness::AlreadyLatest);
@@ -286,6 +498,7 @@ mod tests {
             (Page::Restore, Readiness::AlreadyFactory),
         ] {
             let mut nav = Navigation::default();
+            nav.observe_available([true; 3]);
             nav.navigate(page);
             nav.observe(already);
             assert!(nav.choosing());
@@ -305,6 +518,7 @@ mod tests {
     #[test]
     fn pairing_has_no_picker_and_navigation_drops_old_scope() {
         let mut nav = Navigation::default();
+        nav.observe_available([true; 3]);
         nav.select(Role::Receiver);
         nav.navigate(Page::Pairing);
         assert!(!nav.choosing());

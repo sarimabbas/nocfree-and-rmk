@@ -127,10 +127,10 @@ impl Machine {
         validated_release_complete
             && match self.0.state() {
                 machine::State::Backups {} => true,
-                machine::State::Supplied { files } => match scope {
-                    Scope::Whole => files.0.iter().all(Option::is_some),
-                    Scope::Part(role) => files.0[index(role)].is_some(),
-                },
+                machine::State::Supplied { files } => scope
+                    .roles()
+                    .iter()
+                    .all(|role| files.0[index(*role)].is_some()),
             }
     }
 }

@@ -61,6 +61,9 @@ pub(crate) fn assess_scoped(
                 Readiness::Needed
             };
         }
+        if scope != Scope::Whole {
+            return Readiness::Needed;
+        }
         if devices.iter().filter(|d| d.factory_left()).count() == 2
             && devices.iter().filter(|d| d.factory_right()).count() == 1
             && !devices.iter().any(|d| {
@@ -81,10 +84,7 @@ pub(crate) fn assess_scoped(
     let Some(latest) = latest else {
         return Readiness::Unknown;
     };
-    let roles = match scope {
-        Scope::Whole => vec![Role::Left, Role::Right, Role::Receiver],
-        Scope::Part(role) => vec![role],
-    };
+    let roles = scope.roles();
     for role in roles {
         let matching: Vec<_> = devices
             .iter()

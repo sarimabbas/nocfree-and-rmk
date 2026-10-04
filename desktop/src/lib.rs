@@ -43,3 +43,5 @@ mod factory_source;
 
 mod peripheral_journey;
 pub mod scope;
+
+mod scope_presence;

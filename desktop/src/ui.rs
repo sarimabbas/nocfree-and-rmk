@@ -39,6 +39,7 @@ use gpui::{
 use gpui_kit::component::{
     ActiveTheme, Disableable, Sizable, Theme,
     button::{Button, ButtonVariants},
+    checkbox::Checkbox,
     sidebar::{Sidebar, SidebarGroup, SidebarMenuItem},
     spinner::Spinner,
     stepper::{Stepper, StepperItem},
@@ -58,6 +59,7 @@ struct JourneyScreen {
 pub struct Companion {
     navigation: Navigation,
     peripherals: Option<crate::peripheral_journey::Machine>,
+    usb_identification: crate::scope_presence::Identifier,
     appearance_subscription: Option<gpui::Subscription>,
     dongle_connected: bool,
     bluetooth_connected: bool,
@@ -163,6 +165,9 @@ impl Companion {
                 }
                 let idle = this.update(cx, |this, _| !this.backup_state.active());
                 if matches!(idle, Ok(true)) {
+                    let identification_ticket = this
+                        .update(cx, |this, _| this.usb_identification.ticket())
+                        .ok();
                     let peripheral_ticket = this
                         .update(cx, |this, _| {
                             this.peripherals.as_ref().map(|batch| batch.ticket())
@@ -196,6 +201,13 @@ impl Companion {
                                     })
                                     .unwrap_or_default();
                                 key.sort();
+                                if let Some(ticket) = identification_ticket {
+                                    this.usb_identification.observe(
+                                        ticket,
+                                        &key,
+                                        observation.is_ok(),
+                                    );
+                                }
                                 if this.observe_device_key(key) {
                                     battery_checked = None;
                                     version_checked = None;
@@ -220,6 +232,7 @@ impl Companion {
                                 this.advance_recovery_batch(&observation, peripheral_ticket, cx);
                                 let next = Home::observe(observation, UpdateAssessment::Unknown);
                                 this.home = next;
+                                this.refresh_scope_presence();
                                 this.observe_preflight();
                                 this.advance_firmware(cx);
                                 this.advance(cx);
@@ -439,6 +452,7 @@ impl Companion {
         Self {
             navigation: Navigation::default(),
             peripherals: None,
+            usb_identification: crate::scope_presence::Identifier::default(),
             appearance_subscription: None,
             dongle_connected: false,
             bluetooth_connected: false,
@@ -763,6 +777,7 @@ impl Companion {
         if self.operation.busy() {
             return;
         }
+        self.refresh_scope_presence();
         self.observe_preflight();
         if self.navigation.page() == Page::Restore
             && (self.operation.error().is_some()
@@ -796,6 +811,76 @@ impl Companion {
     }
     fn setup_screen(&self, cx: &mut Context<Self>) -> JourneyScreen {
         if self.navigation.choosing() {
+            use crate::scope_presence::Identification;
+            let identification = self.usb_identification.state();
+            if let Identification::Disconnect(role)
+            | Identification::Connect(role)
+            | Identification::Complete(role) = identification
+            {
+                let ticket = self.usb_identification.ticket();
+                let done = matches!(identification, Identification::Complete(_));
+                let message = match identification {
+                    Identification::Disconnect(_) => {
+                        "Unplug the unidentified left half and dongle. Leave any parts you already identified connected."
+                    }
+                    Identification::Connect(RecoveryRole::Left) => {
+                        "Connect only the LEFT half by USB in middle WIRED. Leave already identified parts connected."
+                    }
+                    Identification::Connect(RecoveryRole::Receiver) => {
+                        "Connect only the USB dongle. Leave already identified parts connected."
+                    }
+                    Identification::Complete(_) => "USB connection identified.",
+                    _ => "Connect the selected part by USB.",
+                };
+                return JourneyScreen {
+                    body: recovery_guide(
+                        Some(role),
+                        "Identify USB connection",
+                        message,
+                        if done {
+                            None
+                        } else {
+                            Some(
+                                self.recovery_waiting("Watching USB connections…", cx)
+                                    .into_any_element(),
+                            )
+                        },
+                        cx,
+                    ),
+                    actions: Some(
+                        div()
+                            .flex()
+                            .justify_between()
+                            .w_full()
+                            .child(
+                                Button::new("cancel-identify")
+                                    .label("Cancel")
+                                    .secondary()
+                                    .cursor_pointer()
+                                    .h(px(40.))
+                                    .px(px(20.))
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        if this.usb_identification.ticket() == ticket {
+                                            this.usb_identification.cancel();
+                                            this.refresh_scope_presence();
+                                            cx.notify();
+                                        }
+                                    })),
+                            )
+                            .when(done, |row| {
+                                row.child(button("identify-next", "Next").on_click(cx.listener(
+                                    move |this, _, _, cx| {
+                                        if this.usb_identification.ticket() == ticket {
+                                            this.usb_identification.cancel();
+                                            this.refresh_scope_presence();
+                                            cx.notify();
+                                        }
+                                    },
+                                )))
+                            }),
+                    ),
+                };
+            }
             let instruction = match self.navigation.page() {
                 Page::Recovery => "Choose the part you want to put into recovery mode",
                 Page::Firmware => "Choose the part you want to install RMK on",
@@ -804,7 +889,25 @@ impl Companion {
             };
             return JourneyScreen {
                 body: self.peripheral_picker(instruction, cx),
-                actions: None,
+                actions: Some(
+                    self.footer(
+                        Some(
+                            button("choose-scope-next", "Next")
+                                .disabled(self.navigation.draft_scope().is_none())
+                                .when(self.navigation.draft_scope().is_none(), |button| {
+                                    button.cursor_default()
+                                })
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.refresh_scope_presence();
+                                    if this.navigation.choose_next() {
+                                        this.observe_preflight();
+                                    }
+                                    cx.notify();
+                                })),
+                        ),
+                        cx,
+                    ),
+                ),
             };
         }
         let scope = self.navigation.scope().unwrap_or(Scope::Whole);
@@ -815,24 +918,18 @@ impl Companion {
         };
         if let Some(label) = already {
             return JourneyScreen {
-                body: recovery_guide(self.navigation.selected(), label, scope.label(), None, cx),
+                body: scope_guide(scope, label, cx),
                 actions: Some(self.footer(None, cx)),
             };
         }
         let body = match self.navigation.page() {
             Page::Restore => self.factory_sources_screen(cx),
-            Page::Backups | Page::Home => recovery_guide(
-                self.navigation.selected(),
-                scope.label(),
-                "Save a copy of the selected firmware locally.",
-                None,
-                cx,
-            ),
-            Page::Recovery => recovery_guide(
-                self.navigation.selected(),
-                scope.label(),
+            Page::Backups | Page::Home => {
+                scope_guide(scope, "Save a copy of the selected firmware locally.", cx)
+            }
+            Page::Recovery => scope_guide(
+                scope,
                 "Open recovery for the selected parts, one at a time.",
-                None,
                 cx,
             ),
             Page::Pairing => recovery_guide(
@@ -842,15 +939,13 @@ impl Companion {
                 None,
                 cx,
             ),
-            Page::Firmware => recovery_guide(
-                self.navigation.selected(),
-                scope.label(),
+            Page::Firmware => scope_guide(
+                scope,
                 if scope == Scope::Whole {
                     "Install RMK on your dongle and both halves, then check pairing and typing. Your current firmware will be backed up automatically."
                 } else {
-                    "Install RMK on this part. Your current firmware will be backed up automatically."
+                    "Install RMK on the selected parts. Their current firmware will be backed up automatically."
                 },
-                None,
                 cx,
             ),
         };
@@ -866,6 +961,21 @@ impl Companion {
             .disabled(!enabled)
             .when(!enabled, |button| button.cursor_default())
             .on_click(cx.listener(|this, _, _, cx| this.start_selected_journey(cx)));
+        let body = if self.navigation.page() != Page::Pairing
+            && scope
+                .roles()
+                .iter()
+                .any(|role| !self.navigation.available(*role))
+        {
+            body.child(
+                div()
+                    .text_center()
+                    .text_color(cx.theme().muted_foreground)
+                    .child("Connect the selected parts by USB to continue."),
+            )
+        } else {
+            body
+        };
         JourneyScreen {
             body,
             actions: Some(self.footer(Some(next), cx)),
@@ -1050,8 +1160,12 @@ impl Companion {
                 .as_ref()
                 .is_some_and(|batch| batch.complete());
         let title = if complete {
-            if self.navigation.scope() == Some(Scope::Whole) {
-                "Your keyboard firmware is saved".to_owned()
+            if self
+                .navigation
+                .scope()
+                .is_some_and(|scope| scope.single().is_none())
+            {
+                "Your selected firmware copies are saved".to_owned()
             } else {
                 "Your firmware copy is saved".to_owned()
             }
@@ -1126,56 +1240,86 @@ impl Companion {
         }
     }
 
+    fn scope_presence(&self) -> [crate::scope_presence::Presence; 3] {
+        crate::scope_presence::derive(
+            &self.device_key,
+            self.recovery_locations,
+            self.discovery_seen
+                .is_some_and(|t| t.elapsed() < Duration::from_secs(5)),
+            self.usb_identification.bindings(),
+        )
+    }
+    fn refresh_scope_presence(&mut self) {
+        self.navigation.observe_available(
+            self.scope_presence()
+                .map(|state| state == crate::scope_presence::Presence::Connected),
+        );
+    }
     fn peripheral_card(
         &self,
         role: RecoveryRole,
         label: &'static str,
         cx: &mut Context<Self>,
-    ) -> Button {
-        let artwork = match role {
-            RecoveryRole::Left => img(peripheral_image(RecoveryRole::Left))
-                .w(px(140.))
-                .h(px(100.))
-                .into_any_element(),
-            RecoveryRole::Right => img(peripheral_image(RecoveryRole::Right))
-                .w(px(140.))
-                .h(px(100.))
-                .into_any_element(),
-            RecoveryRole::Receiver => img(peripheral_image(RecoveryRole::Receiver))
-                .w(px(140.))
-                .h(px(100.))
-                .into_any_element(),
+    ) -> gpui::Div {
+        let present = self.scope_presence()[role_index(role)];
+        let connected = present.connected();
+        let checked = self.navigation.checked(role);
+        let caption = present.label();
+        let id = match role {
+            RecoveryRole::Left => "scope-left",
+            RecoveryRole::Right => "scope-right",
+            RecoveryRole::Receiver => "scope-dongle",
         };
-        Button::new(match role {
-            RecoveryRole::Left => "choose-left",
-            RecoveryRole::Right => "choose-right",
-            RecoveryRole::Receiver => "choose-dongle",
-        })
-        .cursor_pointer()
-        .secondary()
-        .outline()
-        .when(self.navigation.selected() == Some(role), |card| {
-            card.primary()
-        })
-        .flex_1()
-        .h(px(170.))
-        .accessibility_label(label)
-        .child(
-            div()
-                .flex()
-                .flex_col()
-                .items_center()
-                .gap(px(14.))
-                .child(artwork)
-                .child(div().font_weight(FontWeight::MEDIUM).child(label)),
-        )
-        .on_click(cx.listener(move |this, _, _, cx| {
-            this.navigation.select_scope(Scope::Part(role));
-            this.observe_preflight();
-            cx.notify();
-        }))
+        let mut card = div()
+            .flex_1()
+            .flex()
+            .flex_col()
+            .items_center()
+            .gap(px(16.))
+            .child(img(peripheral_image(role)).w(px(140.)).h(px(110.)))
+            .child(
+                Checkbox::new(id)
+                    .label(label)
+                    .checked(checked)
+                    .disabled(!connected)
+                    .when(connected, |cb| cb.cursor_pointer())
+                    .on_change(cx.listener(move |this, value, _, cx| {
+                        this.refresh_scope_presence();
+                        this.navigation.set_checked(role, *value);
+                        cx.notify();
+                    })),
+            )
+            .child(
+                div()
+                    .text_size(px(12.))
+                    .text_center()
+                    .text_color(cx.theme().muted_foreground)
+                    .child(caption),
+            );
+        if present == crate::scope_presence::Presence::Unidentified {
+            card = card.child(
+                Button::new(format!("identify-{id}"))
+                    .label("Identify")
+                    .secondary()
+                    .cursor_pointer()
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.usb_identification.start(role);
+                        cx.notify();
+                    })),
+            );
+        }
+        div()
+            .flex_1()
+            .border_1()
+            .border_color(if checked {
+                cx.theme().primary
+            } else {
+                cx.theme().border
+            })
+            .rounded(px(10.))
+            .p(px(18.))
+            .child(card)
     }
-
     fn peripheral_picker(&self, instruction: &'static str, cx: &mut Context<Self>) -> gpui::Div {
         div()
             .flex()
@@ -1195,59 +1339,8 @@ impl Companion {
                     .flex()
                     .gap(px(12.))
                     .child(self.peripheral_card(RecoveryRole::Left, "Left half", cx))
-                    .child(self.peripheral_card(RecoveryRole::Right, "Right half", cx)),
-            )
-            .child(
-                div()
-                    .flex()
-                    .gap(px(12.))
-                    .child(self.peripheral_card(RecoveryRole::Receiver, "USB dongle", cx))
-                    .child(
-                        Button::new("choose-whole")
-                            .secondary()
-                            .outline()
-                            .cursor_pointer()
-                            .flex_1()
-                            .h(px(170.))
-                            .accessibility_label("Whole keyboard")
-                            .child(
-                                div()
-                                    .flex()
-                                    .flex_col()
-                                    .items_center()
-                                    .gap(px(14.))
-                                    .child(
-                                        div()
-                                            .flex()
-                                            .items_center()
-                                            .child(
-                                                img(peripheral_image(RecoveryRole::Left))
-                                                    .w(px(85.))
-                                                    .h(px(100.)),
-                                            )
-                                            .child(
-                                                img(peripheral_image(RecoveryRole::Right))
-                                                    .w(px(85.))
-                                                    .h(px(100.)),
-                                            )
-                                            .child(
-                                                img(peripheral_image(RecoveryRole::Receiver))
-                                                    .w(px(45.))
-                                                    .h(px(70.)),
-                                            ),
-                                    )
-                                    .child(
-                                        div()
-                                            .font_weight(FontWeight::MEDIUM)
-                                            .child("Whole keyboard"),
-                                    ),
-                            )
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.navigation.select_scope(Scope::Whole);
-                                this.observe_preflight();
-                                cx.notify();
-                            })),
-                    ),
+                    .child(self.peripheral_card(RecoveryRole::Right, "Right half", cx))
+                    .child(self.peripheral_card(RecoveryRole::Receiver, "USB dongle", cx)),
             )
     }
 
@@ -2341,6 +2434,7 @@ impl Companion {
         if self.operation.busy() || self.navigation.page() == page {
             return;
         }
+        self.usb_identification.cancel();
         if let Some(batch) = self.peripherals.as_mut() {
             batch.cancel();
         }
@@ -2413,6 +2507,7 @@ impl Companion {
 
 impl Render for Companion {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.refresh_scope_presence();
         if self.appearance_subscription.is_none() {
             Theme::sync_system_appearance(Some(window), cx);
             self.appearance_subscription =
@@ -2517,9 +2612,12 @@ impl Render for Companion {
                         batch.index()
                     })
                     .items(
-                        ["Left half", "Right half", "Dongle"]
+                        self.navigation
+                            .scope()
+                            .unwrap_or(Scope::Whole)
+                            .roles()
                             .into_iter()
-                            .map(|label| StepperItem::new().child(label)),
+                            .map(|role| StepperItem::new().child(Scope::Part(role).label())),
                     ),
             );
         }
@@ -2527,7 +2625,10 @@ impl Render for Companion {
             Page::Backups
                 if !self.navigation.setup()
                     && self.backup_state.shown()
-                    && self.navigation.scope() != Some(Scope::Whole) =>
+                    && self
+                        .navigation
+                        .scope()
+                        .is_some_and(|scope| scope.single().is_some()) =>
             {
                 let progress = if self.backup_state.state() == BackupState::Saving {
                     Some(flow_presentation::saving_backup())
@@ -2537,6 +2638,50 @@ impl Render for Companion {
                 if let Some(progress) = progress {
                     heading = heading.child(flow_indicator(progress, "backup-steps", cx));
                 }
+            }
+            Page::Firmware | Page::Restore
+                if !self.navigation.setup()
+                    && matches!(self.navigation.scope(), Some(Scope::Pair(_, _))) =>
+            {
+                let scope = self.navigation.scope().expect("Active scope");
+                let order = if self.navigation.page() == Page::Restore {
+                    [
+                        RecoveryRole::Left,
+                        RecoveryRole::Right,
+                        RecoveryRole::Receiver,
+                    ]
+                } else {
+                    [
+                        RecoveryRole::Receiver,
+                        RecoveryRole::Right,
+                        RecoveryRole::Left,
+                    ]
+                };
+                let labels: Vec<_> = order
+                    .into_iter()
+                    .filter(|role| scope.contains(*role))
+                    .map(|role| Scope::Part(role).label())
+                    .collect();
+                let current = if self
+                    .install
+                    .as_ref()
+                    .is_some_and(|machine| machine.stage() == InstallStage::Complete)
+                {
+                    labels.len()
+                } else {
+                    self.firmware_view().map_or(0, |view| view.step)
+                };
+                heading = heading.child(
+                    Stepper::new("install-steps")
+                        .small()
+                        .disabled(true)
+                        .selected_index(current)
+                        .items(
+                            labels
+                                .into_iter()
+                                .map(|label| StepperItem::new().child(label)),
+                        ),
+                );
             }
             Page::Firmware | Page::Restore
                 if !self.navigation.setup() && self.navigation.scope() == Some(Scope::Whole) =>
@@ -2825,5 +2970,27 @@ fn peripheral_picture(role: Option<RecoveryRole>, cx: &App) -> impl IntoElement 
                     Some(RecoveryRole::Receiver) => "USB dongle",
                     None => "",
                 }),
+        )
+}
+
+fn scope_guide(scope: Scope, instruction: &str, cx: &App) -> gpui::Div {
+    let mut artwork = div().flex().items_center().justify_center().gap(px(18.));
+    for role in scope.roles() {
+        artwork = artwork.child(img(peripheral_image(role)).w(px(140.)).h(px(110.)));
+    }
+    div()
+        .flex()
+        .flex_col()
+        .items_center()
+        .gap(px(24.))
+        .child(artwork)
+        .child(div().font_weight(FontWeight::MEDIUM).child(scope.label()))
+        .child(
+            div()
+                .text_center()
+                .text_size(px(14.))
+                .line_height(px(22.))
+                .text_color(cx.theme().muted_foreground)
+                .child(instruction.to_owned()),
         )
 }

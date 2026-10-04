@@ -60,10 +60,7 @@ fn scoped_plan(release: &TargetRelease, scope: Scope) -> Vec<Role> {
     release
         .plan()
         .into_iter()
-        .filter(|role| match scope {
-            Scope::Whole => true,
-            Scope::Part(selected) => *role == selected,
-        })
+        .filter(|role| scope.roles().contains(role))
         .collect()
 }
 impl TargetImage {
@@ -1465,6 +1462,34 @@ mod tests {
         assert!(!journey.view().can_transfer);
         assert!(!root.join("factory-verified.json").exists());
         fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn checkbox_pairs_preserve_transfer_order_and_exclude_unselected_parts() {
+        for omitted in PLAN {
+            let selected: Vec<_> = PLAN.into_iter().filter(|role| *role != omitted).collect();
+            let scope = Scope::from_roles(selected.clone()).unwrap();
+            let journey = FirmwareJourney::new_scoped(crate::release::fixture(), scope);
+            assert_eq!(journey.plan(), selected);
+            assert!(!journey.plan().contains(&omitted));
+            assert_eq!(journey.role(), selected[0]);
+            let factory_order: Vec<_> = [Role::Left, Role::Right, Role::Receiver]
+                .into_iter()
+                .filter(|role| *role != omitted)
+                .collect();
+            assert_eq!(
+                scoped_plan(
+                    &TargetRelease::Factory(
+                        FactoryRelease::at(std::env::temp_dir().join(format!(
+                            "nocfree-checkbox-plan-uncreated-{}",
+                            std::process::id()
+                        )))
+                        .unwrap()
+                    ),
+                    scope
+                ),
+                factory_order
+            );
+        }
     }
     #[test]
     fn part_scope_returns_only_selected_part_and_cannot_advance_others() {

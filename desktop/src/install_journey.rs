@@ -180,7 +180,7 @@ mod machine {
                     match result {
                         Ok(()) => {
                             self.advance();
-                            if matches!(self.scope, Scope::Part(_)) {
+                            if self.scope != Scope::Whole {
                                 return Transition(State::complete());
                             }
                             match self.target {
