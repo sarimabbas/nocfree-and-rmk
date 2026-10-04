@@ -23,6 +23,8 @@ impl Drop for EnabledDivider<'_, '_> {
 }
 impl Runnable for Battery<'_> {
     async fn run(&mut self) -> ! {
+        #[cfg(feature = "battery-adc-diagnostic")]
+        let mut sequence = 0u32;
         loop {
             self.enable.set_high();
             let divider = EnabledDivider(&mut self.enable);
@@ -30,6 +32,22 @@ impl Runnable for Battery<'_> {
             let mut sample = [0];
             self.adc.sample(&mut sample).await;
             drop(divider);
+            #[cfg(feature = "battery-adc-diagnostic")]
+            {
+                sequence = sequence.wrapping_add(1);
+                let adc = embassy_nrf::pac::SAADC;
+                // Error priority keeps the optional CDC diagnostic within flash limits;
+                // this tagged sample is evidence, not an ADC failure.
+                log::error!(
+                    "battery_adc seq={} signed={} resolution={:#x} oversample={:#x} channel_config={:#x} pselp={:#x}",
+                    sequence,
+                    sample[0],
+                    adc.resolution().read().0,
+                    adc.oversample().read().0,
+                    adc.ch(0).config().read().0,
+                    adc.ch(0).pselp().read().0
+                );
+            }
             publish_event_async(BatteryAdcEvent(sample[0].max(0) as u16)).await;
             Timer::after_secs(30).await;
         }

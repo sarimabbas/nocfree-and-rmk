@@ -35,7 +35,9 @@ runtime-recovery = ["startup-watchdog", "rmk/runtime_dfu", "embassy-nrf/preserve
 # Normal builds use RMK defmt; --no-default-features callers select this explicitly.
 defmt-logging = ["rmk/defmt"]
 # Optional framework CDC logger; choose instead of defmt-logging.
-usb-log = ["rmk/usb_log", "dep:log"]
+usb-log = ["rmk/usb_log", "dep:log", "log/max_level_warn", "log/release_max_level_warn"]
+# Temporary read-only raw sample logging through the existing RMK CDC logger.
+battery-adc-diagnostic = ["rmk/usb_log", "dep:log", "log/max_level_error", "log/release_max_level_error"]
 # Interim compile-time Mac media row; runtime OS profiles are a later milestone.
 mac-keymap = []
 # Opt-in until the board's physical backlight polarity is verified.
@@ -77,14 +79,14 @@ migration-usb-addressed-serial-probe = ["migration-probe"]
 input-probe = ["dep:embassy-usb", "rmk/adafruit_bl"]
 # Temporary read-only upper-flash/MBR/UICR inspection, retaining USB-first recovery.
 bootloader-inspect = ["dep:embassy-usb", "reclaimed-softdevice", "usb-recovery-first", "embassy-nrf/preserve-uicr"]
-left = ["rmk/split", "rmk/dongle", "rmk/adafruit_bl", "rmk/vial", "rmk/host_lock"]
+left = ["rmk/split", "rmk/dongle", "rmk/adafruit_bl", "rmk/vial", "rmk/host_lock", "rmk/vial_battery"]
 right = ["rmk/split", "rmk/adafruit_bl"]
 receiver = ["rmk/dongle", "rmk/adafruit_bl", "rmk/vial", "rmk/host_lock"]
 [dependencies]
 nrf-pac = { version = "=0.4.0", features = ["nrf52833", "rt"], optional = true }
-log = { version = "0.4", optional = true, features = ["max_level_warn", "release_max_level_warn"] }
+log = { version = "0.4", optional = true }
 embassy-usb = { version = "=0.6.0", optional = true }
-rmk = { git = "https://github.com/sarimabbas/rmk-nocfree", rev = "f1c620c6c089cab385d92868b2e1060d03bddb04", default-features = false, features = ["storage", "nrf52833_ble"] }
+rmk = { git = "https://github.com/sarimabbas/rmk-nocfree", rev = "c8e06c6edbda227114ab7deeb9234d2ecca671c6", default-features = false, features = ["storage", "nrf52833_ble"] }
 nocfree-input = { path = "../crates/nocfree-input" }
 nrf-sdc = { version = "0.4", features = ["defmt", "peripheral", "central", "nrf52833"] }
 nrf-mpsl = { version = "0.4", features = ["defmt", "critical-section-impl", "nrf52833"] }

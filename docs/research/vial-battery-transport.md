@@ -31,3 +31,13 @@ If that rail accurately represents the cell voltage, 4.17 V substantially disagr
 Vial, Rynk and BLE BAS all export the same producer estimate; changing transport cannot turn that estimate into calibrated capacity. Do not smooth or remap 12% to hide the disagreement. The next measurement discriminator remains one same-interval raw ADC observation plus meter voltage and exact ADC configuration; then correct the measured board conversion/acquisition issue at the board seam if warranted. USB presence is not evidence of charging; no charge-state reader is configured. Keep Unknown truthful. [Board sampling](../../firmware/src/battery.rs), [prior battery investigation](battery-reporting.md).
 
 Minimum acceptance for a later getter implementation: independent host protocol tests for unsupported/version/invalid/disconnected replies; all-role builds and existing harness; owner-device read-only reads through left USB and receiver USB; matching direct BLE BAS observations; and separate battery-voltage/raw-count calibration. Host tests or builds establish none of those hardware results.
+
+## Implemented query contract
+
+The opt-in RMK `vial_battery` feature handles one VIA `CustomGetValue` request. The board enables it on the left; the receiver uses its existing Vial relay. No set, save, unlock, reset or recovery command is involved.
+
+All reports are 32 bytes. A request begins `08 7e 01 01 4e 43 42 54` (custom getter, channel, value, version, `NCBT`), followed by zeroes. Replies retain that header. Byte 8 is status: 0 success, 1 unsupported requested version, 2 malformed request, 3 unavailable feature. Bytes 9–11 describe the left; byte 12 describes the right link; bytes 13–15 describe the right battery. Bytes 16–31 are reserved zeroes.
+
+Each battery entry contains availability (0 unavailable, 1 available, 2 invalid), percentage (0–100 or `ff` unknown), and charging state (0 unknown, 1 charging, 2 discharging). Unavailable/invalid entries use `ff` percentage and unknown charging. Right-link values are 0 disconnected, 1 connected, 2 unconfigured. A disconnected or unconfigured right must return an unavailable entry, even if RMK retains a previous measurement. The reply carries no sample timestamp.
+
+Companion selects a unique directly connected left first, otherwise a unique receiver, and reads only its native USB raw-HID collection (usage page `ff60`, usage `61`). It checks the connection again around the query. Native HID writes are synchronous OS calls; the UI bounds how long it waits and permits only one outstanding worker rather than claiming those calls are cancellable. This source implementation still requires physical query and calibration acceptance.

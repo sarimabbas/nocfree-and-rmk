@@ -10,7 +10,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        layout: [factory, reclaimed-softdevice, recovery-first]
+        layout: [reclaimed-softdevice, recovery-first]
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - name: Install Rust target and formatter
@@ -23,10 +23,8 @@ jobs:
         run: |
           if [ "$LAYOUT" = recovery-first ]; then
             ./scripts/check.sh --reclaimed-softdevice --usb-recovery-first
-          elif [ "$LAYOUT" = reclaimed-softdevice ]; then
-            ./scripts/check.sh --reclaimed-softdevice
           else
-            ./scripts/check.sh
+            ./scripts/check.sh --reclaimed-softdevice
           fi
 
   backlight:

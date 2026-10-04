@@ -89,6 +89,13 @@ impl Companion {
         let view = session.view();
         let poll = cx.spawn(async move |this, cx| {
             let mut battery_checked = None;
+            type BatteryConnection = (u64, Home, Vec<(u64, u64, u64, String)>);
+            type BatteryQuery = (
+                Instant,
+                BatteryConnection,
+                Task<Result<battery::Readings, String>>,
+            );
+            let mut battery_query: Option<BatteryQuery> = None;
             loop {
                 let idle = this.update(cx, |this, _| !this.started || this.completed);
                 if matches!(idle, Ok(true)) {
@@ -145,50 +152,37 @@ impl Companion {
                         return;
                     }
                 }
-                let battery_idle = this.update(cx, |this, _| {
-                    (!this.started || this.completed) && matches!(this.home, Home::Rmk(_))
-                });
-                if matches!(battery_idle, Ok(true))
-                    && battery_checked
-                        .is_none_or(|last: Instant| last.elapsed() >= Duration::from_secs(30))
-                {
-                    let reading_key = this
-                        .update(cx, |this, _| (this.device_generation, this.home))
-                        .ok();
-                    let reading_started = Instant::now();
-                    let readings = cx
-                        .background_executor()
-                        .spawn(async { battery::read() })
-                        .await;
-                    let fresh_observation = cx
-                        .background_executor()
-                        .spawn(async { device::discover() })
-                        .await;
-                    let fresh_key = fresh_observation.as_ref().ok().map(|snapshot| {
-                        let mut key = snapshot
-                            .devices
-                            .iter()
-                            .map(|d| (d.location, d.vendor, d.product, d.name.clone()))
-                            .collect::<Vec<_>>();
-                        key.sort();
-                        key
-                    });
-                    battery_checked = Some(Instant::now());
-                    if this
-                        .update(cx, |this, cx| {
-                            if !this.started || this.completed {
-                                if reading_key != Some((this.device_generation, this.home))
-                                    || fresh_key.as_ref() != Some(&this.device_key)
+                // A native HID write can stall inside the OS. Observe its task
+                // without stopping discovery; late results cannot repopulate a
+                // timed-out or replaced connection. Battery keeps one worker.
+                if let Some((started, _, task)) = battery_query.as_mut() {
+                    let result = tokio::select! {
+                        biased;
+                        result = task => Some(result),
+                        _ = cx.background_executor().timer(Duration::ZERO) => None,
+                    };
+                    if let Some(result) =
+                        battery::observation_result(*started, Instant::now(), result)
+                    {
+                        let (started, key, _) =
+                            battery_query.take().expect("pending battery query");
+                        if this
+                            .update(cx, |this, cx| {
+                                if this.started && !this.completed {
+                                    return;
+                                }
+                                if key
+                                    != (this.device_generation, this.home, this.device_key.clone())
                                 {
                                     this.battery_readings = None;
                                     this.battery_observed = None;
                                     cx.notify();
                                     return;
                                 }
-                                match readings {
+                                match result {
                                     Ok(readings) => {
                                         this.battery_readings = Some(readings);
-                                        this.battery_observed = Some(reading_started);
+                                        this.battery_observed = Some(started);
                                         this.battery_error = None;
                                     }
                                     Err(error) => {
@@ -198,12 +192,36 @@ impl Companion {
                                     }
                                 }
                                 cx.notify();
-                            }
-                        })
-                        .is_err()
-                    {
-                        return;
+                            })
+                            .is_err()
+                        {
+                            return;
+                        }
                     }
+                }
+                let battery_idle = this.update(cx, |this, _| {
+                    (!this.started || this.completed)
+                        && (matches!(this.home, Home::Rmk(_)) || this.dongle_connected)
+                        && !matches!(
+                            this.rescue.state(),
+                            RecoveryState::Identify(_) | RecoveryState::Guiding(_, _)
+                        )
+                });
+                if matches!(battery_idle, Ok(true))
+                    && battery_query.is_none()
+                    && battery_checked
+                        .is_none_or(|last: Instant| last.elapsed() >= Duration::from_secs(30))
+                    && let Ok(key) = this.update(cx, |this, _| {
+                        (this.device_generation, this.home, this.device_key.clone())
+                    })
+                {
+                    let started = Instant::now();
+                    battery_query = Some((
+                        started,
+                        key,
+                        cx.background_executor().spawn(async { battery::read() }),
+                    ));
+                    battery_checked = Some(started);
                 }
                 let state = this.update(cx, |this, _| this.started && !this.completed);
                 match state {
@@ -819,6 +837,7 @@ impl Render for Companion {
             Home::Factory => "Factory firmware",
             Home::Rmk(_) => "RMK firmware",
             Home::Recovery => "Recovery mode",
+            Home::Connect if self.dongle_connected => "RMK receiver",
             Home::Connect => "Keyboard not detected",
         };
         let status = StatusBar::new()

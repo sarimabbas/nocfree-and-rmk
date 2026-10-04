@@ -1,6 +1,8 @@
 fn main() {
     generate_vial_definition();
-    if std::env::var_os("CARGO_FEATURE_USB_LOG").is_some() {
+    if std::env::var_os("CARGO_FEATURE_USB_LOG").is_some()
+        || std::env::var_os("CARGO_FEATURE_BATTERY_ADC_DIAGNOSTIC").is_some()
+    {
         assert!(
             std::env::var_os("CARGO_FEATURE_LEFT").is_some()
                 && std::env::var_os("CARGO_FEATURE_RIGHT").is_none()
@@ -8,7 +10,13 @@ fn main() {
             "The USB logging diagnostic requires only the left role"
         );
     }
-    for feature in ["USB_LOG", "LEFT", "RIGHT", "RECEIVER"] {
+    for feature in [
+        "USB_LOG",
+        "BATTERY_ADC_DIAGNOSTIC",
+        "LEFT",
+        "RIGHT",
+        "RECEIVER",
+    ] {
         println!("cargo:rerun-if-env-changed=CARGO_FEATURE_{feature}");
     }
     let out = std::path::PathBuf::from(std::env::var_os("OUT_DIR").unwrap());

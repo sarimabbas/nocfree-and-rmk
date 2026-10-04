@@ -1,8 +1,11 @@
-//! Read producer-owned battery snapshots through RMK's read-only USB commands.
+//! Read producer-owned snapshots through Vial custom GET or legacy Rynk getters.
+#[path = "battery_vial.rs"]
+mod vial;
 use rynk::RynkDevice;
 use rynk::rmk_types::battery::BatteryStatus;
 use rynk_usb::UsbDevice;
-use std::time::Duration;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::{Duration, Instant};
 use tokio::time::timeout;
 
 #[derive(Clone, Copy, Debug)]
@@ -12,15 +15,32 @@ pub(crate) struct Readings {
     pub(crate) right_connected: bool,
 }
 
+static QUERY_IN_FLIGHT: AtomicBool = AtomicBool::new(false);
+struct QueryGuard;
+impl Drop for QueryGuard {
+    fn drop(&mut self) {
+        QUERY_IN_FLIGHT.store(false, Ordering::Release);
+    }
+}
+impl QueryGuard {
+    fn acquire() -> Result<Self, String> {
+        QUERY_IN_FLIGHT
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .map(|_| Self)
+            .map_err(|_| "The previous battery check is still finishing.".to_owned())
+    }
+}
 pub(crate) fn read() -> Result<Readings, String> {
+    let _guard = QueryGuard::acquire()?;
+    let started = Instant::now();
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
         .map_err(|_| "Couldn't start the keyboard connection.".to_owned())?;
-    runtime.block_on(read_usb())
+    runtime.block_on(read_usb(started))
 }
 
-async fn read_usb() -> Result<Readings, String> {
+async fn read_usb(started: Instant) -> Result<Readings, String> {
     let devices = timeout(Duration::from_secs(5), UsbDevice::discover())
         .await
         .map_err(|_| "Looking for the keyboard took too long.".to_owned())?
@@ -29,22 +49,11 @@ async fn read_usb() -> Result<Readings, String> {
         .into_iter()
         .filter(|device| device.label() == "NocFree RMK")
         .collect();
+    if selected.is_empty() {
+        return vial::read(started);
+    }
     if selected.len() != 1 {
-        return Err(if selected.is_empty() {
-            let normal = timeout(Duration::from_secs(5), nusb::list_devices())
-                .await
-                .map_err(|_| "Checking USB battery support took too long.".to_owned())?
-                .map_err(|_| "Couldn't inspect USB battery support.".to_owned())?;
-            missing_service_message(normal.into_iter().any(|device| {
-                nocfree_companion::runtime_recovery::matches(
-                    nocfree_companion::runtime_recovery::Role::Left,
-                    &device,
-                )
-            }))
-            .to_owned()
-        } else {
-            "Connect only one NocFree RMK keyboard to check its batteries.".to_owned()
-        });
+        return Err("Connect only one NocFree RMK keyboard to check its batteries.".to_owned());
     }
     let selected_id = selected[0].id();
     // Handshake reads only protocol version and capabilities. The vendor session
@@ -86,13 +95,19 @@ async fn read_usb() -> Result<Readings, String> {
     Ok(result)
 }
 
-/// A connected normal runtime interface without Rynk is supported by the Vial
-/// firmware, but Vial does not supply the Rynk battery getters.
-fn missing_service_message(local_runtime_connected: bool) -> &'static str {
-    if local_runtime_connected {
-        "Battery details unavailable with this firmware."
+/// The host deadline bounds observation, even when a native call completes
+/// between UI ticks. A completed result after expiry is still discarded.
+pub(crate) fn observation_result(
+    started: Instant,
+    now: Instant,
+    result: Option<Result<Readings, String>>,
+) -> Option<Result<Readings, String>> {
+    if now.saturating_duration_since(started) >= Duration::from_secs(5) {
+        Some(Err(
+            "The battery check timed out. Details are unavailable.".into()
+        ))
     } else {
-        "Connect the left half by USB to check both batteries."
+        result
     }
 }
 
@@ -143,24 +158,60 @@ mod tests {
     }
 
     #[test]
-    fn connected_runtime_without_battery_service_is_not_reported_as_disconnected() {
-        assert_eq!(
-            missing_service_message(true),
-            "Battery details unavailable with this firmware."
-        );
-        assert_eq!(
-            missing_service_message(false),
-            "Connect the left half by USB to check both batteries."
-        );
-    }
-
-    #[test]
     fn only_the_same_unique_usb_connection_accepts_a_snapshot() {
         assert!(same_connection(&1_u8, [1]));
         assert!(!same_connection(&1_u8, [2]));
         assert!(!same_connection(&1_u8, [1, 2]));
         assert!(!same_connection(&1_u8, [1, 1]));
         assert!(!same_connection(&1_u8, []));
+    }
+
+    #[test]
+    fn completed_results_after_deadline_are_discarded_as_well_as_pending_results() {
+        let started = Instant::now();
+        let readings = convert(available(Some(42)), BatteryStatus::Unavailable, false).unwrap();
+        assert!(observation_result(started, started + Duration::from_secs(2), None).is_none());
+        assert!(
+            observation_result(
+                started,
+                started + Duration::from_secs(2),
+                Some(Ok(readings))
+            )
+            .unwrap()
+            .is_ok()
+        );
+        assert!(
+            observation_result(
+                started,
+                started + Duration::from_secs(5),
+                Some(Ok(readings))
+            )
+            .unwrap()
+            .is_err()
+        );
+        assert!(
+            observation_result(started, started + Duration::from_secs(5), None)
+                .unwrap()
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn an_unfinished_native_query_prevents_a_second_worker_until_it_exits() {
+        let first = QueryGuard::acquire().unwrap();
+        assert!(QueryGuard::acquire().is_err());
+        drop(first);
+        assert!(QueryGuard::acquire().is_ok());
+    }
+
+    #[test]
+    fn physical_connection_role_and_port_must_all_remain_unique() {
+        let expected = (7_u8, "left", 10_u32);
+        assert!(same_connection(&expected, [expected]));
+        for changed in [(8, "left", 10), (7, "receiver", 10), (7, "left", 11)] {
+            assert!(!same_connection(&expected, [changed]));
+        }
+        assert!(!same_connection(&expected, [expected, expected]));
     }
 
     #[test]

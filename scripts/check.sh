@@ -6,6 +6,12 @@ backlight_features=""
 shim_features=""
 rescue_features=""
 runtime_features=""
+# With no options, check the supported production layout and verified polarity.
+if [ "$#" -eq 0 ]; then
+    layout_features=",reclaimed-softdevice"
+    backlight_features=",backlight-active-high"
+    runtime_features=",runtime-recovery"
+fi
 for option in "$@"; do
     case "$option" in
         --reclaimed-softdevice) layout_features="$layout_features,reclaimed-softdevice" ;;
