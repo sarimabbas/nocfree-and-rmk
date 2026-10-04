@@ -53,8 +53,6 @@ mod keymap;
 mod mode_switch;
 #[cfg(not(feature = "receiver"))]
 mod scanner;
-#[cfg(feature = "status-led-mixing")]
-mod status_indicator;
 #[cfg(feature = "left")]
 mod vial;
 use defmt::unwrap;
@@ -248,16 +246,10 @@ async fn main(spawner: Spawner) {
         );
         adc.calibrate().await;
         let mut battery_adc = battery::Battery::new(adc, battery_enable);
-        #[cfg(all(feature = "status-led", not(feature = "status-led-mixing")))]
+        #[cfg(feature = "status-led")]
         let mut status_led = rmk::status_led::StatusLed::new(
             // Published LEFT blue LED: active low. Start inactive.
             Output::new(p.P0_10, Level::High, OutputDrive::Standard),
-            true,
-        );
-        #[cfg(feature = "status-led-mixing")]
-        let mut status_led = rmk::status_led::StatusLed::new_mixed(
-            Output::new(p.P0_10, Level::High, OutputDrive::Standard),
-            status_indicator::RedIndicator::new(p.P0_09),
             true,
         );
         #[cfg(feature = "left")]

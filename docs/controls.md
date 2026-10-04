@@ -55,16 +55,15 @@ RIGHT has its own USB power. The 30-minute first-key wake test is still pending.
 Backlights follow sleep and restore the saved brightness on wake. Battery
 endurance and instrumented wake latency have not been measured.
 
-## Status indicator trial
+## Status indicator
 
-LEFT indicates the selected host link: both wireless modes blink while seeking
-a connection. Bluetooth shows steady blue for 30 seconds after connecting;
-Dongle shows two short pulses every two seconds for 30 seconds, mixing blue and
-red on battery. Both connected indications then turn off. USB power releases
-the shared red channel for the charger, so the observed color can differ while
-charging; the connection pattern remains distinct. Wired turns off the blue output.
-RIGHT's indicator remains unchanged; it connects to LEFT rather than selecting
-a host mode. Physical color and sleep behavior are still under acceptance.
+LEFT uses the same blue indication for Bluetooth and dongle: blink while
+seeking a connection, then steady blue for 30 seconds after connecting and off.
+Selecting a different wireless mode starts a fresh indication. Wired and sleep
+turn the blue output off. The charging circuit independently controls red;
+charging can mix its red light with blue without changing the indication rules.
+Firmware does not drive the red channel. RIGHT's indicator remains unchanged;
+it connects to LEFT rather than selecting a host mode.
 
 Key backlights remain independent of the status indicator. Off/sleep explicitly
 stops PWM; wake and a nonzero level restart it. A disconnected battery-powered

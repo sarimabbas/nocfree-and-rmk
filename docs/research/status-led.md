@@ -128,3 +128,17 @@ reported working. RIGHT's indicator is deliberately unchanged: LEFT selects
 the host mode, while RIGHT follows the split link. Sleep entry and electrical
 current remain unmeasured; these optical observations do not establish charger
 current or battery endurance.
+
+## Blue-only simplification (2026-10-04)
+
+The current indicator replaces the experimental red mixing described above.
+Firmware drives only the verified LEFT blue pin. Bluetooth and dongle both
+blink at 500 ms while searching, stay on for 30 seconds after connecting, then
+turn off. Mode/profile changes restart the indication; unchanged events do not.
+Wired and sleep switch blue off. Red remains controlled by the charging circuit;
+physical color overlap has no mode meaning. RIGHT indication is unchanged.
+
+The mixed output adapter, shared red GPIO control, USB-power LED watcher and
+dongle double pulse were removed. Independent review and all 623 framework host
+tests passed, along with the 23 input harness tests. All three roles cross-built
+and passed their image guards. Physical indication acceptance remains separate.
