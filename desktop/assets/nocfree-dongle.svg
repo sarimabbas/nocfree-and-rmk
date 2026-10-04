@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="520" height="400" viewBox="0 0 520 400" role="img" aria-labelledby="title desc">
+  <title id="title">NocFree USB dongle</title>
+  <desc id="desc">Photo-based sketch of the compact white USB dongle, with ribbed grips, a grey linked-loop mark and a silver USB-A plug.</desc>
+  <g transform="rotate(-12 260 200)" stroke-linejoin="round">
+    <!-- The narrow side gives the same quiet depth as the keyboard keycaps. -->
+    <path d="M182 66 H338 V219 L328 229 H182 Z" fill="#bfc3c0" stroke="#a8b0b5" stroke-width="1.2"/>
+    <path d="M182 62 H330 V217 H182 Z" fill="#e1e3df" stroke="#a8b0b5" stroke-width="1.2"/>
+    <path d="M185 66 H327 V79 H185 Z" fill="#f0f1ec"/>
+    <path d="M185 80 H327" fill="none" stroke="#b9bfbb" stroke-width="1"/>
+    <path d="M188 84 V207 M324 84 V207" fill="none" stroke="#f5f5ef" stroke-width="1.4"/>
+    <!-- Two retention openings in the plug's metal shield. -->
+    <rect x="210" y="111" width="29" height="36" rx="3" fill="#858e89"/>
+    <rect x="213" y="114" width="23" height="28" rx="2" fill="#353d3a"/>
+    <path d="M214 138 H235 V143 H214 Z" fill="#555e57"/>
+    <rect x="274" y="111" width="29" height="36" rx="3" fill="#858e89"/>
+    <rect x="277" y="114" width="23" height="28" rx="2" fill="#353d3a"/>
+    <path d="M278 138 H299 V143 H278 Z" fill="#555e57"/>
+    <path d="M162 208 H352 V314 Q352 326 340 330 H167 Q155 330 155 318 V220 Z" fill="#d8d8d1" stroke="#aeb5b9" stroke-width="1.2"/>
+    <rect x="150" y="203" width="194" height="117" rx="10" fill="#f7f6f1" stroke="#aeb5b9" stroke-width="1.2"/>
+    <path d="M161 207 H333 Q340 207 340 214" fill="none" stroke="#ffffff" stroke-width="2"/>
+    <path d="M155 312 H333" fill="none" stroke="#e3e2db" stroke-width="1.2"/>
+    <!-- Moulded grip ribs on both ends of the white housing. -->
+    <g fill="none" stroke-linecap="round">
+      <path d="M163 220 V245 M174 220 V245 M185 220 V245 M163 279 V304 M174 279 V304 M185 279 V304 M309 220 V245 M320 220 V245 M331 220 V245 M309 279 V304 M320 279 V304 M331 279 V304" stroke="#ddded7" stroke-width="4"/>
+      <path d="M161 220 V244 M172 220 V244 M183 220 V244 M161 279 V303 M172 279 V303 M183 279 V303 M307 220 V244 M318 220 V244 M329 220 V244 M307 279 V303 M318 279 V303 M329 279 V303" stroke="#ffffff" stroke-width="2"/>
+      <path d="M247 260 C233 241 215 240 210 255 C203 275 223 284 247 260 C271 236 290 244 285 263 C280 282 262 279 247 260" stroke="#92968f" stroke-width="7"/>
+    </g>
+  </g>
+</svg>

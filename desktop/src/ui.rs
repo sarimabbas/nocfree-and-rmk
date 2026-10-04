@@ -36,7 +36,7 @@ use gpui::{
     prelude::FluentBuilder, px,
 };
 use gpui_kit::component::{
-    ActiveTheme, Disableable, Icon, Sizable, Theme,
+    ActiveTheme, Disableable, Sizable, Theme,
     button::{Button, ButtonVariants},
     sidebar::{Sidebar, SidebarGroup, SidebarMenuItem},
     spinner::Spinner,
@@ -585,25 +585,17 @@ impl Companion {
         cx: &mut Context<Self>,
     ) -> Button {
         let artwork = match role {
-            RecoveryRole::Left => img(keyboard_image(Role::Left))
+            RecoveryRole::Left => img(peripheral_image(RecoveryRole::Left))
                 .w(px(140.))
                 .h(px(100.))
                 .into_any_element(),
-            RecoveryRole::Right => img(keyboard_image(Role::Right))
+            RecoveryRole::Right => img(peripheral_image(RecoveryRole::Right))
                 .w(px(140.))
                 .h(px(100.))
                 .into_any_element(),
-            RecoveryRole::Receiver => div()
+            RecoveryRole::Receiver => img(peripheral_image(RecoveryRole::Receiver))
                 .w(px(140.))
                 .h(px(100.))
-                .flex()
-                .items_center()
-                .justify_center()
-                .child(
-                    Icon::new(IconName::Usb)
-                        .size(px(44.))
-                        .text_color(cx.theme().muted_foreground),
-                )
                 .into_any_element(),
         };
         Button::new(match role {
@@ -1231,8 +1223,21 @@ impl Render for Companion {
                         .flex()
                         .gap(px(12.))
                         .py(px(16.))
-                        .child(img(keyboard_image(Role::Left)).w(px(160.)).h(px(115.)))
-                        .child(img(keyboard_image(Role::Right)).w(px(160.)).h(px(115.))),
+                        .child(
+                            img(peripheral_image(RecoveryRole::Left))
+                                .w(px(160.))
+                                .h(px(115.)),
+                        )
+                        .child(
+                            img(peripheral_image(RecoveryRole::Right))
+                                .w(px(160.))
+                                .h(px(115.)),
+                        )
+                        .child(
+                            img(peripheral_image(RecoveryRole::Receiver))
+                                .w(px(90.))
+                                .h(px(115.)),
+                        ),
                 )
                 .child(
                     self.footer(
@@ -1359,34 +1364,35 @@ fn recovery_guide(
     cx: &App,
 ) -> gpui::Div {
     let picture = match role {
-        Some(RecoveryRole::Left) => keyboard_picture(Some(Role::Left), cx).into_any_element(),
-        Some(RecoveryRole::Right) => keyboard_picture(Some(Role::Right), cx).into_any_element(),
-        Some(RecoveryRole::Receiver) => div()
-            .h(px(190.))
-            .flex()
-            .flex_col()
-            .items_center()
-            .justify_center()
-            .gap(px(12.))
-            .child(
-                Icon::new(IconName::Usb)
-                    .size(px(64.))
-                    .text_color(cx.theme().muted_foreground),
-            )
-            .child(
-                div()
-                    .text_size(px(12.))
-                    .text_color(cx.theme().muted_foreground)
-                    .child("USB dongle"),
-            )
-            .into_any_element(),
+        Some(RecoveryRole::Left) => {
+            peripheral_picture(Some(RecoveryRole::Left), cx).into_any_element()
+        }
+        Some(RecoveryRole::Right) => {
+            peripheral_picture(Some(RecoveryRole::Right), cx).into_any_element()
+        }
+        Some(RecoveryRole::Receiver) => {
+            peripheral_picture(Some(RecoveryRole::Receiver), cx).into_any_element()
+        }
         None => div()
             .flex()
             .justify_center()
             .gap(px(16.))
             .py(px(12.))
-            .child(img(keyboard_image(Role::Left)).w(px(180.)).h(px(130.)))
-            .child(img(keyboard_image(Role::Right)).w(px(180.)).h(px(130.)))
+            .child(
+                img(peripheral_image(RecoveryRole::Left))
+                    .w(px(180.))
+                    .h(px(130.)),
+            )
+            .child(
+                img(peripheral_image(RecoveryRole::Right))
+                    .w(px(180.))
+                    .h(px(130.)),
+            )
+            .child(
+                img(peripheral_image(RecoveryRole::Receiver))
+                    .w(px(100.))
+                    .h(px(130.)),
+            )
             .into_any_element(),
     };
     div()
@@ -1434,17 +1440,24 @@ fn button(id: &'static str, label: impl Into<gpui::SharedString>) -> Button {
 }
 
 // Photo-based orientation sketches; their appearance never represents device status.
-fn keyboard_image(role: Role) -> Arc<Image> {
+fn peripheral_image(role: RecoveryRole) -> Arc<Image> {
     static LEFT: OnceLock<Arc<Image>> = OnceLock::new();
     static RIGHT: OnceLock<Arc<Image>> = OnceLock::new();
+    static DONGLE: OnceLock<Arc<Image>> = OnceLock::new();
     let sketch = match role {
-        Role::Right => RIGHT.get_or_init(|| {
+        RecoveryRole::Right => RIGHT.get_or_init(|| {
             Arc::new(Image::from_bytes(
                 ImageFormat::Svg,
                 include_bytes!("../assets/nocfree-right.svg").to_vec(),
             ))
         }),
-        _ => LEFT.get_or_init(|| {
+        RecoveryRole::Receiver => DONGLE.get_or_init(|| {
+            Arc::new(Image::from_bytes(
+                ImageFormat::Svg,
+                include_bytes!("../assets/nocfree-dongle.svg").to_vec(),
+            ))
+        }),
+        RecoveryRole::Left => LEFT.get_or_init(|| {
             Arc::new(Image::from_bytes(
                 ImageFormat::Svg,
                 include_bytes!("../assets/nocfree-left.svg").to_vec(),
@@ -1454,8 +1467,8 @@ fn keyboard_image(role: Role) -> Arc<Image> {
     sketch.clone()
 }
 
-fn keyboard_picture(role: Option<Role>, cx: &App) -> impl IntoElement {
-    let sketch = keyboard_image(role.unwrap_or(Role::Left));
+fn peripheral_picture(role: Option<RecoveryRole>, cx: &App) -> impl IntoElement {
+    let sketch = peripheral_image(role.unwrap_or(RecoveryRole::Left));
     div()
         .flex()
         .flex_col()
@@ -1468,8 +1481,9 @@ fn keyboard_picture(role: Option<Role>, cx: &App) -> impl IntoElement {
                 .text_size(px(12.))
                 .text_color(cx.theme().muted_foreground)
                 .child(match role {
-                    Some(Role::Left) => "Left half",
-                    Some(Role::Right) => "Right half",
+                    Some(RecoveryRole::Left) => "Left half",
+                    Some(RecoveryRole::Right) => "Right half",
+                    Some(RecoveryRole::Receiver) => "USB dongle",
                     None => "",
                 }),
         )
