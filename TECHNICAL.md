@@ -1,6 +1,6 @@
 # NocFree AND RMK: customization and recovery guide
 
-For developers customizing this community firmware. Hardware observations below describe checkpoint `dc671f3`, October 3, 2026. Prepared source additions through `2497d04` are identified separately. Physical-switch acceptance and battery calibration are ongoing; this is not a claim that every factory feature or every PCB revision is supported.
+For developers customizing this community firmware. Updated against committed source through `59ef775`, October 4, 2026, and the main firmware conversation. Hardware observations are identified separately from source behavior. Battery calibration and full installer roundtrip acceptance remain incomplete; this is not a claim that every factory feature or every PCB revision is supported.
 
 ## Start here
 
@@ -42,13 +42,13 @@ Battery reporting uses the existing RMK producer caches. Companion reads a small
 | Keymap and Mac function/media behavior | `firmware/src/keymap.rs` |
 | Role composition, peripheral ownership, PWM and ADC configuration | `firmware/src/main.rs` |
 | Divider-enabled ADC sampling | `firmware/src/battery.rs` |
-| Passive physical selector input (prepared source) | `firmware/src/mode_switch.rs` |
+| Passive physical selector input | `firmware/src/mode_switch.rs` |
 | Startup watchdog escape | `firmware/src/watchdog_recovery.rs` |
 | Dimensions, profile count and split configuration | `firmware/keyboard.toml` |
 | Companion guided recovery | `desktop/src/recovery.rs`, `desktop/src/recovery_journey.rs` |
 | Companion battery transport | `desktop/src/battery.rs`, `desktop/src/battery_vial.rs` |
 
-Dependencies and the RMK fork revision are pinned in `firmware/Cargo.toml` and `firmware/Cargo.lock`. The snapshot uses fork commit `c8e06c6edbda227114ab7deeb9234d2ecca671c6`; prepared source at `2497d04` pins `acd4689a1284f27decd4d0755a1e316fddcbb8ff`. Follow the checked-out source, rather than historical diagnostic instructions, when changing features.
+Dependencies and the RMK fork revision are pinned in `firmware/Cargo.toml` and `firmware/Cargo.lock`. The fork has advanced beyond the initial `c8e06c6` recovery baseline. Consult the current pin and lockfile; packaged role images can intentionally come from different reviewed checkpoints. Follow the checked-out source, rather than historical diagnostic instructions, when changing features.
 
 ## Vendor pin reference
 
@@ -68,7 +68,10 @@ The following GPIO facts come from the [vendor-published porting guide](https://
 
 Use pull-ups for the interrupt and selector inputs. Shared charge/status pins must not be driven push-pull. PCA9555 addresses are `0x20`, `0x22`, `0x24`; read both ports in that order. KR adds `0x21/P0`. The published ADC is 12-bit with a voltage multiplier of `130/100`; calibrate rather than assuming that ratio proves accurate capacity. Factory external-radio pins on the left are SCK P0.28, MOSI P0.29, MISO P0.30, CE P0.03 and CSN P0.02. [Vendor reference](https://github.com/NocFreeKB/NocFree-and-zmk/blob/8bc5f6fe4531cadc62dc39aa92750fba90e009c4/README.md).
 
-The hardware-tested baseline still uses Fn+U for receiver selection and Fn+B for USB/BLE preference. Prepared source at `2497d04` removes those default mappings and uses the two passive switch inputs, debounced for 25 ms, to request strict RMK output selection: top receiver, middle wired, bottom Bluetooth. Invalid startup input disables output; an invalid transition retains the last valid choice. Radio modes ignore USB for keyboard output while local USB recovery remains available. This routing implementation is prepared, not yet hardware-accepted here. The right can remain powered by USB while its battery switch is OFF; there is no documented right switch-sense GPIO in the vendor table.
+The physical left selector now owns strict output selection: **top receiver, middle wired, bottom Bluetooth**. The two passive inputs are debounced for 25 ms; invalid startup input disables output and an invalid transition retains the last valid choice. Radio modes ignore USB for keyboard output while local USB recovery remains available. Fn+U and Fn+B are removed from the default keymap. Keep the last ordinary Bluetooth profile separate from the dedicated receiver bond.
+
+Current firmware still has five Bluetooth host profiles: tap Fn+1 through Fn+5 to select, or hold for five seconds without another key to replace that profile's pairing. Fn+0 clears the selected host bond; it is not recovery. Reducing the host count to the intended three is separate work. Right USB can keep the MCU powered while its battery switch is OFF; there is no documented right switch-sense GPIO in the vendor table.
+
 
 ## How watchdog recovery works
 
@@ -200,7 +203,7 @@ The read-only battery extension uses Vial raw HID usage page `ff60`, usage `61`,
 08 7e 01 01 4e 43 42 54 [24 zero bytes]
 ```
 
-The first eight bytes identify CustomGetValue, channel/value, version and `NCBT`. A successful reply retains the header:
+The first eight bytes identify CustomGetValue, channel/value, version and `NCBT`. A successful version-1 reply retains the header:
 
 | Offset | Meaning |
 | --- | --- |
@@ -212,9 +215,24 @@ The first eight bytes identify CustomGetValue, channel/value, version and `NCBT`
 
 Availability is 0 unavailable, 1 available, 2 invalid. Percentage is 0–100 or `ff` unknown. Charging state is 0 unknown, 1 charging, 2 discharging. Disconnected/unconfigured right entries must be unavailable. Reject inconsistent or unsupported replies; never turn them into 0%. There is no sample timestamp: a successful query returns a producer cache, not a newly measured voltage. Poll no faster than the normal 30-second sampling interval. Keep setters/save/reset commands separate from telemetry.
 
-### Raw ADC diagnostics (prepared source)
+### Status version 2 and current mode
 
-The newer `NCAD` getter avoids adding CDC logging and retains the normal feature set. Request `08 7e 02 01 4e 43 41 44`, followed by 24 zero bytes. Its 32-byte reply retains that header:
+Companion now requests battery/status version 2 (`08 7e 01 02 4e 43 42 54`), falling back to v1 only on a valid unsupported-version reply. Bytes 8–15 keep their v1 meanings. The additional successful-reply bytes are:
+
+| Byte | Meaning |
+| --- | --- |
+| 16 | Flags: bit 0 left USB power, bit 1 right USB power, bit 2 active wired route, bit 3 active Bluetooth route, bit 4 active receiver route |
+| 17 | Selected policy: 0 unknown/off/automatic, 1 wired, 2 Bluetooth, 3 receiver |
+| 18 | Known mask: bit 0 left power, bit 1 right power, bit 2 active route, bit 3 selected policy |
+| 19–31 | Reserved zeroes |
+
+An older right leaves right power unknown; a disconnected right clears that observation. USB power, selected policy, active typing route and recovery are different facts. Companion expires connectivity facts after 45 seconds without a successful query while retaining battery estimates separately. A receiver reply is forwarded from the left: a successful query establishes live communication, although its battery measurement can still be cached.
+
+The read-only mode getter `08 7e 03 01 4e 43 4d 4f` (`NCMO`) returns status in byte 8 and policy in byte 9; bytes 10–31 are zero. It reads RMK's current selection rather than waiting for the next ADC observation. Wireless-only host mode is not automatically observable through these USB getters.
+
+### Raw ADC diagnostics
+
+The `NCAD` getter avoids adding CDC logging and retains the normal feature set. Request `08 7e 02 01 4e 43 41 44`, followed by 24 zero bytes. Its 32-byte reply retains that header:
 
 | Offset | Meaning |
 | --- | --- |
@@ -227,7 +245,7 @@ The newer `NCAD` getter avoids adding CDC logging and retains the normal feature
 | 24–27 | Channel configuration register |
 | 28–31 | Positive input-selection register |
 
-The four registers are little-endian u32 values. Error replies contain no measurement payload. The getter observes the existing sample; it does not trigger sampling or change conversion. Switch levels are cached with the ADC observation, not a live position query. This prepared contract needs device acceptance before using it as electrical evidence.
+The four registers are little-endian u32 values. Error replies contain no measurement payload. The getter observes the existing sample; it does not trigger sampling or change conversion. Switch levels are cached with the ADC observation, not a live position query. Raw observations have been collected on the left; a sample is useful only with its age, register configuration and correctly identified voltage reference. It does not prove the physical divider ratio.
 
 ## Troubleshooting without guessing
 
@@ -243,3 +261,48 @@ The four registers are little-endian u32 values. Error replies contain no measur
 | Keys remain held after switching/disconnect | Reproduce with a held modifier across the transition; inspect RMK output release and reconnect behavior |
 
 For an actionable bug report, include the source commit, role and feature list, host OS, exact physical steps, observed USB product, whether Companion recovery works, and whether the result repeats. Share redacted logs and hashes, not factory images, addresses, serial numbers, bond keys or private backups. A minimal reproduction is more useful than a screenshot claiming “Bluetooth connected.”
+
+
+## Battery calibration: what changed and what did not
+
+Both halves now use `BatteryProcessor::new(100, 150)`, an **effective provisional scale**, rather than the vendor-published 130/100. This must not be documented as a measured resistor ratio or accurate fuel gauge. The old left samples around 3180–3192 with registers `[2, 0, 0x20000, 3]` correspond to roughly 3.63–3.65 V at 1.3, versus 4.19–4.21 V at 1.5 under the nominal 12-bit/internal-reference/1⁄6-gain model. A 40 µs acquisition trial did not resolve the discrepancy; normal acquisition was retained.
+
+Inspection of the supplied factory v2.4.5 images found an extra normalization against a stored/learned full reference. At its default reference, the combined software conversion approximates `raw × 4200 / 4095 × 1.3`, rather than simply applying the README's 1.3 factor to a 3.6 V ADC model. This explains why copying only that published multiplier can produce a very different display. It does not establish the actual cell voltage, charging current or hardware resistance. Factory calibration records are not a flash region to copy into RMK.
+
+The correction makes the estimates more plausible on the owner's boards. A simultaneous confirmed cell-voltage/raw-count comparison across multiple voltages, charge-current observation, and discharge-capacity test remain necessary for real calibration. No charging assertion or battery-life claim follows from a high displayed percentage.
+
+## Power, interrupts and lighting
+
+- **USB power is local:** each USB-powered half stays awake regardless of selected host mode or USB suspend. The right otherwise follows the left's sleep request. Battery idle sleep is 1,800 seconds in `keyboard.toml`; it is RMK sleep coordination, not electrical power-off. The full 30-minute first-key wake acceptance and measured endurance remain pending.
+- **Interrupt scanning is opt-in:** `async-scanner` makes the custom expander scanner wait on active-low INT when idle. Merely enabling RMK's direct-matrix feature cannot adapt this I²C board. Active keys, unfinished debounce and failed reads keep scanning. Both halves' interrupt candidates were installed/read back and typing/recovery observed; those results do not measure wake latency or prove absolute losslessness.
+- **PCA9555 acknowledgement matters:** the adapter parks each expander's command pointer at register 2 after reading inputs, before accessing another slave. This sends only a command byte, not output data. The [TI datasheet, section 8.4.1.1](https://www.ti.com/lit/ds/symlink/pca9555.pdf) describes an interrupt-reset erratum when an input-register pointer remains selected. Preserve this behavior when replacing the scanner.
+- **Zero brightness must stop PWM:** the current RMK/HAL integration waits for STOPPED and disables the generator, preserving DMA buffer lifetime across cancellation. A zero duty value alone is not proof the peripheral has stopped. Nonzero brightness/wake restarts output; stored brightness survives. Measure current before claiming savings.
+- **Disconnect cancels brightness hold:** a battery-powered right darkens while seeking the left; local USB power preserves its lighting. Firmware leaves shared charger-red control alone. Left blue blinks while seeking either wireless route, stays on for 30 seconds after connecting, then turns off; wired/sleep turns it off. Older purple/double-pulse experiments are superseded.
+
+## Companion extension points and safe repeatable journeys
+
+Companion's authoritative workflows use **Statig**. The UI derives its screen from machine state rather than keeping a second collection of workflow flags. Parent machines reuse recovery, per-part firmware transfer, backup and pairing children. Generation tickets reject stale/duplicate completions after cancellation or advancing to another part; completing a state transition alone must not perform device I/O.
+
+Useful modules are `desktop/src/recovery_journey.rs`, `peripheral_journey.rs`, `firmware_journey.rs`, `install_journey.rs`, `factory_source.rs` and `release.rs`. Opening a page is passive; an explicit Next starts work. Cancellation stops future work but cannot undo an already accepted pairing mutation or partially completed firmware write.
+
+Installation orders **receiver → right → left**, retaining factory left until the receiver is migrated. Factory restoration orders **left → right → receiver**, restoring the left first so factory receiver recovery is available. Each part receives a fresh private backup before a one-shot copy and exact readback verification. Identical application bytes skip copying. A persisted pending write is reconciled against its original backup and fresh device readback; it is never retried merely because the app restarted. Retain the original factory backups across subsequent RMK updates and supplied-file restores.
+
+The first complete factory backup contains the S140 needed to return a reclaimed half to stock. An official application-only UF2 alone is insufficient. Restore may use saved originals or separately validated supplied left/right/receiver files, using the complete backup as the system/settings donor. Preserve originals and reject unknown role/layout combinations. No factory firmware is bundled; no MBR, bootloader or UICR writes belong to these journeys.
+
+Factory left and receiver share a USB identity. Require a role-specific, correlated connection rather than guessing from their product name. The latest checkbox-based scope selection is still being developed in the other conversation; its UI is not an installation proof. Once a journey begins, its chosen roles must remain fixed even when guided steps intentionally unplug a part.
+
+Check pairing queries links without clearing healthy bonds. Its `NCPR` protocol begins `08 7e 04 01 4e 43 50 52`; explicit repair is a separate operation addressing the left or receiver and its selected peer. The receiver handles its pairing command locally even without a keyboard link. Completion requires fresh reciprocal peer identities and an encrypted link, plus a right split-link observation. Repair clears only dedicated receiver bonds, preserving ordinary Bluetooth host profiles; cancellation does not restore a cleared bond. Treat peer identities as private data.
+
+The local firmware package is generated by `scripts/package_companion_release.py`; `--check` validates without accessing devices. The pinned manifest binds each role's exact UF2/BIN hashes, bounds files, rejects unknown fields and reruns image guards. It deliberately packages reviewed installed candidates rather than whichever build is newest. Bump firmware version and release identity when shipped bytes change. Version strings support preflight; exact readback is final byte proof.
+
+The current package is a local Mac-keymap/ANSI development release, not a separately tested Windows/Linux release. Individual recovery, typing and protocol results do not establish a complete repeated factory → RMK → factory roundtrip. That remains a hardware acceptance gate. Guided all-mode checks include `qwert HJKL h` with left Shift controlling right capitals and right lowercase after release; a host connection indicator alone cannot pass them.
+
+### macOS backup permissions
+
+A denied removable-volume permission can make a mounted recovery drive unreadable. Report the permission error rather than waiting endlessly for a drive that already exists. If necessary, quit Companion, reset only its removable-volume decision, then reopen it and explicitly allow the next request:
+
+```sh
+tccutil reset SystemPolicyRemovableVolumes io.github.sarimabbas.nocfree-companion
+```
+
+This does not reset Bluetooth or grant access automatically. Preserve the app's bundle identity/signing across rebuilds. Do not recommend broad permission resets or disabling platform protections as a routine recovery step.
