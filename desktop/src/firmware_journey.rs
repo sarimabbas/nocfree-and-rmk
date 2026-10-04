@@ -995,7 +995,9 @@ impl FirmwareJourney {
             .baseline
             .as_ref()
             .ok_or("Saved installation evidence is missing.")?;
-        if role != self.role() || location != baseline.location || mount.info != baseline.mount.info
+        if role != self.role()
+            || location != baseline.location
+            || !same_recovery_identity(&mount.info, &baseline.mount.info)
         {
             return Err("Verification belongs to a different component or USB connection.".into());
         }
@@ -1068,6 +1070,51 @@ impl FirmwareJourney {
     }
     pub fn cancel(&mut self) {
         self.machine.handle(&FirmwareEvent::Cancel);
+    }
+}
+
+// Restoring factory bytes can restore S140 too. INFO_UF2 reports its presence,
+// so that one field is firmware state rather than bootloader/device identity.
+// Preserve every other metadata line; image verification still checks S140 bytes.
+fn same_recovery_identity(actual: &str, saved: &str) -> bool {
+    if actual == saved {
+        return true;
+    }
+    let softdevice = |line: &&str| line.starts_with("SoftDevice:");
+    actual.lines().filter(softdevice).count() == 1
+        && saved.lines().filter(softdevice).count() == 1
+        && actual
+            .lines()
+            .filter(|line| !line.starts_with("SoftDevice:"))
+            .eq(saved
+                .lines()
+                .filter(|line| !line.starts_with("SoftDevice:")))
+}
+
+#[cfg(test)]
+mod recovery_identity_tests {
+    use super::same_recovery_identity;
+    #[test]
+    fn factory_softdevice_restoration_keeps_identity_but_other_changes_do_not() {
+        let saved = "UF2 Bootloader 0.9.2\nModel: NocFree &\nBoard-ID: NocFree &\nDate: Dec 26 2025\nSoftDevice: not found\n";
+        let restored = saved.replace("not found", "S140 7.3.0");
+        assert!(same_recovery_identity(&restored, saved));
+        assert!(!same_recovery_identity(
+            &restored.replace("0.9.2", "0.9.3"),
+            saved
+        ));
+        assert!(!same_recovery_identity(
+            &restored.replace("Board-ID: NocFree &", "Board-ID: different"),
+            saved
+        ));
+        assert!(!same_recovery_identity(
+            &restored.replace("SoftDevice: S140 7.3.0\n", ""),
+            saved
+        ));
+        assert!(!same_recovery_identity(
+            &(restored + "SoftDevice: not found\n"),
+            saved
+        ));
     }
 }
 
