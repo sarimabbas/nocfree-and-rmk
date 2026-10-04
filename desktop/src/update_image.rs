@@ -1,4 +1,4 @@
-//! Read-only structure proof for an exact left reclaimed-layout UF2/BIN pair.
+//! Read-only structure proof for exact role-specific application UF2/BIN pairs.
 //! This proof does not establish device identity, recovery, or permission to write.
 
 use sha2::{Digest, Sha256};
@@ -9,7 +9,41 @@ const END: u32 = 0x65000;
 const FAMILY: u32 = 0x621e937a;
 const PAGE: usize = 4096;
 const PAYLOAD: usize = 256;
-const MAX_BLOCKS: usize = (END - START) as usize / PAYLOAD;
+/// Fixed linker policies; callers cannot supply arbitrary writable bounds.
+/// A declared role selects byte policy and does not prove compiled role or device compatibility.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ImagePolicy {
+    LegacyLeftMigration,
+    LeftStartup,
+    RightStartup,
+    ReceiverProtected,
+}
+impl ImagePolicy {
+    pub fn role(self) -> crate::experimental_recovery::Role {
+        use crate::experimental_recovery::Role;
+        match self {
+            Self::LegacyLeftMigration | Self::LeftStartup => Role::Left,
+            Self::RightStartup => Role::Right,
+            Self::ReceiverProtected => Role::Receiver,
+        }
+    }
+    pub fn start(self) -> u32 {
+        match self {
+            Self::ReceiverProtected => 0x27000,
+            _ => START,
+        }
+    }
+    pub fn limit(self) -> u32 {
+        END
+    }
+    fn padding(self) -> usize {
+        if self == Self::ReceiverProtected {
+            PAYLOAD
+        } else {
+            PAGE
+        }
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ValidationError {
@@ -25,6 +59,8 @@ pub enum ValidationError {
     StackPointer,
     ResetVector,
     RecoveryMarker,
+    StartupReserve,
+    ReceiverMarker,
     OldSoftDevice,
 }
 
@@ -33,16 +69,20 @@ impl fmt::Display for ValidationError {
         f.write_str(match self {
             Self::Blocks => "UF2 must contain complete 512-byte blocks within the image limit",
             Self::Magic => "invalid UF2 magic",
-            Self::Family => "requires the left migration application family and ordinary flags",
+            Self::Family => "requires the nRF52833 application family and ordinary flags",
             Self::Alignment => "requires aligned 256-byte payloads",
             Self::Numbering => "invalid block numbering",
             Self::ProtectedMemory => "image would touch protected or unverified memory",
-            Self::Coverage => "requires unique contiguous payloads at 0x1000",
-            Self::Binary => "exact aligned BIN must overwrite the entire old S140 magic word",
-            Self::ExactMatch => "UF2 must match exact BIN with FF padding through its final page",
+            Self::Coverage => "requires unique contiguous payloads at the policy origin",
+            Self::Binary => "requires an aligned BIN covering the policy-required fields",
+            Self::ExactMatch => {
+                "UF2 must match exact BIN with only policy-aligned final FF padding"
+            }
             Self::StackPointer => "invalid application stack pointer",
             Self::ResetVector => "reset vector must be Thumb code within exact BIN coverage",
             Self::RecoveryMarker => "requires recovery marker at 0x1200",
+            Self::StartupReserve => "startup reserve at 0x1200 must be erased",
+            Self::ReceiverMarker => "receiver must not contain the recovery-first marker",
             Self::OldSoftDevice => "old S140 magic must be absent at 0x3004",
         })
     }
@@ -50,9 +90,10 @@ impl fmt::Display for ValidationError {
 
 impl std::error::Error for ValidationError {}
 
-/// Constructed only by [`validate`]; it attests to bytes, never to a device.
+/// Constructed only by [`validate`] or [`validate_for`]; it attests to bytes, never to a device.
 #[derive(Debug, Clone)]
 pub struct ValidatedImage {
+    policy: ImagePolicy,
     sha256: String,
     binary_sha256: String,
     binary_size: usize,
@@ -62,6 +103,12 @@ pub struct ValidatedImage {
 }
 
 impl ValidatedImage {
+    pub fn policy(&self) -> ImagePolicy {
+        self.policy
+    }
+    pub fn role(&self) -> crate::experimental_recovery::Role {
+        self.policy.role()
+    }
     pub fn sha256(&self) -> &str {
         &self.sha256
     }
@@ -72,16 +119,16 @@ impl ValidatedImage {
         self.binary_size
     }
     pub fn start(&self) -> u32 {
-        START
+        self.policy.start()
     }
     pub fn family_id(&self) -> u32 {
         FAMILY
     }
     pub fn binary_end_exclusive(&self) -> u32 {
-        START + self.binary_size as u32
+        self.start() + self.binary_size as u32
     }
     pub fn end_exclusive(&self) -> u32 {
-        START + self.padded_size as u32
+        self.start() + self.padded_size as u32
     }
     pub fn blocks(&self) -> usize {
         self.padded_size / PAYLOAD
@@ -93,7 +140,7 @@ impl ValidatedImage {
         self.reset_vector
     }
     pub fn touched_pages(&self) -> impl Iterator<Item = u32> + '_ {
-        (START..self.end_exclusive()).step_by(PAGE)
+        (self.start()..self.end_exclusive()).step_by(PAGE)
     }
 }
 
@@ -106,8 +153,22 @@ fn word(bytes: &[u8], offset: usize) -> u32 {
 }
 
 pub fn validate(image: &[u8], binary: &[u8]) -> Result<ValidatedImage, ValidationError> {
+    validate_for(ImagePolicy::LegacyLeftMigration, image, binary)
+}
+
+/// Validate half startup bytes against `inspect_application_shim`, or protected
+/// receiver bytes against `inspect_receiver_serial_package`. Bootloader evidence,
+/// source provenance, endpoint role and recovery eligibility remain separate gates.
+pub fn validate_for(
+    policy: ImagePolicy,
+    image: &[u8],
+    binary: &[u8],
+) -> Result<ValidatedImage, ValidationError> {
     use ValidationError::*;
-    if image.is_empty() || !image.len().is_multiple_of(512) || image.len() / 512 > MAX_BLOCKS {
+    let start = policy.start();
+    let end = policy.limit();
+    let max_blocks = (end - start) as usize / PAYLOAD;
+    if image.is_empty() || !image.len().is_multiple_of(512) || image.len() / 512 > max_blocks {
         return Err(Blocks);
     }
     let count = image.len() / 512;
@@ -132,7 +193,7 @@ pub fn validate(image: &[u8], binary: &[u8]) -> Result<ValidatedImage, Validatio
             return Err(Numbering);
         }
         numbered[index] = true;
-        if address < START || address > END - PAYLOAD as u32 {
+        if address < start || address > end - PAYLOAD as u32 {
             return Err(ProtectedMemory);
         }
         blocks.push((address, &block[32..32 + PAYLOAD]));
@@ -141,17 +202,25 @@ pub fn validate(image: &[u8], binary: &[u8]) -> Result<ValidatedImage, Validatio
     if blocks
         .iter()
         .enumerate()
-        .any(|(index, (address, _))| *address != START + (index * PAYLOAD) as u32)
+        .any(|(index, (address, _))| *address != start + (index * PAYLOAD) as u32)
     {
         return Err(Coverage);
     }
-    if binary.len() < (0x3008 - START) as usize || !binary.len().is_multiple_of(4) {
+    let minimum = if policy == ImagePolicy::ReceiverProtected {
+        8
+    } else {
+        (0x3008 - START) as usize
+    };
+    if binary.len() < minimum || !binary.len().is_multiple_of(4) {
         return Err(Binary);
     }
-    if binary.len() > (END - START) as usize {
+    if binary.len() > (end - start) as usize {
         return Err(ExactMatch);
     }
-    let padded_size = binary.len().div_ceil(PAGE) * PAGE;
+    let padded_size = binary.len().div_ceil(policy.padding()) * policy.padding();
+    if start + padded_size as u32 > end {
+        return Err(ProtectedMemory);
+    }
     if count * PAYLOAD != padded_size {
         return Err(ExactMatch);
     }
@@ -172,17 +241,41 @@ pub fn validate(image: &[u8], binary: &[u8]) -> Result<ValidatedImage, Validatio
     }
     let reset_vector = word(binary, 4);
     let code_address = reset_vector & !1;
-    if reset_vector & 1 == 0 || code_address < START || code_address >= START + binary.len() as u32
+    let executable_start = start
+        + if matches!(policy, ImagePolicy::LeftStartup | ImagePolicy::RightStartup) {
+            0x204
+        } else {
+            0
+        };
+    if reset_vector & 1 == 0
+        || code_address < executable_start
+        || code_address >= start + binary.len() as u32
     {
         return Err(ResetVector);
     }
-    if word(binary, 0x200) != 0x87eeb07c {
-        return Err(RecoveryMarker);
+    match policy {
+        ImagePolicy::LegacyLeftMigration if word(binary, 0x200) != 0x87eeb07c => {
+            return Err(RecoveryMarker);
+        }
+        ImagePolicy::LeftStartup | ImagePolicy::RightStartup
+            if word(binary, 0x200) != 0xffffffff =>
+        {
+            return Err(StartupReserve);
+        }
+        ImagePolicy::ReceiverProtected
+            if binary.len() >= 0x204 && word(binary, 0x200) == 0x87eeb07c =>
+        {
+            return Err(ReceiverMarker);
+        }
+        _ => {}
     }
-    if word(binary, (0x3004 - START) as usize) == 0x51b1e5db {
+    if policy != ImagePolicy::ReceiverProtected
+        && word(binary, (0x3004 - START) as usize) == 0x51b1e5db
+    {
         return Err(OldSoftDevice);
     }
     Ok(ValidatedImage {
+        policy,
         sha256: format!("{:x}", Sha256::digest(image)),
         binary_sha256: format!("{:x}", Sha256::digest(binary)),
         binary_size: binary.len(),
