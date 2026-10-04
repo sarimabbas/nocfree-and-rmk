@@ -26,8 +26,11 @@ padded through 0x5d000; RIGHT is 229,612 bytes padded through 0x3a000; dongle is
 Independent implementation and review passes covered the stop/start lifetime,
 disconnect controls, telemetry compatibility and tooltip semantics. Actual
 PWM shutdown/resume, optical patterns, current savings, typing and wake latency
-remain separate hardware acceptance checks. Only the owner-authorized LEFT
-candidate is scheduled for this unattended transfer; right and dongle stay
-unchanged until their device-specific update steps.
+remain separate hardware acceptance checks. The owner-authorized LEFT candidate was copied once and its application,
+padding and untouched gap verified by exact live readback. Companion successfully
+returned it to the factory recovery drive after runtime enumeration. Saved
+settings differ after the RMK revision change; pairing may need renewal. LEFT
+is left in recovery for the owner to unplug/reconnect in the morning. RIGHT
+and dongle remain unchanged; hardware lighting and input acceptance is pending.
 
 Primary stop/start semantics: [Nordic PWM specification](https://docs.nordicsemi.com/r/bundle/ps_nrf52833/page/pwm.html?contentId=tF4489dcQq9LN2iwRSaljg).
