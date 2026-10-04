@@ -20,7 +20,7 @@ path = "stage_trace.rs"
 
 # The imported production trace has a right-role USB-descriptor exclusion.
 [lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = ['cfg(feature, values("right"))'] }
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(feature, values("right", "watchdog-rescue-probe", "startup-watchdog"))'] }
 
 [[test]]
 name = "watchdog_recovery"

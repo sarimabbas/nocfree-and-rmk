@@ -28,6 +28,8 @@ required-features = ["watchdog-rescue-probe"]
 default = ["defmt-logging"]
 # LEFT-only raw watchdog hang proof; reserves marker-free startup entry.
 watchdog-rescue-probe = ["reclaimed-softdevice", "dep:nrf-pac"]
+# LEFT-only protected startup, adopted and fed by RMK in normal operation.
+startup-watchdog = ["usb-rescue-startup", "rmk/watchdog"]
 # Normal builds use RMK defmt; --no-default-features callers select this explicitly.
 defmt-logging = ["rmk/defmt"]
 # Optional framework CDC logger; choose instead of defmt-logging.

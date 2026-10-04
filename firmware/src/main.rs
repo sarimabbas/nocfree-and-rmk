@@ -1,5 +1,24 @@
 #![no_std]
 #![no_main]
+#[cfg(feature = "startup-watchdog")]
+mod watchdog_recovery;
+#[cfg(all(
+    feature = "startup-watchdog",
+    any(
+        not(feature = "left"),
+        feature = "right",
+        feature = "receiver",
+        not(feature = "reclaimed-softdevice"),
+        feature = "application-recovery-shim",
+        feature = "usb-recovery-first",
+        feature = "watchdog-rescue-probe"
+    )
+))]
+compile_error!(
+    "Startup watchdog requires only lower-layout LEFT without another recovery entry hook"
+);
+#[cfg(feature = "watchdog-rescue-probe")]
+compile_error!("Build the dedicated watchdog-rescue-probe binary for the hang proof");
 #[cfg(feature = "application-recovery-shim")]
 mod startup_recovery;
 #[cfg(feature = "usb-rescue-startup")]
@@ -75,6 +94,8 @@ async fn main(spawner: Spawner) {
     let mut p = embassy_nrf::init(embassy_nrf::config::Config::default());
     #[cfg(feature = "usb-rescue-startup")]
     usb_rescue::run(p.USBD.reborrow(), Irqs).await;
+    #[cfg(feature = "startup-watchdog")]
+    let mut watchdog_runner = rmk::watchdog::Nrf52Watchdog::default_runner(p.WDT);
     let mpsl_p =
         mpsl::Peripherals::new(p.RTC0, p.TIMER0, p.TEMP, p.PPI_CH19, p.PPI_CH30, p.PPI_CH31);
     let lfclk = mpsl::raw::mpsl_clock_lfclk_cfg_t {
@@ -282,6 +303,18 @@ async fn main(spawner: Spawner) {
                 }],
             );
             let mut ble = ble.with_host_service(&host_service);
+            #[cfg(feature = "startup-watchdog")]
+            let keyboard_tasks = run_all!(
+                matrix,
+                battery_adc,
+                battery,
+                keyboard,
+                storage,
+                usb,
+                ble,
+                watchdog_runner
+            );
+            #[cfg(not(feature = "startup-watchdog"))]
             let keyboard_tasks =
                 run_all!(matrix, battery_adc, battery, keyboard, storage, usb, ble);
             #[cfg(feature = "backlight")]

@@ -21,7 +21,16 @@ pub fn request_after_watchdog(registers: &mut impl Registers) -> bool {
 }
 /// No feeds: this proof deliberately lets a startup hang expire.
 /// Never attempt to reconfigure a watchdog inherited from an earlier stage.
+#[cfg(any(feature = "watchdog-rescue-probe", test))]
 pub fn arm_probe(registers: &mut impl Registers) {
+    arm(registers, 65_536);
+}
+/// Match RMK Nrf52Watchdog::default_runner exactly, so Embassy can adopt it.
+#[cfg(any(feature = "startup-watchdog", test))]
+pub fn arm_startup(registers: &mut impl Registers) {
+    arm(registers, 327_680);
+}
+fn arm(registers: &mut impl Registers, timeout_ticks: u32) {
     // This factory bootloader's SystemInit clears other reset reasons when
     // RESETPIN remains latched. Clear only that stale pin flag before a DOG reset.
     registers.write(RESETREAS, RESETPIN);
@@ -29,7 +38,7 @@ pub fn arm_probe(registers: &mut impl Registers) {
         return;
     }
     registers.write(WDT + 0x308, 1); // INTENCLR.TIMEOUT; NVIC is untouched.
-    registers.write(WDT + 0x504, 65_536); // (CRV+1)/32768 ~= two seconds.
+    registers.write(WDT + 0x504, timeout_ticks); // (CRV+1)/32768 seconds.
     registers.write(WDT + 0x508, 1); // Reload channel 0, never written by this probe.
     registers.write(WDT + 0x50c, 1); // SLEEP=Run, HALT=Pause.
     registers.write(WDT, 1); // TASKS_START, after all configuration.
@@ -72,6 +81,27 @@ mod tests {
         assert!(registers.writes.is_empty());
     }
     #[test]
+    fn startup_policy_matches_framework_adoption_and_preserves_unrelated_flags() {
+        let mut registers = Fake {
+            reason: 0x10005,
+            running: 0,
+            writes: vec![],
+        };
+        arm_startup(&mut registers);
+        assert_eq!(registers.reason, 0x10004);
+        assert_eq!(
+            registers.writes,
+            [
+                (RESETREAS, RESETPIN),
+                (WDT + 0x308, 1),
+                (WDT + 0x504, 327_680),
+                (WDT + 0x508, 1),
+                (WDT + 0x50c, 1),
+                (WDT, 1)
+            ]
+        );
+    }
+    #[test]
     fn proof_never_feeds_or_reconfigures_a_running_watchdog() {
         let mut registers = Fake {
             reason: 0x10005,
@@ -96,5 +126,43 @@ mod tests {
         registers.writes.clear();
         arm_probe(&mut registers);
         assert_eq!(registers.writes, [(RESETREAS, RESETPIN)]);
+    }
+}
+
+// This pre-init hook runs before runtime RAM initialization. Its raw adapter
+// accesses registers only; ordinary feeding remains RMK's responsibility.
+#[cfg(all(feature = "startup-watchdog", not(test)))]
+mod startup {
+    use super::{Registers, arm_startup, request_after_watchdog};
+    struct Raw;
+    impl Registers for Raw {
+        fn read(&mut self, address: usize) -> u32 {
+            unsafe { core::ptr::read_volatile(address as *const u32) }
+        }
+        fn write(&mut self, address: usize, value: u32) {
+            unsafe { core::ptr::write_volatile(address as *mut u32, value) }
+        }
+    }
+    core::arch::global_asm!(
+        ".pushsection .text.__pre_init,\"ax\",%progbits",
+        ".balign 2",
+        ".global __pre_init",
+        ".type __pre_init,%function",
+        ".thumb_func",
+        "__pre_init:",
+        "push {{r4, lr}}",
+        "bl nocfree_watchdog_startup",
+        "pop {{r4, pc}}",
+        ".size __pre_init, .-__pre_init",
+        ".popsection",
+    );
+    #[unsafe(no_mangle)]
+    unsafe extern "C" fn nocfree_watchdog_startup() {
+        let mut registers = Raw;
+        if request_after_watchdog(&mut registers) {
+            cortex_m::asm::dsb();
+            cortex_m::peripheral::SCB::sys_reset();
+        }
+        arm_startup(&mut registers);
     }
 }
