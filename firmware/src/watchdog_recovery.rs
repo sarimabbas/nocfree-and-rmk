@@ -39,7 +39,7 @@ fn arm(registers: &mut impl Registers, timeout_ticks: u32) {
     }
     registers.write(WDT + 0x308, 1); // INTENCLR.TIMEOUT; NVIC is untouched.
     registers.write(WDT + 0x504, timeout_ticks); // (CRV+1)/32768 seconds.
-    registers.write(WDT + 0x508, 1); // Reload channel 0, never written by this probe.
+    registers.write(WDT + 0x508, 1); // Enable reload channel 0; feeding belongs to the caller/framework.
     registers.write(WDT + 0x50c, 1); // SLEEP=Run, HALT=Pause.
     registers.write(WDT, 1); // TASKS_START, after all configuration.
 }

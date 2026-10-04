@@ -89,7 +89,7 @@ pub fn default_keymap() -> [[[KeyAction; 84]; 1]; 2] {
         k!(Right),
     ];
     let mut function = [a!(Transparent); 84];
-    // Recovery belongs to the local startup shim, not the typing keymap.
+    // Recovery belongs to Companion, not the typing keymap.
     function[1] = k!(BrightnessDown);
     function[2] = k!(BrightnessUp);
     function[3] = k!(MissionControl);

@@ -1,4 +1,5 @@
 fn main() {
+    generate_vial_definition();
     if std::env::var_os("CARGO_FEATURE_USB_LOG").is_some() {
         assert!(
             std::env::var_os("CARGO_FEATURE_LEFT").is_some()
@@ -23,6 +24,8 @@ fn main() {
     if std::env::var_os("CARGO_FEATURE_APPLICATION_RECOVERY_SHIM").is_some()
         || std::env::var_os("CARGO_FEATURE_USB_RESCUE_STARTUP").is_some()
         || std::env::var_os("CARGO_FEATURE_WATCHDOG_RESCUE_PROBE").is_some()
+        || (std::env::var_os("CARGO_FEATURE_STARTUP_WATCHDOG").is_some()
+            && std::env::var_os("CARGO_FEATURE_RECLAIMED_SOFTDEVICE").is_some())
     {
         assert!(
             std::env::var_os("CARGO_FEATURE_USB_RECOVERY_FIRST").is_none(),
@@ -57,6 +60,7 @@ fn main() {
     println!("cargo:rerun-if-changed=startup-recovery.x");
     println!("cargo:rerun-if-env-changed=CARGO_FEATURE_APPLICATION_RECOVERY_SHIM");
     println!("cargo:rerun-if-env-changed=CARGO_FEATURE_USB_RESCUE_STARTUP");
+    println!("cargo:rerun-if-env-changed=CARGO_FEATURE_STARTUP_WATCHDOG");
     println!("cargo:rerun-if-changed=migration-diagnostic.x");
     println!("cargo:rerun-if-env-changed=CARGO_FEATURE_MIGRATION_RUNTIME_PROBE");
     println!("cargo:rerun-if-env-changed=CARGO_FEATURE_MIGRATION_HAL_PROBE");
@@ -70,4 +74,20 @@ fn main() {
     println!("cargo:rerun-if-env-changed=CARGO_FEATURE_WATCHDOG_RESCUE_PROBE");
     println!("cargo:rerun-if-env-changed=CARGO_FEATURE_USB_RECOVERY_FIRST");
     println!("cargo:rerun-if-env-changed=CARGO_FEATURE_RECLAIMED_SOFTDEVICE");
+}
+
+fn generate_vial_definition() {
+    use std::io::{Read, Write};
+    println!("cargo:rerun-if-changed=vial.json");
+    let definition: serde_json::Value =
+        serde_json::from_slice(&std::fs::read("vial.json").unwrap()).unwrap();
+    let compact = serde_json::to_vec(&definition).unwrap();
+    let mut encoder = xz2::read::XzEncoder::new(compact.as_slice(), 6);
+    let mut compressed = Vec::new();
+    encoder.read_to_end(&mut compressed).unwrap();
+    let out = std::path::PathBuf::from(std::env::var_os("OUT_DIR").unwrap());
+    std::fs::File::create(out.join("vial_definition.xz"))
+        .unwrap()
+        .write_all(&compressed)
+        .unwrap();
 }

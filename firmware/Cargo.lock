@@ -1448,6 +1448,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "lzma-sys"
+version = "0.1.20"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5fda04ab3764e6cde78b9974eec4f779acaba7c4e84b36eca3cf77c581b85d27"
+dependencies = [
+ "cc",
+ "libc",
+ "pkg-config",
+]
+
+[[package]]
 name = "matchers"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1525,7 +1536,9 @@ dependencies = [
  "nrf-sdc",
  "panic-probe",
  "rmk",
+ "serde_json",
  "static_cell",
+ "xz2",
 ]
 
 [[package]]
@@ -1785,6 +1798,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
 
 [[package]]
+name = "pkg-config"
+version = "0.3.34"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f6b464fbc74e149a392436b17d523f769e057cb6877f6a5c4618bc6f11800548"
+
+[[package]]
 name = "portable-atomic"
 version = "1.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1931,7 +1950,7 @@ checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 [[package]]
 name = "rmk"
 version = "0.9.0"
-source = "git+https://github.com/sarimabbas/rmk-nocfree?rev=b41bd7caa7de67a47f6e7380519b730630f16152#b41bd7caa7de67a47f6e7380519b730630f16152"
+source = "git+https://github.com/sarimabbas/rmk-nocfree?rev=f1c620c6c089cab385d92868b2e1060d03bddb04#f1c620c6c089cab385d92868b2e1060d03bddb04"
 dependencies = [
  "bt-hci",
  "byteorder",
@@ -1967,7 +1986,7 @@ dependencies = [
 [[package]]
 name = "rmk-config"
 version = "0.8.0"
-source = "git+https://github.com/sarimabbas/rmk-nocfree?rev=b41bd7caa7de67a47f6e7380519b730630f16152#b41bd7caa7de67a47f6e7380519b730630f16152"
+source = "git+https://github.com/sarimabbas/rmk-nocfree?rev=f1c620c6c089cab385d92868b2e1060d03bddb04#f1c620c6c089cab385d92868b2e1060d03bddb04"
 dependencies = [
  "config",
  "miniz_oxide",
@@ -1984,7 +2003,7 @@ dependencies = [
 [[package]]
 name = "rmk-macro"
 version = "0.8.0"
-source = "git+https://github.com/sarimabbas/rmk-nocfree?rev=b41bd7caa7de67a47f6e7380519b730630f16152#b41bd7caa7de67a47f6e7380519b730630f16152"
+source = "git+https://github.com/sarimabbas/rmk-nocfree?rev=f1c620c6c089cab385d92868b2e1060d03bddb04#f1c620c6c089cab385d92868b2e1060d03bddb04"
 dependencies = [
  "cargo_toml",
  "darling 0.24.1",
@@ -2000,7 +2019,7 @@ dependencies = [
 [[package]]
 name = "rmk-types"
 version = "0.4.0"
-source = "git+https://github.com/sarimabbas/rmk-nocfree?rev=b41bd7caa7de67a47f6e7380519b730630f16152#b41bd7caa7de67a47f6e7380519b730630f16152"
+source = "git+https://github.com/sarimabbas/rmk-nocfree?rev=f1c620c6c089cab385d92868b2e1060d03bddb04#f1c620c6c089cab385d92868b2e1060d03bddb04"
 dependencies = [
  "bitfield-struct",
  "cobs",
@@ -2728,6 +2747,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "23b97319f7b8343df12cc98938e5c3eb436064524c8d2b4e30a1d3a36eecdf81"
 dependencies = [
  "memchr",
+]
+
+[[package]]
+name = "xz2"
+version = "0.1.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "388c44dc09d76f1536602ead6d325eb532f5c122f17782bd57fb47baeeb767e2"
+dependencies = [
+ "lzma-sys",
 ]
 
 [[package]]

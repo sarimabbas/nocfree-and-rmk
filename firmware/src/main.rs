@@ -5,18 +5,15 @@ mod watchdog_recovery;
 #[cfg(all(
     feature = "startup-watchdog",
     any(
-        not(feature = "left"),
-        feature = "right",
-        feature = "receiver",
-        not(feature = "reclaimed-softdevice"),
+        all(not(feature = "receiver"), not(feature = "reclaimed-softdevice")),
+        all(feature = "right", not(feature = "runtime-recovery")),
+        feature = "usb-rescue-startup",
         feature = "application-recovery-shim",
         feature = "usb-recovery-first",
         feature = "watchdog-rescue-probe"
     )
 ))]
-compile_error!(
-    "Startup watchdog requires only lower-layout LEFT without another recovery entry hook"
-);
+compile_error!("Startup watchdog requires the role layout without another startup recovery hook");
 #[cfg(feature = "watchdog-rescue-probe")]
 compile_error!("Build the dedicated watchdog-rescue-probe binary for the hang proof");
 #[cfg(feature = "application-recovery-shim")]
@@ -52,11 +49,13 @@ mod battery;
 mod keymap;
 #[cfg(not(feature = "receiver"))]
 mod scanner;
+#[cfg(feature = "left")]
+mod vial;
 use defmt::unwrap;
 use defmt_rtt as _;
 use embassy_executor::Spawner;
 use embassy_nrf::peripherals::{RNG, TWISPI0, USBD};
-#[cfg(not(feature = "right"))]
+#[cfg(any(not(feature = "right"), feature = "runtime-recovery"))]
 use embassy_nrf::usb::{Driver, vbus_detect::HardwareVbusDetect};
 use embassy_nrf::{bind_interrupts, rng, saadc, twim, usb};
 use nrf_mpsl::Flash;
@@ -166,9 +165,9 @@ async fn main(spawner: Spawner) {
         num_sectors: 8,
         ..Default::default()
     };
-    #[cfg(not(feature = "right"))]
+    #[cfg(any(not(feature = "right"), feature = "runtime-recovery"))]
     let driver = Driver::new(p.USBD, Irqs, HardwareVbusDetect::new(Irqs));
-    #[cfg(not(feature = "right"))]
+    #[cfg(any(not(feature = "right"), feature = "runtime-recovery"))]
     let device_config = rmk::config::DeviceConfig {
         manufacturer: {
             #[cfg(feature = "usb-rescue-diagnostic")]
@@ -191,9 +190,19 @@ async fn main(spawner: Spawner) {
             }
         },
         product_name: if cfg!(feature = "receiver") {
-            "NocFree AND RMK Receiver"
+            "NocFree RMK Receiver"
+        } else if cfg!(feature = "right") {
+            "NocFree RMK Right"
         } else {
             "NocFree RMK"
+        },
+        vid: 0x4c4b,
+        pid: if cfg!(feature = "receiver") {
+            0x4644
+        } else if cfg!(feature = "right") {
+            0x4671
+        } else {
+            0x4643
         },
         ..Default::default()
     };
@@ -251,8 +260,21 @@ async fn main(spawner: Spawner) {
         #[cfg(feature = "right")]
         {
             let mut storage = rmk::storage::new_storage_without_keymap(flash, storage_config).await;
+            #[cfg(feature = "runtime-recovery")]
+            let mut recovery_usb = rmk::usb::UsbRecoveryTransport::new(driver, device_config);
+            #[cfg(feature = "runtime-recovery")]
+            let local_tasks = run_all!(
+                matrix,
+                battery_adc,
+                battery,
+                storage,
+                recovery_usb,
+                watchdog_runner
+            );
+            #[cfg(not(feature = "runtime-recovery"))]
+            let local_tasks = run_all!(matrix, battery_adc, battery, storage);
             let keyboard_tasks = rmk::futures::future::join(
-                run_all!(matrix, battery_adc, battery, storage),
+                local_tasks,
                 rmk::split::peripheral::run_rmk_split_peripheral(0, sdc, ble_addr()),
             );
             #[cfg(feature = "backlight")]
@@ -274,6 +296,7 @@ async fn main(spawner: Spawner) {
             let config = RmkConfig {
                 device_config,
                 storage_config,
+                vial_config: vial::config(),
                 ..Default::default()
             };
             let mut data = KeymapData::new(keymap::default_keymap());
@@ -333,6 +356,9 @@ async fn main(spawner: Spawner) {
         let router = DongleRouter::new();
         let mut dongle = Dongle::new(sdc, ble_addr(), &router);
         let mut usb = UsbTransport::new(driver, device_config).with_dongle_router(&router);
+        #[cfg(feature = "startup-watchdog")]
+        run_all!(storage, dongle, usb, watchdog_runner).await;
+        #[cfg(not(feature = "startup-watchdog"))]
         run_all!(storage, dongle, usb).await;
     }
 }

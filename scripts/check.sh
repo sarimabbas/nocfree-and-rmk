@@ -5,6 +5,7 @@ layout_features=""
 backlight_features=""
 shim_features=""
 rescue_features=""
+runtime_features=""
 for option in "$@"; do
     case "$option" in
         --reclaimed-softdevice) layout_features="$layout_features,reclaimed-softdevice" ;;
@@ -13,7 +14,8 @@ for option in "$@"; do
         --backlight-active-high) backlight_features="$backlight_features,backlight-active-high" ;;
         --application-recovery-shim) shim_features=",application-recovery-shim" ;;
         --usb-rescue-startup) rescue_features=",usb-rescue-startup" ;;
-        *) echo "Usage: $0 [--reclaimed-softdevice] [--usb-recovery-first] [--backlight-active-low|--backlight-active-high] [--application-recovery-shim] [--usb-rescue-startup]" >&2; exit 2 ;;
+        --runtime-recovery) runtime_features=",runtime-recovery" ;;
+        *) echo "Usage: $0 [--reclaimed-softdevice] [--usb-recovery-first] [--backlight-active-low|--backlight-active-high] [--application-recovery-shim] [--usb-rescue-startup] [--runtime-recovery]" >&2; exit 2 ;;
     esac
 done
 cd "$(dirname "$0")/.."
@@ -31,10 +33,13 @@ cargo fmt --manifest-path firmware/Cargo.toml -- --check
         for role in left right receiver; do
             role_backlight_features="$backlight_features"
             role_shim_features="$shim_features"
+            role_layout_features="$layout_features"
             # Receiver has no keyboard backlight and needs no lighting feature/schema change.
             if [ "$role" = receiver ]; then role_backlight_features=""; role_shim_features=""; fi
+            # Production runtime recovery retains the receiver's resident S140.
+            if [ "$role" = receiver ] && [ -n "$runtime_features" ]; then role_layout_features=""; fi
             cargo build --locked --release --bin nocfree-rmk --target thumbv7em-none-eabihf \
-                --no-default-features --features "defmt-logging,$role$layout_features$keymap_features$role_backlight_features$role_shim_features$rescue_features" || failed=1
+                --no-default-features --features "defmt-logging,$role$role_layout_features$keymap_features$role_backlight_features$role_shim_features$rescue_features$runtime_features" || failed=1
         done
     done
     cargo build --locked --release --bin recovery-probe --target thumbv7em-none-eabihf \
