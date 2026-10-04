@@ -5,6 +5,7 @@ use rynk::RynkDevice;
 use rynk::rmk_types::battery::BatteryStatus;
 use rynk_usb::UsbDevice;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{OnceLock, mpsc};
 use std::time::{Duration, Instant};
 use tokio::time::timeout;
 
@@ -31,8 +32,50 @@ impl QueryGuard {
     }
 }
 pub(crate) fn read() -> Result<Readings, String> {
-    let _guard = QueryGuard::acquire()?;
+    let guard = QueryGuard::acquire()?;
     let started = Instant::now();
+    let (send, receive) = mpsc::sync_channel(1);
+    battery_worker()?
+        .send(Box::new(move || {
+            // Keep the single-flight lease on the native worker, even if the UI
+            // stops waiting while an OS call is still finishing.
+            let _guard = guard;
+            let _ = send.send(read_on_worker(started));
+        }))
+        .map_err(|_| "The keyboard battery worker stopped.".to_owned())?;
+    receive
+        .recv_timeout(Duration::from_secs(5))
+        .map_err(|_| "The battery check timed out. Details are unavailable.".to_owned())?
+}
+
+type BatteryTask = Box<dyn FnOnce() + Send>;
+
+fn start_worker() -> Result<mpsc::SyncSender<BatteryTask>, String> {
+    let (send, receive) = mpsc::sync_channel::<BatteryTask>(0);
+    std::thread::Builder::new()
+        .name("nocfree-battery".into())
+        .spawn(move || {
+            while let Ok(task) = receive.recv() {
+                task();
+            }
+        })
+        .map_err(|_| "Couldn't start the keyboard battery worker.".to_owned())?;
+    Ok(send)
+}
+
+fn battery_worker() -> Result<&'static mpsc::SyncSender<BatteryTask>, String> {
+    // macOS HIDAPI attaches its process-global manager to the first caller's
+    // CFRunLoop. That thread must outlive every HID handle. GPUI's temporary
+    // background threads cannot own it; this sender keeps one worker alive
+    // until process exit. Every native HID handle is also dropped on it.
+    static WORKER: OnceLock<Result<mpsc::SyncSender<BatteryTask>, String>> = OnceLock::new();
+    WORKER
+        .get_or_init(start_worker)
+        .as_ref()
+        .map_err(Clone::clone)
+}
+
+fn read_on_worker(started: Instant) -> Result<Readings, String> {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -158,6 +201,32 @@ mod tests {
     }
 
     #[test]
+    fn successive_short_lived_callers_share_one_living_native_worker() {
+        let worker = start_worker().unwrap();
+        let mut owner = None;
+        for _ in 0..32 {
+            let sender = worker.clone();
+            let observed = std::thread::spawn(move || {
+                let (reply, result) = mpsc::sync_channel(1);
+                sender
+                    .send(Box::new(move || {
+                        reply.send(std::thread::current().id()).unwrap();
+                    }))
+                    .unwrap();
+                result.recv_timeout(Duration::from_secs(1)).unwrap()
+            })
+            .join()
+            .unwrap();
+            assert_ne!(observed, std::thread::current().id());
+            if let Some(expected) = owner {
+                assert_eq!(observed, expected);
+            } else {
+                owner = Some(observed);
+            }
+        }
+    }
+
+    #[test]
     fn only_the_same_unique_usb_connection_accepts_a_snapshot() {
         assert!(same_connection(&1_u8, [1]));
         assert!(!same_connection(&1_u8, [2]));
@@ -199,8 +268,25 @@ mod tests {
     #[test]
     fn an_unfinished_native_query_prevents_a_second_worker_until_it_exits() {
         let first = QueryGuard::acquire().unwrap();
+        let worker = start_worker().unwrap();
+        let (finish, wait) = mpsc::sync_channel(0);
+        let (result, observation) = mpsc::sync_channel::<()>(1);
+        let (exited, exit) = mpsc::sync_channel(1);
+        worker
+            .send(Box::new(move || {
+                {
+                    let _guard = first;
+                    wait.recv().unwrap();
+                    let _ = result.send(());
+                }
+                exited.send(()).unwrap();
+            }))
+            .unwrap();
+        assert!(observation.recv_timeout(Duration::from_millis(10)).is_err());
+        drop(observation);
         assert!(QueryGuard::acquire().is_err());
-        drop(first);
+        finish.send(()).unwrap();
+        exit.recv_timeout(Duration::from_secs(1)).unwrap();
         assert!(QueryGuard::acquire().is_ok());
     }
 
