@@ -4,7 +4,7 @@ Research only, 2026-10-04. No devices accessed, firmware changed, or application
 
 ## Finding
 
-The project already has Vial support and an embedded definition. The useful next work is improving its physical geometry and checking the actual Vial application, rather than creating a new host protocol or requiring users to import JSON. RMK supports live key remapping and storage-backed persistence; Vial and Rynk are mutually exclusive. Upstream also documents `rmkit layout convert --to-vial keyboard.toml` when TOML contains a physical `[layout]` section. Our TOML does not contain that section: its keymap is authored in Rust. [RMK Vial documentation](https://rmk.rs/main/docs/features/vial_support), [rmkit layout tools](https://github.com/rmk-rs/rmkit#layout-tools), [local TOML](../../firmware/keyboard.toml), [local keymap](../../firmware/src/keymap.rs).
+The project already has Vial support and an embedded definition. The physical geometry has now been improved and checked offline; the remaining acceptance work is checking the actual Vial application with the owner, rather than creating a new host protocol or requiring users to import JSON. RMK supports live key remapping and storage-backed persistence; Vial and Rynk are mutually exclusive. Upstream also documents `rmkit layout convert --to-vial keyboard.toml` when TOML contains a physical `[layout]` section. Our TOML does not contain that section: its keymap is authored in Rust. [RMK Vial documentation](https://rmk.rs/main/docs/features/vial_support), [rmkit layout tools](https://github.com/rmk-rs/rmkit#layout-tools), [local TOML](../../firmware/keyboard.toml), [local keymap](../../firmware/src/keymap.rs).
 
 ## Already present
 
@@ -21,7 +21,7 @@ Vial retrieves the UID, compressed definition length and definition pages from f
 
 Vial accepts KLE geometry and matrix-coordinate legends, not an SVG picture. The drawing must identify each physical key by its firmware matrix position; importing the image alone cannot provide that mapping. Vial supports cap widths, offsets, split gaps and layout variants. Its official process is authoring KLE data and dummy-loading the resulting definition before hardware testing. [Vial definition guide](https://get.vial.today/docs/porting-to-via.html).
 
-Our current JSON has all keys at default unit width and uses only `x: 1.5` split gaps. The [left SVG](../../desktop/assets/nocfree-left.svg) and [right SVG](../../desktop/assets/nocfree-right.svg) contain staggered rows and varied cap widths that could supply those visual measurements. Each key is drawn twice, as base and cap: naïvely treating every rectangle as a key would double-count. The blank space keys also have no text label. No SVG element currently carries an explicit electrical coordinate. These are source observations, not dimensions measured from hardware.
+The initial JSON had all keys at default unit width and used only `x: 1.5` split gaps. The updated definition preserves all electrical labels and adopts the SVG widths and row stagger. The [left SVG](../../desktop/assets/nocfree-left.svg) and [right SVG](../../desktop/assets/nocfree-right.svg) contain staggered rows and varied cap widths that could supply those visual measurements. Each key is drawn twice, as base and cap: naïvely treating every rectangle as a key would double-count. The blank space keys also have no text label. No SVG element currently carries an explicit electrical coordinate. These are source observations, not dimensions measured from hardware.
 
 Recommendation: keep the coordinate mapping unchanged and improve only KLE geometry, using the SVGs as a visual reference. For later shared generation, introduce one small explicit geometry table containing matrix coordinate, cap rectangle and half; generate KLE and SVG from that table. Do not guess electrical mapping from legends or rectangle order. The dongle has no remappable keys and does not belong in the Vial key layout.
 
@@ -48,3 +48,24 @@ Keep lighting `none` until the actual pinned protocol supports the GUI controls.
 4. Treat direct Bluetooth GUI compatibility and other hardware layouts as separate unverified acceptance gates.
 
 No firmware update, scanner change or flashing is required merely to research these steps. Changing embedded geometry later requires a new guarded firmware build and separately authorized installation.
+
+## Offline geometry acceptance, 2026-10-04
+
+The updated definition retains every matrix address exactly once and all other
+metadata unchanged. Its widths and stagger follow the existing SVG drawings at
+48 pixels per key unit, with a 1.5-unit split gap. An independent review checked
+the mapping against the Rust keymap, including Delete `(0,68)` and PageDown
+`(0,76)`, both blank space keys, and KLE width/row reset behavior.
+
+Root loaded the JSON with the official Vial GUI v0.7.5 KLE parser and rendered
+its official Qt `KeyboardWidget` offscreen. All 84 keys were in bounds, with no
+rectangle overlaps. The preview labels show matrix addresses deliberately, so
+mapping can be inspected. XZ compression/decompression also round-tripped to
+the same definition (388 compressed bytes). This exercised the actual parser
+and renderer without starting device enumeration or connecting to a keyboard;
+it is not a live Vial GUI/remapping or persistence test.
+
+The local preview is `.evidence/vial-layout-preview/vial-layout.png`. Official
+source: [Vial v0.7.5 KLE parser](https://github.com/vial-kb/vial-gui/blob/v0.7.5/src/main/python/kle_serial.py)
+and [keyboard renderer](https://github.com/vial-kb/vial-gui/blob/v0.7.5/src/main/python/widgets/keyboard_widget.py).
+No installed firmware or Companion firmware package was replaced by this work.
