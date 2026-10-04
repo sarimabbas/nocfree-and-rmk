@@ -253,9 +253,10 @@ async fn main(spawner: Spawner) {
         // this is an effective scale, not a measured resistor ratio or capacity.
         #[cfg(feature = "left")]
         let mut battery = BatteryProcessor::new(100, 150);
-        // Right remains on the published factory scale pending its own calibration.
+        // Provisional right scale follows the same factory normalization;
+        // physical divider calibration and capacity remain unverified.
         #[cfg(feature = "right")]
-        let mut battery = BatteryProcessor::new(100, 130);
+        let mut battery = BatteryProcessor::new(100, 150);
         let mut twim_buffer = [0u8; 8];
         let bus = twim::Twim::new(
             p.TWISPI0,

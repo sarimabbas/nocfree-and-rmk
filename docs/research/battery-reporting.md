@@ -40,10 +40,20 @@ remain indistinguishable; no percentage calibration was applied.
 ## Provisional owner calibration
 
 The owner approved using the saved 4.17 V observation without another connector
-measurement. LEFT now supplies `BatteryProcessor::new(100, 150)` to RMK; RIGHT
-retains `new(100, 130)`. With raw counts 3188–3192, the left's corrected nominal
+measurement. LEFT supplies `BatteryProcessor::new(100, 150)` to RMK; the approved
+RIGHT candidate uses the same provisional scale after tracing matching factory
+normalization on both halves. With raw counts 3188–3192, the left's corrected nominal
 voltage is 4.203–4.208 V and RMK's existing percentage calculation yields about
-100%. These are predictions until the installed image is queried.
+100%. The installed left reported100% through the read-only getter, passed exact
+application/padding/gap readback and preserved stored settings. Companion opened
+its recovery drive, and the getter succeeded again after normal startup. The
+right reported10% on its unchanged130/100 image after reconnecting; no right
+calibration hardware result is implied by that snapshot.
+
+The right trial candidate is built from its exact working source checkpoint
+`81052583` and RMK revision `c8e06c6`, changing only its scale. Its compiled storage
+schema remains `0x1f023543`. The current source tree also selects150/100 for future
+right builds, but a later RMK revision upgrade is a separate settings migration.
 
 The downloaded v2.4.5 factory release also normalizes its intermediate voltage
 to a 4.2 V full reference; at its default reference this corresponds to an
