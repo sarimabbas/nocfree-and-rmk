@@ -15,6 +15,7 @@ pub struct Observation {
     pub connected: bool,
     pub normal: bool,
     pub fresh_return: bool,
+    pub completion_allowed: bool,
     pub needs_power_on: bool,
 }
 enum Event {
@@ -29,7 +30,9 @@ struct Storage;
 fn common(event: &Event) -> Option<Outcome<State>> {
     match event {
         Event::Restart => Some(Transition(State::disconnect())),
-        Event::Observe(o) if o.fresh_return => Some(Transition(State::complete())),
+        Event::Observe(o) if o.fresh_return && o.completion_allowed => {
+            Some(Transition(State::complete()))
+        }
         #[cfg(test)]
         Event::Seed(p) => Some(Transition(match p {
             Phase::Disconnect => State::disconnect(),
@@ -99,7 +102,8 @@ impl Storage {
     #[state]
     fn reconnect(event: &Event) -> Outcome<State> {
         common(event).unwrap_or_else(|| match event {
-            Event::Observe(o) if o.normal => Transition(State::complete()),
+            Event::Observe(o) if o.normal && o.completion_allowed => Transition(State::complete()),
+            Event::Observe(o) if o.normal => Handled,
             Event::Observe(o) if o.connected => Transition(State::disconnect()),
             _ => Handled,
         })
@@ -107,20 +111,35 @@ impl Storage {
     #[state]
     fn complete(event: &Event) -> Outcome<State> {
         common(event).unwrap_or_else(|| match event {
-            Event::Observe(o) if !o.normal => Transition(State::disconnect()),
+            Event::Observe(o) if !o.normal || !o.completion_allowed => {
+                Transition(State::disconnect())
+            }
             _ => Handled,
         })
     }
 }
-pub struct ReturnFlow(StateMachine<Storage>);
+pub struct ReturnFlow {
+    machine: StateMachine<Storage>,
+    gate: crate::completion_gate::CompletionGate<()>,
+}
 impl Default for ReturnFlow {
     fn default() -> Self {
-        Self(Storage.state_machine())
+        Self {
+            machine: Storage.state_machine(),
+            gate: Default::default(),
+        }
     }
 }
 impl ReturnFlow {
+    pub(crate) fn completion_remaining(&self) -> Option<Duration> {
+        if matches!(self.phase(), None | Some(Phase::Complete)) {
+            None
+        } else {
+            self.gate.remaining(Instant::now())
+        }
+    }
     pub fn phase(&self) -> Option<Phase> {
-        match self.0.state() {
+        match self.machine.state() {
             State::Inactive {} => None,
             State::Disconnect {} => Some(Phase::Disconnect),
             State::OffWait { since } => Some(Phase::OffWait { since: *since }),
@@ -131,18 +150,24 @@ impl ReturnFlow {
         }
     }
     pub fn restart(&mut self) {
-        self.0.handle(&Event::Restart);
+        self.gate.reset();
+        self.machine.handle(&Event::Restart);
     }
-    pub fn observe(&mut self, observation: Observation) {
-        self.0.handle(&Event::Observe(observation));
+    pub fn observe(&mut self, mut observation: Observation) {
+        observation.completion_allowed = self.gate.ready(
+            (),
+            observation.normal && observation.completion_allowed,
+            observation.now,
+        );
+        self.machine.handle(&Event::Observe(observation));
     }
     pub fn confirm(&mut self, now: Instant) {
-        self.0.handle(&Event::Confirm(now));
+        self.machine.handle(&Event::Confirm(now));
     }
     #[cfg(test)]
     pub fn at(phase: Phase) -> Self {
         let mut flow = Self::default();
-        flow.0.handle(&Event::Seed(phase));
+        flow.machine.handle(&Event::Seed(phase));
         flow
     }
 }

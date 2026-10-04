@@ -146,7 +146,16 @@ impl Companion {
             );
             let mut battery_query: Option<BatteryQuery> = None;
             loop {
-                if bluetooth_checked.is_none_or(|t| t.elapsed() >= Duration::from_secs(10)) {
+                let bluetooth_interval = this
+                    .update(cx, |this, _| {
+                        if this.install_checks_active() {
+                            Duration::from_secs(3)
+                        } else {
+                            Duration::from_secs(10)
+                        }
+                    })
+                    .unwrap_or(Duration::from_secs(10));
+                if bluetooth_checked.is_none_or(|t| t.elapsed() >= bluetooth_interval) {
                     let connected = cx
                         .background_executor()
                         .spawn(async { device::bluetooth_links() })
@@ -222,12 +231,13 @@ impl Companion {
                                                         && d.name == "NocFree RMK Receiver"))
                                         })
                                     });
+                                let mode = this.fresh_left_mode();
                                 if this.firmware_page()
                                     && !this.navigation.setup()
                                     && !this.operation.busy()
                                     && let Some(journey) = this.firmware.as_mut()
                                 {
-                                    journey.observe(observation.clone());
+                                    journey.observe_with_mode(observation.clone(), mode);
                                 }
                                 this.advance_recovery_batch(&observation, peripheral_ticket, cx);
                                 let next = Home::observe(observation, UpdateAssessment::Unknown);
@@ -260,9 +270,6 @@ impl Companion {
                         let (_, key, _) = battery_query.take().expect("pending battery query");
                         if this
                             .update(cx, |this, cx| {
-                                if this.backup_state.active() {
-                                    return;
-                                }
                                 if key.0 != this.battery_generation
                                     || key.1
                                         != crate::device_status::battery_source(&this.device_key)
@@ -356,9 +363,13 @@ impl Companion {
                     version_checked = Some(Instant::now());
                 }
                 let battery_idle = this.update(cx, |this, _| {
-                    (!this.backup_state.active())
+                    !this.operation.busy()
                         && (this.navigation.setup()
                             || this.install_checks_active()
+                            || this.backup_state.state() == BackupState::Returning
+                            || this.firmware_view().is_some_and(|view| {
+                                !view.needs_recovery && !view.can_transfer && !view.complete
+                            })
                             || !matches!(
                                 this.navigation.page(),
                                 Page::Firmware | Page::Restore | Page::Pairing
@@ -427,10 +438,11 @@ impl Companion {
                         battery_checked = None;
                         version_checked = None;
                     }
+                    let mode = this.fresh_left_mode();
                     if !this.backup_state.recovery()
                         && let Some(session) = this.session.as_mut()
                     {
-                        session.observe(result);
+                        session.observe_with_mode(result, mode);
 
                         if let Some(error) = session.view().error.clone() {
                             this.backup_state
@@ -492,6 +504,13 @@ impl Companion {
             focus_handle: cx.focus_handle(),
             _poll: poll,
         }
+    }
+
+    fn fresh_left_mode(&self) -> Option<crate::device_status::Mode> {
+        self.left_mode.filter(|_| {
+            self.telemetry_seen
+                .is_some_and(|seen| seen.elapsed() <= Duration::from_secs(5))
+        })
     }
 
     fn backup_component(&self) -> Option<RecoveryRole> {
@@ -1192,6 +1211,17 @@ impl Companion {
             self.operation.error().cloned().unwrap_or_default()
         } else if self.operation.busy() {
             "Keep USB connected.".to_owned()
+        } else if self.backup_view().is_some_and(|view| view.needs_wired_ack) {
+            "Move the left switch to middle WIRED. Keep USB connected, then click Next.".to_owned()
+        } else if let Some(remaining) = self
+            .session
+            .as_ref()
+            .and_then(Journey::completion_remaining)
+        {
+            format!(
+                "Connection confirmed. Continuing in {} seconds…",
+                remaining.as_millis().div_ceil(1000).max(1)
+            )
         } else {
             self.backup_view()
                 .map_or_else(|| "Keep USB connected.".into(), |v| v.instruction)
@@ -1216,6 +1246,15 @@ impl Companion {
             Some(
                 button("retry-backup", "Next")
                     .on_click(cx.listener(|this, _, _, cx| this.retry(cx))),
+            )
+        } else if self.backup_view().is_some_and(|v| v.needs_wired_ack) && !self.operation.busy() {
+            Some(
+                button("confirm-backup-wired", "Next").on_click(cx.listener(|this, _, _, cx| {
+                    if let Some(journey) = this.session.as_mut() {
+                        journey.confirm_wired();
+                        cx.notify();
+                    }
+                })),
             )
         } else if self.backup_view().is_some_and(|v| v.needs_power_on_ack) && !self.operation.busy()
         {
@@ -1363,13 +1402,10 @@ impl Companion {
         let detached = observation.as_ref().is_ok_and(|snapshot| {
             snapshot.mounts.is_empty() && !snapshot.devices.iter().any(device::Device::bootloader)
         });
-        if !detached {
-            return;
-        }
         let next = self.peripherals.as_mut().and_then(|batch| {
             (observed_ticket == Some(batch.ticket())
                 && batch.waiting_detach()
-                && batch.detached(batch.ticket()))
+                && batch.detached_at(batch.ticket(), detached, Instant::now()))
             .then(|| batch.role())
             .flatten()
         });
@@ -1564,7 +1600,7 @@ impl Companion {
                 .count();
             let bt_seen = self
                 .bluetooth_seen
-                .is_some_and(|t| t.elapsed() < Duration::from_secs(30));
+                .is_some_and(|t| t.elapsed() < Duration::from_secs(5));
             install_journey::Evidence {
                 mode: None,
                 route: if self.factory_bluetooth_connected {
@@ -1795,7 +1831,11 @@ impl Companion {
         if self.operation.busy() {
             return;
         }
-        self.pairing = PairingJourney::new();
+        self.pairing = if self.install_pairing_active() {
+            PairingJourney::whole_keyboard()
+        } else {
+            PairingJourney::new()
+        };
         self.pairing_observation = None;
         self.pairing_generation += 1;
         let generation = self.pairing_generation;
@@ -1834,13 +1874,7 @@ impl Companion {
                             return;
                         }
                         this.pairing_observation = result.as_ref().ok().cloned();
-                        if !this.install_pairing_active()
-                            || result.is_err()
-                            || matches!(this.pairing.state(), PairingState::Pairing)
-                            || result.as_ref().is_ok_and(|o| o.dongle.is_some())
-                        {
-                            this.pairing.observe(result, Instant::now());
-                        }
+                        this.pairing.observe(result, Instant::now());
                         if this.install_pairing_active() {
                             if *this.pairing.state() == PairingState::Connected
                                 && this.pairing_observation.as_ref().is_some_and(|o| {
@@ -1992,6 +2026,17 @@ impl Companion {
             );
         if let Some(label) = waiting {
             body = body.child(waiting_indicator(label, cx));
+        }
+        if let Some(remaining) = self.pairing.completion_remaining() {
+            body = body.child(
+                div()
+                    .text_center()
+                    .text_color(cx.theme().muted_foreground)
+                    .child(format!(
+                        "Connection confirmed. Continuing in {} seconds…",
+                        remaining.as_millis().div_ceil(1000).max(1)
+                    )),
+            );
         }
         let generation = self.pairing_generation;
         let standalone = self.navigation.page() == Page::Pairing;
@@ -2285,10 +2330,24 @@ impl Companion {
             view.title.clone(),
             if self.operation.busy() {
                 "Keep USB connected. We’ll continue automatically.".to_owned()
+            } else if view.needs_wired_ack {
+                "Move the left switch to middle WIRED. Keep USB connected, then click Next."
+                    .to_owned()
             } else {
-                view.error
-                    .clone()
-                    .unwrap_or_else(|| view.instruction.clone())
+                self.firmware
+                    .as_ref()
+                    .and_then(FirmwareJourney::completion_remaining)
+                    .map(|remaining| {
+                        format!(
+                            "Connection confirmed. Continuing in {} seconds…",
+                            remaining.as_millis().div_ceil(1000).max(1)
+                        )
+                    })
+                    .unwrap_or_else(|| {
+                        view.error
+                            .clone()
+                            .unwrap_or_else(|| view.instruction.clone())
+                    })
             },
             None,
             cx,
@@ -2311,6 +2370,15 @@ impl Companion {
         } else if view.can_transfer {
             body = body.child(waiting_indicator("Installing firmware…", cx));
             None
+        } else if view.needs_wired_ack {
+            Some(
+                button("confirm-factory-wired", "Next").on_click(cx.listener(|this, _, _, cx| {
+                    if let Some(journey) = this.firmware.as_mut() {
+                        journey.confirm_wired();
+                        cx.notify();
+                    }
+                })),
+            )
         } else if view.needs_power_on_ack {
             Some(
                 button("right-switched-on", "Next").on_click(cx.listener(|this, _, _, cx| {

@@ -142,6 +142,7 @@ mod machine {
 /// The Statig state is authoritative; State only projects it for rendering.
 pub struct Machine {
     machine: statig::blocking::StateMachine<machine::Backup>,
+    completion: crate::completion_gate::CompletionGate<(State, journey::State)>,
 }
 impl Default for Machine {
     fn default() -> Self {
@@ -153,6 +154,7 @@ impl Machine {
         use statig::prelude::IntoStateMachineExt;
         Self {
             machine: machine::Backup.state_machine(),
+            completion: Default::default(),
         }
     }
     pub fn state(&self) -> State {
@@ -169,6 +171,20 @@ impl Machine {
         }
     }
     pub fn transition(&mut self, event: Event) -> bool {
+        self.transition_at(event, std::time::Instant::now())
+    }
+    fn transition_at(&mut self, event: Event, now: std::time::Instant) -> bool {
+        let source = self.state();
+        if let Event::Observed(target) = event {
+            // Complete already contains the child's continuously checked
+            // five-second return. Do not delay a frozen terminal result again.
+            let completed = matches!((source, target), (State::Saving, journey::State::Returning));
+            if !self.completion.ready((source, target), completed, now) && completed {
+                return false;
+            }
+        } else {
+            self.completion.reset();
+        }
         let mut accepted = false;
         self.machine.handle_with_context(&event, &mut accepted);
         accepted
@@ -191,115 +207,171 @@ impl Machine {
 mod tests {
     use super::*;
     #[test]
+    fn completion_waits_five_seconds_and_lost_readiness_resets_it() {
+        use std::time::{Duration, Instant};
+        let mut flow = Machine::new();
+        let now = Instant::now();
+        flow.transition_at(Event::Select, now);
+        flow.transition_at(Event::SaveStarted, now);
+        let completed = Event::Observed(journey::State::Returning);
+        assert!(!flow.transition_at(completed, now));
+        assert!(!flow.transition_at(completed, now + Duration::from_secs(4)));
+        assert_eq!(flow.state(), State::Saving);
+        flow.transition_at(
+            Event::Observed(journey::State::Guiding),
+            now + Duration::from_secs(5),
+        );
+        flow.transition_at(Event::SaveStarted, now + Duration::from_secs(5));
+        assert!(!flow.transition_at(completed, now + Duration::from_secs(6)));
+        assert!(!flow.transition_at(completed, now + Duration::from_secs(10)));
+        assert!(flow.transition_at(completed, now + Duration::from_secs(11)));
+        assert_eq!(flow.state(), State::Returning);
+        assert!(flow.transition_at(
+            Event::Observed(journey::State::Complete),
+            now + Duration::from_secs(11)
+        ));
+        assert_eq!(flow.state(), State::Complete);
+    }
+    pub(super) fn settled(machine: &mut Machine, event: Event) -> bool {
+        let now = std::time::Instant::now();
+        machine.transition_at(event, now)
+            || machine.transition_at(
+                event,
+                now + crate::completion_gate::DEFAULT_COMPLETION_DELAY,
+            )
+    }
+    #[test]
     fn cancel_recovery_then_ignore_late_result_and_start_fresh() {
         let mut state = Machine::new();
-        assert!(state.transition(Event::Select));
-        assert!(state.transition(Event::RecoveryStarted));
-        assert!(state.transition(Event::Pause));
-        assert!(!state.transition(Event::RecoveryFinished(true)));
+        assert!(settled(&mut state, Event::Select));
+        assert!(settled(&mut state, Event::RecoveryStarted));
+        assert!(settled(&mut state, Event::Pause));
+        assert!(!settled(&mut state, Event::RecoveryFinished(true)));
         assert_eq!(state.state(), State::Paused);
-        assert!(state.transition(Event::Select));
-        assert!(state.transition(Event::RecoveryStarted));
-        assert!(state.transition(Event::RecoveryFinished(true)));
-        assert!(state.transition(Event::SaveStarted));
-        assert!(!state.transition(Event::Pause));
-        assert!(state.transition(Event::Observed(journey::State::Returning)));
-        assert!(state.transition(Event::Observed(journey::State::Complete)));
-        assert!(state.transition(Event::Finish));
+        assert!(settled(&mut state, Event::Select));
+        assert!(settled(&mut state, Event::RecoveryStarted));
+        assert!(settled(&mut state, Event::RecoveryFinished(true)));
+        assert!(settled(&mut state, Event::SaveStarted));
+        assert!(!settled(&mut state, Event::Pause));
+        assert!(settled(
+            &mut state,
+            Event::Observed(journey::State::Returning)
+        ));
+        assert!(settled(
+            &mut state,
+            Event::Observed(journey::State::Complete)
+        ));
+        assert!(settled(&mut state, Event::Finish));
         assert_eq!(state.state(), State::Choose);
     }
     #[test]
     fn duplicate_callbacks_and_invalid_events_do_not_change_the_machine() {
         let mut flow = Machine::new();
-        assert!(!flow.transition(Event::RecoveryFinished(true)));
-        assert!(!flow.transition(Event::SaveStarted));
+        assert!(!settled(&mut flow, Event::RecoveryFinished(true)));
+        assert!(!settled(&mut flow, Event::SaveStarted));
         assert_eq!(flow.state(), State::Choose);
-        assert!(flow.transition(Event::Select));
-        assert!(flow.transition(Event::RecoveryStarted));
-        assert!(flow.transition(Event::RecoveryFinished(true)));
-        assert!(!flow.transition(Event::RecoveryFinished(false)));
+        assert!(settled(&mut flow, Event::Select));
+        assert!(settled(&mut flow, Event::RecoveryStarted));
+        assert!(settled(&mut flow, Event::RecoveryFinished(true)));
+        assert!(!settled(&mut flow, Event::RecoveryFinished(false)));
         assert_eq!(flow.state(), State::Guiding);
-        assert!(flow.transition(Event::SaveStarted));
-        assert!(!flow.transition(Event::Select));
-        assert!(!flow.transition(Event::Pause));
-        assert!(!flow.transition(Event::SaveStarted));
+        assert!(settled(&mut flow, Event::SaveStarted));
+        assert!(!settled(&mut flow, Event::Select));
+        assert!(!settled(&mut flow, Event::Pause));
+        assert!(!settled(&mut flow, Event::SaveStarted));
         assert_eq!(flow.state(), State::Saving);
-        assert!(flow.transition(Event::Observed(journey::State::Complete)));
-        assert!(!flow.transition(Event::Observed(journey::State::Failed)));
+        assert!(settled(
+            &mut flow,
+            Event::Observed(journey::State::Complete)
+        ));
+        assert!(!settled(&mut flow, Event::Observed(journey::State::Failed)));
         assert_eq!(flow.state(), State::Complete);
     }
     #[test]
     fn recovery_and_save_errors_have_distinct_retry_paths() {
         let mut state = Machine::new();
-        assert!(state.transition(Event::Select));
-        assert!(state.transition(Event::RecoveryStarted));
-        assert!(state.transition(Event::RecoveryFinished(false)));
+        assert!(settled(&mut state, Event::Select));
+        assert!(settled(&mut state, Event::RecoveryStarted));
+        assert!(settled(&mut state, Event::RecoveryFinished(false)));
         assert!(state.recovery());
-        assert!(state.transition(Event::Retry));
-        assert!(state.transition(Event::RecoveryFinished(true)));
-        assert!(state.transition(Event::SaveStarted));
-        assert!(state.transition(Event::Observed(journey::State::Failed)));
+        assert!(settled(&mut state, Event::Retry));
+        assert!(settled(&mut state, Event::RecoveryFinished(true)));
+        assert!(settled(&mut state, Event::SaveStarted));
+        assert!(settled(&mut state, Event::Observed(journey::State::Failed)));
         assert!(!state.recovery());
-        assert!(state.transition(Event::Retry));
+        assert!(settled(&mut state, Event::Retry));
         assert_eq!(state.state(), State::Guiding);
     }
 }
 
 #[cfg(test)]
 mod selection_tests {
+    use super::tests::settled;
     use super::*;
     #[test]
     fn choose_again_after_completion_but_not_while_saving_or_recovering() {
         for source in [State::Choose, State::Paused, State::Complete] {
             let mut state = Machine::new();
             if source != State::Choose {
-                assert!(state.transition(Event::Select));
+                assert!(settled(&mut state, Event::Select));
                 match source {
                     State::Paused => {
-                        assert!(state.transition(Event::Pause));
+                        assert!(settled(&mut state, Event::Pause));
                     }
                     State::Complete => {
-                        assert!(state.transition(Event::Observed(journey::State::Complete)));
+                        assert!(settled(
+                            &mut state,
+                            Event::Observed(journey::State::Complete)
+                        ));
                     }
                     State::Saving => {
-                        assert!(state.transition(Event::SaveStarted));
+                        assert!(settled(&mut state, Event::SaveStarted));
                     }
                     State::Recovering => {
-                        assert!(state.transition(Event::RecoveryStarted));
+                        assert!(settled(&mut state, Event::RecoveryStarted));
                     }
                     State::Returning => {
-                        assert!(state.transition(Event::Observed(journey::State::Returning)));
+                        assert!(settled(
+                            &mut state,
+                            Event::Observed(journey::State::Returning)
+                        ));
                     }
                     _ => unreachable!(),
                 }
             }
-            assert!(state.transition(Event::Select));
+            assert!(settled(&mut state, Event::Select));
             assert_eq!(state.state(), State::Guiding);
         }
         for source in [State::Saving, State::Recovering, State::Returning] {
             let mut state = Machine::new();
             if source != State::Choose {
-                assert!(state.transition(Event::Select));
+                assert!(settled(&mut state, Event::Select));
                 match source {
                     State::Paused => {
-                        assert!(state.transition(Event::Pause));
+                        assert!(settled(&mut state, Event::Pause));
                     }
                     State::Complete => {
-                        assert!(state.transition(Event::Observed(journey::State::Complete)));
+                        assert!(settled(
+                            &mut state,
+                            Event::Observed(journey::State::Complete)
+                        ));
                     }
                     State::Saving => {
-                        assert!(state.transition(Event::SaveStarted));
+                        assert!(settled(&mut state, Event::SaveStarted));
                     }
                     State::Recovering => {
-                        assert!(state.transition(Event::RecoveryStarted));
+                        assert!(settled(&mut state, Event::RecoveryStarted));
                     }
                     State::Returning => {
-                        assert!(state.transition(Event::Observed(journey::State::Returning)));
+                        assert!(settled(
+                            &mut state,
+                            Event::Observed(journey::State::Returning)
+                        ));
                     }
                     _ => unreachable!(),
                 }
             }
-            assert!(!state.transition(Event::Select));
+            assert!(!settled(&mut state, Event::Select));
             assert_eq!(state.state(), source);
         }
     }

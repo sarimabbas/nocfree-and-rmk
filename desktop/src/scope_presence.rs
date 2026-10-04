@@ -2,6 +2,7 @@
 use crate::{device_status::UsbKey, runtime_recovery::Role};
 use statig::prelude::*;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Instant;
 
 fn shared(entry: &(u64, u64, u64, String)) -> bool {
     crate::device::factory_keyboard_identity(entry.1, entry.2, &entry.3)
@@ -34,19 +35,21 @@ pub(crate) enum Identification {
 
 mod identification_machine {
     use super::*;
+    type Candidate = (u64, u64, u64, String);
     pub struct Data {
         pub bindings: [Option<u64>; 3],
         pub identities: [Option<(u64, u64, String)>; 3],
         pub ticket: u64,
+        pub completion: crate::completion_gate::CompletionGate<(Role, u64, Option<Candidate>)>,
     }
     pub enum Event<'a> {
         Start(Role),
-        Observe(u64, &'a UsbKey, bool),
+        Observe(u64, &'a UsbKey, bool, Instant),
         Cancel,
     }
     impl Data {
         fn fresh(&mut self, event: &Event<'_>) -> Option<Vec<u64>> {
-            let Event::Observe(ticket, devices, true) = event else {
+            let Event::Observe(ticket, devices, true, _) = event else {
                 return None;
             };
             if *ticket != self.ticket {
@@ -91,9 +94,12 @@ mod identification_machine {
         }
         #[state(superstate = "root")]
         fn disconnect(&mut self, role: &mut Role, event: &Event<'_>) -> Outcome<State> {
-            if self
+            let ready = self
                 .fresh(event)
-                .is_some_and(|unassigned| unassigned.is_empty())
+                .is_some_and(|unassigned| unassigned.is_empty());
+            if let Event::Observe(ticket, _, _, now) = event
+                && *ticket == self.ticket
+                && self.completion.ready((*role, *ticket, None), ready, *now)
             {
                 self.ticket = generation();
                 Transition(State::connect(*role))
@@ -103,10 +109,11 @@ mod identification_machine {
         }
         #[state(superstate = "root")]
         fn connect(&mut self, role: &mut Role, event: &Event<'_>) -> Outcome<State> {
+            let mut candidate = None;
             if let Some(unassigned) = self.fresh(event)
                 && let [location] = unassigned.as_slice()
             {
-                let Event::Observe(_, devices, _) = event else {
+                let Event::Observe(_, devices, _, _) = event else {
                     unreachable!()
                 };
                 if devices.iter().filter(|entry| entry.0 == *location).count() == 1
@@ -115,15 +122,26 @@ mod identification_machine {
                             .iter()
                             .any(|entry| entry.0 == *location && bootloader(entry)))
                 {
-                    self.bindings[index(*role)] = Some(*location);
-                    let entry = devices
-                        .iter()
-                        .find(|entry| entry.0 == *location)
-                        .expect("Unique identified endpoint");
-                    self.identities[index(*role)] = Some((entry.1, entry.2, entry.3.clone()));
-                    self.ticket = generation();
-                    return Transition(State::complete(*role));
+                    candidate = devices.iter().find(|entry| entry.0 == *location).cloned();
                 }
+            }
+            if let Event::Observe(ticket, devices, _, now) = event
+                && *ticket == self.ticket
+                && self.completion.ready(
+                    (*role, *ticket, candidate.clone()),
+                    candidate.is_some(),
+                    *now,
+                )
+                && let Some((location, _, _, _)) = candidate
+            {
+                self.bindings[index(*role)] = Some(location);
+                let entry = devices
+                    .iter()
+                    .find(|entry| entry.0 == location)
+                    .expect("Unique identified endpoint");
+                self.identities[index(*role)] = Some((entry.1, entry.2, entry.3.clone()));
+                self.ticket = generation();
+                return Transition(State::complete(*role));
             }
             Super
         }
@@ -146,12 +164,14 @@ mod identification_machine {
         fn root(&mut self, event: &Event<'_>) -> Outcome<State> {
             match event {
                 Event::Start(role) => {
+                    self.completion.reset();
                     self.bindings[index(*role)] = None;
                     self.identities[index(*role)] = None;
                     self.ticket = generation();
                     Transition(State::disconnect(*role))
                 }
                 Event::Cancel => {
+                    self.completion.reset();
                     self.ticket = generation();
                     Transition(State::cancelled())
                 }
@@ -170,6 +190,7 @@ impl Default for Identifier {
                 bindings: [None; 3],
                 identities: [None, None, None],
                 ticket: generation(),
+                completion: Default::default(),
             }
             .state_machine(),
         )
@@ -183,8 +204,11 @@ impl Identifier {
         self.0.inner().ticket
     }
     pub(crate) fn observe(&mut self, ticket: u64, devices: &UsbKey, fresh: bool) {
+        self.observe_at(ticket, devices, fresh, Instant::now());
+    }
+    pub(crate) fn observe_at(&mut self, ticket: u64, devices: &UsbKey, fresh: bool, now: Instant) {
         self.0.handle(&identification_machine::Event::Observe(
-            ticket, devices, fresh,
+            ticket, devices, fresh, now,
         ));
     }
     pub(crate) fn cancel(&mut self) {
@@ -452,11 +476,74 @@ mod tests {
         vec![(location, 0x2886, 0x8029, "NocFree & ANSI".into())]
     }
 
+    impl Identifier {
+        fn observe_stable(&mut self, ticket: u64, devices: &UsbKey, fresh: bool) {
+            let now = Instant::now();
+            self.observe_at(ticket, devices, fresh, now);
+            self.observe_at(
+                ticket,
+                devices,
+                fresh,
+                now + crate::completion_gate::DEFAULT_COMPLETION_DELAY,
+            );
+        }
+    }
+
+    #[test]
+    fn identification_waits_for_stable_fresh_evidence_and_resets_on_loss() {
+        let mut machine = Identifier::default();
+        machine.start(Role::Left);
+        let now = Instant::now();
+        let ticket = machine.ticket();
+        machine.observe_at(ticket, &vec![], true, now);
+        machine.observe_at(
+            ticket,
+            &vec![],
+            true,
+            now + std::time::Duration::from_secs(4),
+        );
+        assert_eq!(machine.state(), Identification::Disconnect(Role::Left));
+        machine.observe_at(
+            ticket,
+            &vec![],
+            true,
+            now + std::time::Duration::from_secs(5),
+        );
+        assert_eq!(machine.state(), Identification::Connect(Role::Left));
+        let ticket = machine.ticket();
+        machine.observe_at(
+            ticket,
+            &factory(9),
+            true,
+            now + std::time::Duration::from_secs(6),
+        );
+        machine.observe_at(
+            ticket,
+            &factory(9),
+            false,
+            now + std::time::Duration::from_secs(10),
+        );
+        machine.observe_at(
+            ticket,
+            &factory(9),
+            true,
+            now + std::time::Duration::from_secs(11),
+        );
+        assert_eq!(machine.bindings(), [None; 3]);
+        machine.observe_at(
+            ticket,
+            &factory(9),
+            true,
+            now + std::time::Duration::from_secs(16),
+        );
+        assert_eq!(machine.state(), Identification::Complete(Role::Left));
+    }
+
     fn identify(machine: &mut Identifier, role: Role, location: u64) {
         machine.start(role);
-        machine.observe(machine.ticket(), &vec![], true);
+        machine.observe_stable(machine.ticket(), &vec![], true);
         assert_eq!(machine.state(), Identification::Connect(role));
-        machine.observe(machine.ticket(), &factory(location), true);
+        machine.observe_stable(machine.ticket(), &factory(location), true);
         assert_eq!(machine.state(), Identification::Complete(role));
     }
 
@@ -464,15 +551,15 @@ mod tests {
     fn factory_identification_requires_disconnect_then_isolated_reconnect() {
         let mut machine = Identifier::default();
         machine.start(Role::Left);
-        machine.observe(machine.ticket(), &factory(9), true);
+        machine.observe_stable(machine.ticket(), &factory(9), true);
         assert_eq!(machine.state(), Identification::Disconnect(Role::Left));
-        machine.observe(machine.ticket(), &vec![], true);
+        machine.observe_stable(machine.ticket(), &vec![], true);
         assert_eq!(machine.state(), Identification::Connect(Role::Left));
         let mut two = factory(9);
         two.extend(factory(10));
-        machine.observe(machine.ticket(), &two, true);
+        machine.observe_stable(machine.ticket(), &two, true);
         assert_eq!(machine.state(), Identification::Connect(Role::Left));
-        machine.observe(machine.ticket(), &factory(9), true);
+        machine.observe_stable(machine.ticket(), &factory(9), true);
         assert_eq!(machine.bindings(), [Some(9), None, None]);
         assert_eq!(
             super::derive(&factory(9), [None; 3], true, machine.bindings())[0],
@@ -485,16 +572,16 @@ mod tests {
         let mut machine = Identifier::default();
         let stale = machine.ticket();
         machine.start(Role::Left);
-        machine.observe(stale, &vec![], true);
+        machine.observe_stable(stale, &vec![], true);
         assert_eq!(machine.state(), Identification::Disconnect(Role::Left));
-        machine.observe(machine.ticket(), &vec![], false);
+        machine.observe_stable(machine.ticket(), &vec![], false);
         assert_eq!(machine.state(), Identification::Disconnect(Role::Left));
         let before_connect = machine.ticket();
-        machine.observe(before_connect, &vec![], true);
-        machine.observe(before_connect, &factory(9), true);
+        machine.observe_stable(before_connect, &vec![], true);
+        machine.observe_stable(before_connect, &factory(9), true);
         assert_eq!(machine.bindings(), [None; 3]);
         machine.cancel();
-        machine.observe(before_connect, &factory(9), true);
+        machine.observe_stable(before_connect, &factory(9), true);
         assert_eq!(machine.state(), Identification::Cancelled);
         assert_eq!(machine.bindings(), [None; 3]);
     }
@@ -504,11 +591,11 @@ mod tests {
         let mut machine = Identifier::default();
         identify(&mut machine, Role::Left, 9);
         machine.start(Role::Receiver);
-        machine.observe(machine.ticket(), &factory(9), true);
+        machine.observe_stable(machine.ticket(), &factory(9), true);
         assert_eq!(machine.state(), Identification::Connect(Role::Receiver));
         let mut both = factory(9);
         both.extend(factory(10));
-        machine.observe(machine.ticket(), &both, true);
+        machine.observe_stable(machine.ticket(), &both, true);
         assert_eq!(machine.bindings(), [Some(9), None, Some(10)]);
         assert_eq!(
             super::derive(&both, [None; 3], true, machine.bindings()),
@@ -524,17 +611,17 @@ mod tests {
     fn bindings_expire_on_disconnect_or_reused_location() {
         let mut machine = Identifier::default();
         identify(&mut machine, Role::Left, 9);
-        machine.observe(machine.ticket(), &vec![], false);
+        machine.observe_stable(machine.ticket(), &vec![], false);
         assert_eq!(machine.bindings()[0], Some(9));
-        machine.observe(machine.ticket(), &vec![], true);
+        machine.observe_stable(machine.ticket(), &vec![], true);
         assert_eq!(machine.bindings()[0], None);
-        machine.observe(machine.ticket(), &factory(9), true);
-        assert_eq!(machine.bindings()[0], None);
-        identify(&mut machine, Role::Left, 9);
-        machine.observe(machine.ticket(), &vec![(9, 1, 2, "Other".into())], true);
+        machine.observe_stable(machine.ticket(), &factory(9), true);
         assert_eq!(machine.bindings()[0], None);
         identify(&mut machine, Role::Left, 9);
-        machine.observe(
+        machine.observe_stable(machine.ticket(), &vec![(9, 1, 2, "Other".into())], true);
+        assert_eq!(machine.bindings()[0], None);
+        identify(&mut machine, Role::Left, 9);
+        machine.observe_stable(
             machine.ticket(),
             &vec![(9, 0x239a, 0x0029, "NocFree &".into())],
             true,
@@ -546,14 +633,14 @@ mod tests {
     fn factory_identification_never_assigns_right_or_colliding_location() {
         let mut machine = Identifier::default();
         machine.start(Role::Right);
-        machine.observe(machine.ticket(), &vec![], true);
-        machine.observe(machine.ticket(), &factory(9), true);
+        machine.observe_stable(machine.ticket(), &vec![], true);
+        machine.observe_stable(machine.ticket(), &factory(9), true);
         assert_eq!(machine.bindings(), [None; 3]);
         machine.start(Role::Receiver);
-        machine.observe(machine.ticket(), &vec![], true);
+        machine.observe_stable(machine.ticket(), &vec![], true);
         let mut collision = factory(9);
         collision.push((9, 1, 2, "Other".into()));
-        machine.observe(machine.ticket(), &collision, true);
+        machine.observe_stable(machine.ticket(), &collision, true);
         assert_eq!(machine.bindings(), [None; 3]);
     }
 
@@ -563,10 +650,10 @@ mod tests {
             let mut machine = Identifier::default();
             let recovery = vec![(9, 0x239a, 0x0029, "NocFree &".into())];
             machine.start(role);
-            machine.observe(machine.ticket(), &recovery, true);
+            machine.observe_stable(machine.ticket(), &recovery, true);
             assert_eq!(machine.state(), Identification::Disconnect(role));
-            machine.observe(machine.ticket(), &vec![], true);
-            machine.observe(machine.ticket(), &recovery, true);
+            machine.observe_stable(machine.ticket(), &vec![], true);
+            machine.observe_stable(machine.ticket(), &recovery, true);
             assert_eq!(machine.state(), Identification::Complete(role));
             let present = super::derive(&recovery, [None; 3], true, machine.bindings());
             assert_eq!(present[index(role)], Presence::Connected);
@@ -575,7 +662,7 @@ mod tests {
                 super::derive(&recovery, machine.bindings(), true, machine.bindings()),
                 present
             );
-            machine.observe(machine.ticket(), &vec![], true);
+            machine.observe_stable(machine.ticket(), &vec![], true);
             assert_eq!(machine.bindings(), [None; 3]);
         }
     }

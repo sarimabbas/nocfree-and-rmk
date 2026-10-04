@@ -48,12 +48,16 @@ fn run_with(
         let mut requested_at=None;
         let mut mounting_at=None;
         let mut inventory = DiscoveryPoll::default();
+        let mut entry_gate = crate::completion_gate::CompletionGate::default();
+        let mut completion_gate = crate::completion_gate::CompletionGate::default();
+        let mut ready_drive = false;
+        let mut archive_adopted = false;
         // Wait for the user's physical action without expiring while they read.
         // Once a matching runtime device appears, dispatch exactly once; the armed request
         // and subsequent drive observation retain their finite deadlines.
         loop {
             if cancelled.load(Ordering::Relaxed) { return Err("Recovery cancelled.".into()); }
-            if drive_deadline_passed(requested_at.or(mounting_at), Instant::now()) {
+            if !ready_drive && drive_deadline_passed(requested_at.or(mounting_at), Instant::now()) {
                 return Err("The recovery drive didn’t appear. Check its power and USB connection, then try again.".into());
             }
             if requested_at.is_none() && !matches!(last_procedure, Some(Procedure::FactoryLeft | Procedure::FactoryRight | Procedure::FactoryReceiver)) {
@@ -62,6 +66,10 @@ fn run_with(
                 let mut targets=devices.filter(|d| runtime_matches(role,d));
                 if let Some(target)=targets.next() {
                     if targets.next().is_some() { return Err("Connect only one of the selected component.".into()); }
+                    if !entry_gate.ready(target.id(), true, Instant::now()) {
+                        tokio::time::sleep(Duration::from_millis(100)).await;
+                        continue;
+                    }
                     let request=ArmedRequest::arm(role,&target).map_err(str::to_owned)?;
                     if cancelled.load(Ordering::Relaxed) { return Err("Recovery cancelled.".into()); }
                     #[cfg(target_os="macos")]
@@ -74,7 +82,7 @@ fn run_with(
                         Err(crate::runtime_recovery::DispatchError::NotSent(message)) => return Err(message.into()),
                         Ok(()) | Err(crate::runtime_recovery::DispatchError::OutcomeUnknown(_)) => {},
                     }
-                }
+                } else { entry_gate.reset(); }
             }
             if cancelled.load(Ordering::Relaxed) { return Err("Recovery cancelled.".into()); }
             let Some(snapshot) = inventory.poll(requested_at).await else {
@@ -82,17 +90,29 @@ fn run_with(
                 continue;
             };
             let snapshot = snapshot?;
+            let completion_key = if snapshot.mounts.len() == 1 {
+                let boot: Vec<_> = snapshot.devices.iter().filter(|device| device.bootloader()).collect();
+                (boot.len() == 1).then(|| (boot[0].location, snapshot.mounts[0].clone()))
+            } else { None };
+            ready_drive = false;
             if cancelled.load(Ordering::Relaxed) { return Err("Recovery cancelled.".into()); }
-            if archive_only && requested_location.is_none() && snapshot.devices.iter().any(|d|d.bootloader()) {
+            if archive_only && requested_location.is_none() && (archive_adopted || snapshot.devices.iter().any(|d|d.bootloader())) {
                 mounting_at.get_or_insert_with(Instant::now);
                 let known=crate::status_cache::recovery_locations();
                 if recovery_part_conflicts(role,&known,&snapshot) {
                     return Err("The recovery drive belongs to another part. Select that part to back it up.".into());
                 }
-                if session.adopt_archive_drive(snapshot.clone())? {
+                if archive_adopted { session.observe(Ok(snapshot.clone())); }
+                else { archive_adopted = session.adopt_archive_drive(snapshot.clone())?; }
+                ready_drive = session.view().can_save;
+                if let Some(key) = completion_key.clone()
+                    && completion_gate.ready(key, ready_drive, Instant::now()) {
                     if cancelled.load(Ordering::Relaxed) { return Err("Recovery cancelled.".into()); }
                     return Ok(session);
                 }
+                if !ready_drive || completion_key.is_none() { completion_gate.reset(); }
+                tokio::time::sleep(Duration::from_millis(100)).await;
+                continue;
             }
             if cancelled.load(Ordering::Relaxed) { return Err("Recovery cancelled.".into()); }
             if let Some(location)=requested_location {
@@ -103,7 +123,7 @@ fn run_with(
                     session.bind_recovery(location);
                     session.observe(Ok(snapshot));
                     if let Some(error) = session.view().error { return Err(error); }
-                    if session.view().can_save { return Ok(session); }
+                    ready_drive = session.view().can_save;
                 }
             } else {
                 let (procedure, ready) = factory_observation(&mut session, role, &mut disconnected, snapshot)?;
@@ -111,8 +131,11 @@ fn run_with(
                     let _ = progress.send(procedure);
                     last_procedure = Some(procedure);
                 }
-                if ready { return Ok(session); }
+                ready_drive = ready;
             }
+            if let Some(key) = completion_key {
+                if completion_gate.ready(key, ready_drive, Instant::now()) { return Ok(session); }
+            } else { completion_gate.reset(); }
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
     });

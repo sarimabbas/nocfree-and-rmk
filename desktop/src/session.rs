@@ -22,6 +22,7 @@ pub struct View {
     pub can_save: bool,
     pub return_complete: bool,
     pub needs_power_on_ack: bool,
+    pub needs_wired_ack: bool,
     pub error: Option<String>,
     pub backup_path: Option<PathBuf>,
 }
@@ -45,6 +46,8 @@ pub struct Session {
     backup_path: Option<PathBuf>,
     return_flow: ReturnFlow,
     archived_location: Option<u64>,
+    left_mode: Option<crate::device_status::Mode>,
+    wired_ack: bool,
 }
 impl Session {
     pub fn new() -> Self {
@@ -129,6 +132,7 @@ impl Session {
             self.connection_present = false;
             self.problem = None;
             self.return_flow.restart();
+            self.wired_ack = false;
             self.status = "Checking the saved component before restarting its return steps.".into();
         } else if let Some(role) = self.role {
             self.select(role);
@@ -137,9 +141,28 @@ impl Session {
     pub fn observe(&mut self, observation: Result<Snapshot, String>) {
         self.observe_at(observation, Instant::now());
     }
+    pub(crate) fn observe_with_mode(
+        &mut self,
+        observation: Result<Snapshot, String>,
+        mode: Option<crate::device_status::Mode>,
+    ) {
+        self.observe_mode_at(observation, mode, Instant::now());
+    }
     fn observe_at(&mut self, observation: Result<Snapshot, String>, now: Instant) {
+        self.observe_mode_at(observation, None, now);
+    }
+    fn observe_mode_at(
+        &mut self,
+        observation: Result<Snapshot, String>,
+        mode: Option<crate::device_status::Mode>,
+        now: Instant,
+    ) {
+        self.left_mode = mode;
         let fresh = observation.is_ok();
         self.observe_snapshot(observation);
+        if !fresh || !self.normal_present {
+            self.wired_ack = false;
+        }
         if fresh && self.problem.is_none() {
             self.advance_return(now);
         } else if self.return_flow.phase().is_some() {
@@ -275,8 +298,27 @@ impl Session {
             connected: self.connection_present,
             normal: self.normal_present,
             fresh_return,
+            completion_allowed: self.role != Some(Role::Left)
+                || if self.rmk_left {
+                    self.left_mode == Some(crate::device_status::Mode::Wired)
+                } else {
+                    self.wired_ack
+                },
             needs_power_on: self.role == Some(Role::Right) || self.legacy_left_start,
         });
+    }
+    pub(crate) fn completion_remaining(&self) -> Option<Duration> {
+        self.return_flow.completion_remaining()
+    }
+    pub fn confirm_wired(&mut self) {
+        if self.role == Some(Role::Left)
+            && !self.rmk_left
+            && self.backup_path.is_some()
+            && self.normal_present
+            && self.problem.is_none()
+        {
+            self.wired_ack = true;
+        }
     }
     pub fn confirm_power_on(&mut self) {
         self.confirm_power_on_at(Instant::now());
@@ -452,6 +494,12 @@ impl Session {
             return_complete: matches!(self.return_flow.phase(), Some(ReturnPhase::Complete))
                 && self.normal_present
                 && self.problem.is_none(),
+            needs_wired_ack: self.role == Some(Role::Left)
+                && !self.rmk_left
+                && self.backup_path.is_some()
+                && self.normal_present
+                && !self.wired_ack
+                && self.problem.is_none(),
             needs_power_on_ack: matches!(self.return_flow.phase(), Some(ReturnPhase::PowerOn))
                 && !self.connection_present
                 && self.problem.is_none(),
@@ -532,6 +580,7 @@ impl Session {
                 });
             self.archived_location = location;
             self.return_flow.restart();
+            self.wired_ack = false;
             self.status = "Private readback saved and hashed. No firmware was written.".into();
             Ok(folder)
         })();
@@ -690,7 +739,7 @@ mod tests {
         session
     }
     #[test]
-    fn modern_return_uses_same_port_normal_observation_not_a_polling_countdown() {
+    fn modern_return_requires_same_port_and_five_seconds_of_ready_evidence() {
         let now = Instant::now();
         for elapsed in [
             Duration::from_millis(4900),
@@ -704,7 +753,7 @@ mod tests {
             session.observe_at(Ok(boot(true)), now);
             assert!(!session.view().return_complete);
             session.observe_at(Ok(Snapshot::default()), now + Duration::from_millis(100));
-            session.observe_at(Ok(normal()), now + elapsed);
+            complete_return(&mut session, normal(), now + elapsed, None);
             assert!(
                 session.view().return_complete,
                 "normal return at {elapsed:?} must complete"
@@ -740,7 +789,7 @@ mod tests {
             session
         };
         let mut session = make();
-        session.observe_at(Ok(normal()), now);
+        complete_return(&mut session, normal(), now, None);
         assert!(session.view().return_complete);
         let mut session = make();
         let mut wrong = normal();
@@ -801,7 +850,7 @@ mod tests {
         receiver.devices[0].vendor = 0x4c4b;
         receiver.devices[0].product = 0x4644;
         receiver.devices[0].name = "NocFree RMK Receiver".into();
-        session.observe(Ok(receiver));
+        complete_return(&mut session, receiver, Instant::now(), None);
         assert!(session.view().return_complete);
         assert!(session.recovery_binding().is_err());
         fs::remove_dir_all(root).unwrap();
@@ -997,7 +1046,7 @@ mod tests {
         assert!(!s.view().return_complete);
         s.observe_at(Ok(Snapshot::default()), now + Duration::from_secs(1));
         s.observe_at(Ok(Snapshot::default()), now + Duration::from_secs(6));
-        s.observe_at(Ok(normal()), now + Duration::from_secs(7));
+        complete_return(&mut s, normal(), now + Duration::from_secs(7), None);
         assert!(s.view().return_complete);
         assert!(!s.view().can_save);
         assert_eq!(s.view().backup_path.as_ref(), Some(&path));
@@ -1008,6 +1057,27 @@ mod tests {
         assert_eq!(journal["planned_role"], "Left");
         assert!(journal.get("role").is_none());
         fs::remove_dir_all(root).unwrap();
+    }
+    fn complete_return(
+        session: &mut Session,
+        snapshot: Snapshot,
+        now: Instant,
+        mode: Option<crate::device_status::Mode>,
+    ) {
+        session.observe_mode_at(Ok(snapshot.clone()), mode, now);
+        assert!(
+            !session.view().return_complete,
+            "a normal descriptor alone must not finish immediately"
+        );
+        if session.view().needs_wired_ack {
+            session.confirm_wired();
+        }
+        session.observe_mode_at(Ok(snapshot.clone()), mode, now);
+        session.observe_mode_at(
+            Ok(snapshot),
+            mode,
+            now + crate::completion_gate::DEFAULT_COMPLETION_DELAY,
+        );
     }
     fn saved_session(role: Role) -> Session {
         let mut s = identified();
@@ -1071,9 +1141,8 @@ mod tests {
         let mut session = saved_session(Role::Left);
         session.observe_at(Ok(Snapshot::default()), now);
         session.observe_at(Ok(Snapshot::default()), now + Duration::from_secs(5));
-        session.observe_at(Ok(normal()), now + Duration::from_secs(6));
+        complete_return(&mut session, normal(), now + Duration::from_secs(6), None);
         let mut journey = crate::journey::Journey::from_saved_test_session(session);
-        journey.observe(Ok(normal()));
         assert_eq!(journey.component(), Role::Left);
         assert!(journey.is_complete());
         journey.pause();
@@ -1087,9 +1156,8 @@ mod tests {
         let mut session = saved_session(Role::Left);
         session.observe_at(Ok(Snapshot::default()), now);
         session.observe_at(Ok(Snapshot::default()), now + Duration::from_secs(5));
-        session.observe_at(Ok(normal()), now + Duration::from_secs(6));
-        let mut journey = crate::journey::Journey::from_saved_test_session(session);
-        journey.observe(Ok(normal()));
+        complete_return(&mut session, normal(), now + Duration::from_secs(6), None);
+        let journey = crate::journey::Journey::from_saved_test_session(session);
         assert!(journey.is_complete());
         assert_eq!(journey.role(), Role::Left);
         assert_eq!(journey.archives(), &[PathBuf::from("/private/test-copy")]);
@@ -1128,9 +1196,9 @@ mod tests {
         assert!(s.view().instruction.contains("stayed in recovery"));
         s.observe_at(Ok(Snapshot::default()), now + Duration::from_secs(12));
         s.observe_at(Ok(Snapshot::default()), now + Duration::from_secs(17));
-        s.observe_at(Ok(normal()), now + Duration::from_secs(18));
+        complete_return(&mut s, normal(), now + Duration::from_secs(18), None);
         assert!(s.view().return_complete);
-        s.observe_at(Ok(Snapshot::default()), now + Duration::from_secs(19));
+        s.observe_at(Ok(Snapshot::default()), now + Duration::from_secs(24));
         assert!(!s.view().return_complete);
     }
     #[test]
@@ -1157,11 +1225,11 @@ mod tests {
         right.devices[0].vendor = 0x4c4b;
         right.devices[0].product = 0x4651;
         right.devices[0].name = "NocFree Input Probe Right Mac".into();
-        s.observe_at(Ok(right), now + Duration::from_secs(111));
+        complete_return(&mut s, right, now + Duration::from_secs(111), None);
         assert!(s.view().return_complete);
         s.observe_at(
             Err("USB discovery failed".into()),
-            now + Duration::from_secs(112),
+            now + Duration::from_secs(117),
         );
         assert!(!s.view().return_complete);
         assert!(!s.view().needs_power_on_ack);
@@ -1226,7 +1294,12 @@ mod tests {
             s.return_flow.phase(),
             Some(ReturnPhase::Reconnect)
         ));
-        s.observe_at(Ok(rmk), now + Duration::from_secs(16));
+        complete_return(
+            &mut s,
+            rmk,
+            now + Duration::from_secs(16),
+            Some(crate::device_status::Mode::Wired),
+        );
         assert!(s.view().return_complete);
     }
 }

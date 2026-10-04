@@ -197,6 +197,33 @@ impl Journey {
         self.session.observe(observation);
         self.advance();
     }
+    pub(crate) fn observe_with_mode(
+        &mut self,
+        observation: Result<Snapshot, String>,
+        mode: Option<crate::device_status::Mode>,
+    ) {
+        if matches!(
+            self.state(),
+            State::Paused | State::Failed | State::Complete
+        ) {
+            return;
+        }
+        self.session.observe_with_mode(observation, mode);
+        self.advance();
+    }
+    pub(crate) fn completion_remaining(&self) -> Option<std::time::Duration> {
+        self.session.completion_remaining()
+    }
+    pub(crate) fn confirm_wired(&mut self) {
+        if matches!(
+            self.state(),
+            State::Paused | State::Failed | State::Complete
+        ) {
+            return;
+        }
+        self.session.confirm_wired();
+        self.advance();
+    }
     fn advance(&mut self) {
         let view = self.session.view();
         self.machine.handle(&machine::Event::Evidence {

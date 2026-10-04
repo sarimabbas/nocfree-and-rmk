@@ -10,7 +10,7 @@ use std::{
 static GENERATION: AtomicU64 = AtomicU64::new(1);
 
 pub(crate) const TOKEN: &str = "qwert HJKL h";
-const EVIDENCE_AGE: Duration = Duration::from_secs(45);
+const EVIDENCE_AGE: Duration = Duration::from_secs(5);
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) enum Target {
@@ -153,12 +153,16 @@ mod machine {
         pub phase: u64,
         pub target: Target,
         pub scope: Scope,
+        pub route_gate: crate::completion_gate::CompletionGate<Mode>,
+        pub route_ready: bool,
+        pub input_gate: crate::completion_gate::CompletionGate<Mode>,
+        pub input_ready: bool,
     }
     pub enum Event {
         Installed(Ticket, Result<(), String>),
         Paired(Ticket, Result<(), String>),
         Observed(Ticket, Evidence),
-        Input(Ticket, String),
+        Input(Ticket, String, Instant),
         Next(Ticket),
         Cancel,
     }
@@ -238,6 +242,16 @@ mod machine {
                         // the earlier route, even when that same route returns.
                         self.advance();
                     }
+                    self.route_ready = self.route_gate.ready(
+                        *mode,
+                        latest.ready(*mode, self.target),
+                        latest.observed_at,
+                    );
+                    self.input_ready = self.input_gate.ready(
+                        *mode,
+                        latest.ready(*mode, self.target) && input.trim() == TOKEN && !changed,
+                        latest.observed_at,
+                    );
                     let keep = evidence.is_some_and(|old| {
                         old.ready(*mode, self.target)
                             && latest.ready(*mode, self.target)
@@ -250,18 +264,21 @@ mod machine {
                         *armed && !changed || self.target == Target::Rmk,
                     ))
                 }
-                Event::Input(ticket, text)
+                Event::Input(ticket, text, now)
                     if self.current(*ticket)
                         && *armed
+                        && self.route_ready
                         && evidence.is_some_and(|e| e.ready(*mode, self.target)) =>
                 {
                     *context = true;
+                    self.input_ready = self.input_gate.ready(*mode, text.trim() == TOKEN, *now);
                     Transition(State::checking(*mode, *evidence, text.clone(), *armed))
                 }
                 Event::Next(ticket)
                     if self.current(*ticket)
                         && self.target == Target::Factory
                         && !*armed
+                        && self.route_ready
                         && evidence.is_some_and(|e| e.ready(*mode, self.target)) =>
                 {
                     *context = true;
@@ -272,6 +289,8 @@ mod machine {
                     if self.current(*ticket)
                         && evidence.is_some_and(|e| e.ready(*mode, self.target))
                         && *armed
+                        && self.route_ready
+                        && self.input_ready
                         && input.trim() == TOKEN =>
                 {
                     *context = true;
@@ -353,6 +372,10 @@ impl Machine {
                 phase: 0,
                 target,
                 scope,
+                route_gate: Default::default(),
+                route_ready: false,
+                input_gate: Default::default(),
+                input_ready: false,
             }
             .state_machine(),
         }
@@ -374,7 +397,10 @@ impl Machine {
                 armed,
                 ..
             } => {
-                if *armed && evidence.is_some_and(|e| e.ready(*mode, self.target())) {
+                if *armed
+                    && self.machine.inner().route_ready
+                    && evidence.is_some_and(|e| e.ready(*mode, self.target()))
+                {
                     Stage::Typing(*mode)
                 } else {
                     Stage::Setup(*mode)
@@ -387,8 +413,8 @@ impl Machine {
     }
     pub fn can_next(&self) -> bool {
         matches!(self.machine.state(), machine::State::Checking {mode, evidence, input, armed}
-            if evidence.is_some_and(|e| e.ready(*mode, self.target()))
-                && ((!*armed && self.target() == Target::Factory) || (*armed && input.trim() == TOKEN)))
+            if self.machine.inner().route_ready && evidence.is_some_and(|e| e.ready(*mode, self.target()))
+                && ((!*armed && self.target() == Target::Factory) || (*armed && self.machine.inner().input_ready && input.trim() == TOKEN)))
     }
     pub fn text(&self) -> &str {
         match self.machine.state() {
@@ -411,7 +437,10 @@ impl Machine {
         self.dispatch(machine::Event::Observed(ticket, evidence))
     }
     pub fn input(&mut self, ticket: Ticket, text: String) -> bool {
-        self.dispatch(machine::Event::Input(ticket, text))
+        self.input_at(ticket, text, Instant::now())
+    }
+    fn input_at(&mut self, ticket: Ticket, text: String, now: Instant) -> bool {
+        self.dispatch(machine::Event::Input(ticket, text, now))
     }
     pub fn next(&mut self, ticket: Ticket) -> bool {
         self.dispatch(machine::Event::Next(ticket))
@@ -424,6 +453,84 @@ impl Machine {
 #[cfg(test)]
 mod tests {
     use super::*;
+    impl Machine {
+        // Existing acceptance tests simulate the owner's pause between screens.
+        fn observe_settled(&mut self, ticket: Ticket, mut evidence: Evidence) -> bool {
+            let now = Instant::now();
+            if now.saturating_duration_since(evidence.observed_at) > EVIDENCE_AGE {
+                return self.observe(ticket, evidence);
+            }
+            evidence.observed_at = now;
+            let accepted = self.observe(ticket, evidence);
+            evidence.observed_at = now + Duration::from_secs(5);
+            self.observe(self.ticket(), evidence);
+            accepted
+        }
+        fn input_settled(&mut self, ticket: Ticket, text: String) -> bool {
+            let accepted = self.input(ticket, text);
+            if accepted
+                && let machine::State::Checking {
+                    evidence: Some(mut evidence),
+                    ..
+                } = *self.machine.state()
+            {
+                evidence.observed_at = Instant::now() + Duration::from_secs(5);
+                self.observe(self.ticket(), evidence);
+            }
+            accepted
+        }
+    }
+    #[test]
+    fn readiness_and_typing_each_need_full_delay_and_route_changes_reset_it() {
+        let mut machine = Machine::new();
+        machine.installed(machine.ticket(), Ok(()));
+        machine.paired(machine.ticket(), Ok(()));
+        let now = Instant::now() + Duration::from_secs(10);
+        let observed = |mode, at| {
+            let mut e = evidence(mode);
+            e.observed_at = at;
+            e
+        };
+        machine.observe(machine.ticket(), observed(Mode::Wired, now));
+        assert_eq!(machine.stage(), Stage::Setup(Mode::Wired));
+        machine.observe(
+            machine.ticket(),
+            observed(Mode::Dongle, now - Duration::from_secs(4)),
+        );
+        machine.observe(
+            machine.ticket(),
+            observed(Mode::Wired, now + Duration::from_secs(2)),
+        );
+        machine.observe(
+            machine.ticket(),
+            observed(Mode::Wired, now - Duration::from_secs(5)),
+        );
+        assert_eq!(machine.stage(), Stage::Setup(Mode::Wired));
+        assert!(!machine.input(machine.ticket(), TOKEN.into()));
+        machine.observe(
+            machine.ticket(),
+            observed(Mode::Wired, now + Duration::from_secs(2)),
+        );
+        assert_eq!(machine.stage(), Stage::Typing(Mode::Wired));
+        machine.input_at(machine.ticket(), TOKEN.into(), now + Duration::from_secs(2));
+        assert!(!machine.can_next());
+        machine.observe(
+            machine.ticket(),
+            observed(Mode::Wired, now + Duration::from_secs(4)),
+        );
+        assert!(!machine.can_next());
+        machine.observe(
+            machine.ticket(),
+            observed(Mode::Wired, now + Duration::from_secs(7)),
+        );
+        assert!(machine.can_next());
+        machine.observe(
+            machine.ticket(),
+            observed(Mode::Dongle, now + Duration::from_secs(8)),
+        );
+        assert!(!machine.can_next());
+        assert_eq!(machine.text(), "");
+    }
     fn evidence(mode: Mode) -> Evidence {
         Evidence {
             mode: Some(mode),
@@ -471,8 +578,8 @@ mod tests {
                 assert!(machine.installed(ticket, Ok(())));
                 assert_eq!(machine.stage(), Stage::Complete);
                 assert!(!machine.paired(machine.ticket(), Ok(())));
-                assert!(!machine.observe(machine.ticket(), evidence(Mode::Wired)));
-                assert!(!machine.input(machine.ticket(), TOKEN.into()));
+                assert!(!machine.observe_settled(machine.ticket(), evidence(Mode::Wired)));
+                assert!(!machine.input_settled(machine.ticket(), TOKEN.into()));
                 assert!(!machine.next(machine.ticket()));
                 assert!(!machine.installed(ticket, Ok(())));
                 let mut failed = Machine::scoped(target, Scope::Part(role));
@@ -489,16 +596,16 @@ mod tests {
         assert_eq!(machine.stage(), Stage::Setup(Mode::Wired));
         assert!(!machine.paired(machine.ticket(), Ok(())));
         for mode in [Mode::Wired, Mode::Bluetooth, Mode::Dongle] {
-            assert!(machine.observe(machine.ticket(), factory_evidence(mode)));
+            assert!(machine.observe_settled(machine.ticket(), factory_evidence(mode)));
             assert_eq!(machine.stage(), Stage::Setup(mode));
             assert!(machine.can_next());
-            assert!(!machine.input(machine.ticket(), TOKEN.into()));
+            assert!(!machine.input_settled(machine.ticket(), TOKEN.into()));
             let setup_ticket = machine.ticket();
             assert!(machine.next(setup_ticket));
             assert_eq!(machine.stage(), Stage::Typing(mode));
             assert!(!machine.next(setup_ticket));
             assert!(!machine.can_next());
-            assert!(machine.input(machine.ticket(), TOKEN.into()));
+            assert!(machine.input_settled(machine.ticket(), TOKEN.into()));
             assert!(machine.next(machine.ticket()));
         }
         assert_eq!(machine.stage(), Stage::Complete);
@@ -515,22 +622,22 @@ mod tests {
                 2 => invalid.factory_usb_count = None,
                 _ => invalid.factory_usb_count = Some(2),
             }
-            machine.observe(machine.ticket(), invalid);
+            machine.observe_settled(machine.ticket(), invalid);
             assert!(!machine.can_next());
             assert!(!machine.next(machine.ticket()));
         }
-        machine.observe(machine.ticket(), factory_evidence(Mode::Wired));
+        machine.observe_settled(machine.ticket(), factory_evidence(Mode::Wired));
         assert!(machine.next(machine.ticket()));
         let typing_ticket = machine.ticket();
         let mut unplugged = factory_evidence(Mode::Wired);
         unplugged.factory_usb_count = Some(0);
-        machine.observe(typing_ticket, unplugged);
-        machine.observe(machine.ticket(), factory_evidence(Mode::Wired));
+        machine.observe_settled(typing_ticket, unplugged);
+        machine.observe_settled(machine.ticket(), factory_evidence(Mode::Wired));
         assert_eq!(machine.stage(), Stage::Setup(Mode::Wired));
-        assert!(!machine.input(typing_ticket, TOKEN.into()));
-        assert!(!machine.input(machine.ticket(), TOKEN.into()));
+        assert!(!machine.input_settled(typing_ticket, TOKEN.into()));
+        assert!(!machine.input_settled(machine.ticket(), TOKEN.into()));
         assert!(machine.next(machine.ticket()));
-        assert!(machine.input(machine.ticket(), TOKEN.into()));
+        assert!(machine.input_settled(machine.ticket(), TOKEN.into()));
         assert!(machine.next(machine.ticket()));
     }
     #[test]
@@ -550,22 +657,22 @@ mod tests {
         machine.installed(machine.ticket(), Ok(()));
         let mut ambiguous = factory_evidence(Mode::Wired);
         ambiguous.factory_usb_count = None;
-        machine.observe(machine.ticket(), ambiguous);
+        machine.observe_settled(machine.ticket(), ambiguous);
         assert!(!machine.next(machine.ticket()));
-        machine.observe(machine.ticket(), factory_evidence(Mode::Wired));
+        machine.observe_settled(machine.ticket(), factory_evidence(Mode::Wired));
         assert_eq!(machine.stage(), Stage::Setup(Mode::Wired));
-        assert!(!machine.input(machine.ticket(), TOKEN.into()));
+        assert!(!machine.input_settled(machine.ticket(), TOKEN.into()));
         assert!(machine.next(machine.ticket()));
         let acknowledged = machine.ticket();
-        machine.input(acknowledged, TOKEN.into());
+        machine.input_settled(acknowledged, TOKEN.into());
         let mut two = factory_evidence(Mode::Wired);
         two.factory_usb_count = Some(2);
-        machine.observe(acknowledged, two);
+        machine.observe_settled(acknowledged, two);
         assert_eq!(machine.text(), "");
         assert!(!machine.next(machine.ticket()));
-        machine.observe(machine.ticket(), factory_evidence(Mode::Wired));
+        machine.observe_settled(machine.ticket(), factory_evidence(Mode::Wired));
         assert_eq!(machine.stage(), Stage::Setup(Mode::Wired));
-        assert!(!machine.input(acknowledged, TOKEN.into()));
+        assert!(!machine.input_settled(acknowledged, TOKEN.into()));
     }
     #[test]
     fn children_and_each_transport_require_explicit_completion() {
@@ -578,32 +685,32 @@ mod tests {
         assert!(machine.paired(machine.ticket(), Ok(())));
         for mode in [Mode::Wired, Mode::Bluetooth, Mode::Dongle] {
             assert_eq!(machine.stage(), Stage::Setup(mode));
-            assert!(!machine.input(machine.ticket(), TOKEN.into()));
+            assert!(!machine.input_settled(machine.ticket(), TOKEN.into()));
             assert!(!machine.next(machine.ticket()));
-            assert!(machine.observe(machine.ticket(), evidence(mode)));
+            assert!(machine.observe_settled(machine.ticket(), evidence(mode)));
             assert_eq!(machine.stage(), Stage::Typing(mode));
-            assert!(machine.input(machine.ticket(), "qwert hjkl h".into()));
+            assert!(machine.input_settled(machine.ticket(), "qwert hjkl h".into()));
             assert!(!machine.next(machine.ticket()));
-            assert!(machine.input(machine.ticket(), TOKEN.into()));
+            assert!(machine.input_settled(machine.ticket(), TOKEN.into()));
             assert!(machine.can_next());
             assert!(machine.next(machine.ticket()));
             assert!(!machine.next(machine.ticket()));
         }
         assert_eq!(machine.stage(), Stage::Complete);
         assert!(!machine.cancel());
-        assert!(!machine.observe(machine.ticket(), evidence(Mode::Dongle)));
+        assert!(!machine.observe_settled(machine.ticket(), evidence(Mode::Dongle)));
     }
     #[test]
     fn changed_route_and_unknown_or_old_evidence_clear_confirmation() {
         let mut machine = checks();
-        machine.observe(machine.ticket(), evidence(Mode::Wired));
-        machine.input(machine.ticket(), TOKEN.into());
+        machine.observe_settled(machine.ticket(), evidence(Mode::Wired));
+        machine.input_settled(machine.ticket(), TOKEN.into());
         let mut wrong = evidence(Mode::Wired);
         wrong.route = Connection::Bluetooth;
-        machine.observe(machine.ticket(), wrong);
+        machine.observe_settled(machine.ticket(), wrong);
         assert_eq!(machine.text(), "");
         assert!(!machine.can_next());
-        machine.observe(machine.ticket(), evidence(Mode::Wired));
+        machine.observe_settled(machine.ticket(), evidence(Mode::Wired));
         assert!(!machine.can_next());
         for change in 0..5 {
             let mut invalid = evidence(Mode::Wired);
@@ -614,8 +721,8 @@ mod tests {
                 3 => invalid.right_link = None,
                 _ => invalid.observed_at = Instant::now() - EVIDENCE_AGE - Duration::from_secs(1),
             }
-            machine.observe(machine.ticket(), invalid);
-            assert!(!machine.input(machine.ticket(), TOKEN.into()));
+            machine.observe_settled(machine.ticket(), invalid);
+            assert!(!machine.input_settled(machine.ticket(), TOKEN.into()));
             assert!(!machine.next(machine.ticket()));
         }
     }
@@ -623,8 +730,8 @@ mod tests {
     fn bluetooth_uses_live_os_route_and_owner_typing_without_usb_telemetry() {
         let mut machine = checks();
         let wired = machine.ticket();
-        machine.observe(wired, evidence(Mode::Wired));
-        machine.input(wired, TOKEN.into());
+        machine.observe_settled(wired, evidence(Mode::Wired));
+        machine.input_settled(wired, TOKEN.into());
         assert!(machine.next(wired));
         let mut bluetooth = evidence(Mode::Bluetooth);
         bluetooth.mode = None;
@@ -636,56 +743,56 @@ mod tests {
                 1 => plugged.right_usb = Some(true),
                 _ => plugged.dongle_usb = Some(true),
             }
-            machine.observe(machine.ticket(), plugged);
+            machine.observe_settled(machine.ticket(), plugged);
             assert_eq!(machine.stage(), Stage::Setup(Mode::Bluetooth));
-            assert!(!machine.input(machine.ticket(), TOKEN.into()));
+            assert!(!machine.input_settled(machine.ticket(), TOKEN.into()));
             assert!(!machine.next(machine.ticket()));
         }
         let mut stale = bluetooth;
         stale.fresh = false;
-        machine.observe(machine.ticket(), stale);
-        assert!(!machine.input(machine.ticket(), TOKEN.into()));
-        machine.observe(machine.ticket(), bluetooth);
+        machine.observe_settled(machine.ticket(), stale);
+        assert!(!machine.input_settled(machine.ticket(), TOKEN.into()));
+        machine.observe_settled(machine.ticket(), bluetooth);
         assert_eq!(machine.stage(), Stage::Typing(Mode::Bluetooth));
         assert!(!machine.next(machine.ticket()));
-        assert!(machine.input(machine.ticket(), TOKEN.into()));
+        assert!(machine.input_settled(machine.ticket(), TOKEN.into()));
         assert!(machine.next(machine.ticket()));
         assert_eq!(machine.stage(), Stage::Setup(Mode::Dongle));
     }
     #[test]
     fn route_changes_invalidate_old_typing_callbacks_but_stable_polls_do_not() {
         let mut machine = checks();
-        machine.observe(machine.ticket(), evidence(Mode::Wired));
+        machine.observe_settled(machine.ticket(), evidence(Mode::Wired));
         let original = machine.ticket();
-        machine.observe(original, evidence(Mode::Wired));
+        machine.observe_settled(original, evidence(Mode::Wired));
         assert_eq!(machine.ticket(), original);
         let mut lost = evidence(Mode::Wired);
         lost.route = Connection::Disconnected;
-        machine.observe(original, lost);
+        machine.observe_settled(original, lost);
         assert_ne!(machine.ticket(), original);
         let lost_ticket = machine.ticket();
-        machine.observe(lost_ticket, evidence(Mode::Wired));
+        machine.observe_settled(lost_ticket, evidence(Mode::Wired));
         assert_ne!(machine.ticket(), lost_ticket);
-        assert!(!machine.input(original, TOKEN.into()));
-        assert!(!machine.input(lost_ticket, TOKEN.into()));
+        assert!(!machine.input_settled(original, TOKEN.into()));
+        assert!(!machine.input_settled(lost_ticket, TOKEN.into()));
         assert!(!machine.next(original));
-        assert!(machine.input(machine.ticket(), TOKEN.into()));
+        assert!(machine.input_settled(machine.ticket(), TOKEN.into()));
         assert!(machine.next(machine.ticket()));
     }
     #[test]
     fn prolonged_route_fluctuations_do_not_exhaust_the_ticket_epoch() {
         let mut machine = checks();
-        machine.observe(machine.ticket(), evidence(Mode::Wired));
+        machine.observe_settled(machine.ticket(), evidence(Mode::Wired));
         let original = machine.ticket();
         for _ in 0..300 {
             let mut lost = evidence(Mode::Wired);
             lost.route = Connection::Disconnected;
-            assert!(machine.observe(machine.ticket(), lost));
-            assert!(machine.observe(machine.ticket(), evidence(Mode::Wired)));
+            assert!(machine.observe_settled(machine.ticket(), lost));
+            assert!(machine.observe_settled(machine.ticket(), evidence(Mode::Wired)));
         }
         assert!(machine.ticket().phase > 256);
-        assert!(!machine.input(original, TOKEN.into()));
-        assert!(machine.input(machine.ticket(), TOKEN.into()));
+        assert!(!machine.input_settled(original, TOKEN.into()));
+        assert!(machine.input_settled(machine.ticket(), TOKEN.into()));
         assert!(machine.next(machine.ticket()));
     }
     #[test]
@@ -702,8 +809,8 @@ mod tests {
         let ticket = machine.ticket();
         assert!(machine.cancel());
         assert_eq!(machine.stage(), Stage::Cancelled);
-        assert!(!machine.observe(ticket, evidence(Mode::Wired)));
-        assert!(!machine.input(ticket, TOKEN.into()));
+        assert!(!machine.observe_settled(ticket, evidence(Mode::Wired)));
+        assert!(!machine.input_settled(ticket, TOKEN.into()));
         assert!(!machine.paired(ticket, Ok(())));
         let mut failed = Machine::new();
         assert!(failed.installed(failed.ticket(), Err("copy failed".into())));

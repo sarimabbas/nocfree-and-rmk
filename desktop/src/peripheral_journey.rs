@@ -2,6 +2,7 @@
 use crate::{runtime_recovery::Role, scope::Scope};
 use statig::prelude::*;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Instant;
 
 static GENERATION: AtomicU64 = AtomicU64::new(1);
 fn generation() -> u64 {
@@ -12,11 +13,12 @@ fn generation() -> u64 {
 struct Batch {
     roles: Vec<Role>,
     ticket: u64,
+    completion: crate::completion_gate::CompletionGate<u64>,
 }
 enum Event {
     Done(u64),
     RequestNext(u64),
-    Detached(u64),
+    Detached(u64, bool, Instant),
     Cancel,
 }
 #[state_machine(initial = "State::active(0)")]
@@ -55,7 +57,9 @@ impl Batch {
         context: &mut bool,
     ) -> Outcome<State> {
         match event {
-            Event::Detached(ticket) if *ticket == self.ticket => {
+            Event::Detached(ticket, detached, now)
+                if *ticket == self.ticket && self.completion.ready(*ticket, *detached, *now) =>
+            {
                 self.ticket = generation();
                 *context = true;
                 Transition(State::active(*index + 1))
@@ -85,6 +89,7 @@ impl Machine {
             Batch {
                 roles: scope.roles(),
                 ticket: generation(),
+                completion: Default::default(),
             }
             .state_machine(),
         )
@@ -129,10 +134,13 @@ impl Machine {
     pub fn waiting_detach(&self) -> bool {
         matches!(self.0.state(), State::WaitingDetach { .. })
     }
-    pub fn detached(&mut self, ticket: u64) -> bool {
+    pub fn detached_at(&mut self, ticket: u64, detached: bool, now: Instant) -> bool {
+        if ticket != self.ticket() || !self.waiting_detach() {
+            return false;
+        }
         let mut accepted = false;
         self.0
-            .handle_with_context(&Event::Detached(ticket), &mut accepted);
+            .handle_with_context(&Event::Detached(ticket, detached, now), &mut accepted);
         accepted
     }
     pub fn cancel(&mut self) {
@@ -143,6 +151,31 @@ impl Machine {
 #[cfg(test)]
 mod tests {
     use super::*;
+    impl Machine {
+        fn detached_stable(&mut self, ticket: u64) -> bool {
+            let now = Instant::now();
+            self.detached_at(ticket, true, now);
+            self.detached_at(
+                ticket,
+                true,
+                now + crate::completion_gate::DEFAULT_COMPLETION_DELAY,
+            )
+        }
+    }
+    #[test]
+    fn reconnection_invalidates_a_pending_detach_completion() {
+        let mut batch = Machine::new(Scope::Whole);
+        batch.request_next(batch.ticket());
+        let ticket = batch.ticket();
+        let now = Instant::now();
+        assert!(!batch.detached_at(ticket, true, now));
+        assert!(!batch.detached_at(ticket, false, now + std::time::Duration::from_secs(4)));
+        assert!(!batch.detached_at(ticket, true, now + std::time::Duration::from_secs(5)));
+        assert_eq!(batch.role(), Some(Role::Left));
+        assert!(batch.detached_at(ticket, true, now + std::time::Duration::from_secs(10)));
+        assert_eq!(batch.role(), Some(Role::Right));
+    }
+
     #[test]
     fn whole_orders_one_child_at_a_time_and_rejects_duplicate_completion() {
         let mut batch = Machine::new(Scope::Whole);
@@ -192,20 +225,20 @@ mod tests {
     fn recovery_requires_detachment_before_next_part_and_rejects_late_events() {
         let mut batch = Machine::new(Scope::Whole);
         let opened = batch.ticket();
-        assert!(!batch.detached(opened));
+        assert!(!batch.detached_stable(opened));
         assert!(batch.request_next(opened));
         assert!(batch.waiting_detach());
         assert_eq!(batch.role(), Some(Role::Left));
         assert!(!batch.done(batch.ticket()));
-        assert!(!batch.detached(opened));
+        assert!(!batch.detached_stable(opened));
         let waiting = batch.ticket();
-        assert!(batch.detached(waiting));
+        assert!(batch.detached_stable(waiting));
         assert!(!batch.waiting_detach());
         assert_eq!(batch.role(), Some(Role::Right));
-        assert!(!batch.detached(waiting));
+        assert!(!batch.detached_stable(waiting));
         assert!(batch.request_next(batch.ticket()));
         batch.cancel();
-        assert!(!batch.detached(batch.ticket()));
+        assert!(!batch.detached_stable(batch.ticket()));
         assert_eq!(batch.role(), None);
         let mut single = Machine::new(Scope::Part(Role::Left));
         assert!(!single.request_next(single.ticket()));

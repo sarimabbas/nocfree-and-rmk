@@ -114,8 +114,12 @@ pub enum State {
     Failed(String),
     Cancelled,
 }
+type PairingConditions = (bool, Option<Snapshot>, Option<Snapshot>, Option<Binding>);
+
 #[derive(Default)]
 struct PairingData {
+    require_dongle: bool,
+    completion: crate::completion_gate::CompletionGate<PairingConditions>,
     request: Option<Arc<AtomicU8>>,
     binding: Option<Binding>,
     accepted: Option<Instant>,
@@ -156,6 +160,7 @@ impl StatigState<PairingData> for State {
                 Handled
             } else {
                 data.deadline = None;
+                data.completion.reset();
                 Transition(State::Cancelled)
             };
         }
@@ -194,6 +199,9 @@ impl StatigState<PairingData> for State {
                             .into(),
                     ));
                 }
+                if observation.is_err() {
+                    data.completion.reset();
+                }
                 let observed = match observation {
                     Ok(value) => value,
                     Err(error) if error == crate::battery::NATIVE_BUSY => return Handled,
@@ -227,7 +235,23 @@ impl StatigState<PairingData> for State {
                 {
                     return Transition(State::Failed("Dongle pairing could not finish. Keep both USB cables connected and the left switch in Dongle mode.".into()));
                 }
-                if observed.complete() {
+                let complete =
+                    observed.complete() && (!data.require_dongle || observed.dongle.is_some());
+                let ready = observed.ready();
+                if !data.completion.ready(
+                    (
+                        complete,
+                        observed.left,
+                        observed.dongle,
+                        observed.binding.clone(),
+                    ),
+                    complete || ready,
+                    *now,
+                ) && (complete || ready)
+                {
+                    return Handled;
+                }
+                if complete {
                     data.deadline = None;
                     return Transition(State::Connected);
                 }
@@ -252,7 +276,11 @@ impl StatigState<PairingData> for State {
                 {
                     State::TurnOnRight
                 } else if observed.dongle.is_none() {
-                    State::Connected
+                    if data.require_dongle {
+                        State::Connect
+                    } else {
+                        State::Connected
+                    }
                 } else if !observed.left.is_some_and(|s| s.dongle_mode) {
                     State::SwitchMode
                 } else if !observed.ready() {
@@ -284,6 +312,25 @@ impl Default for Journey {
 impl Journey {
     pub fn new() -> Self {
         Self::default()
+    }
+    pub(crate) fn whole_keyboard() -> Self {
+        Self {
+            machine: PairingData {
+                require_dongle: true,
+                ..Default::default()
+            }
+            .state_machine(),
+        }
+    }
+    pub(crate) fn completion_remaining(&self) -> Option<Duration> {
+        if matches!(
+            self.state(),
+            State::Connected | State::Failed(_) | State::Cancelled
+        ) {
+            None
+        } else {
+            self.machine.inner().completion.remaining(Instant::now())
+        }
     }
     pub fn state(&self) -> &State {
         self.machine.state()
@@ -609,6 +656,20 @@ mod tests {
             seen: now,
         }
     }
+    fn observe_settled(
+        journey: &mut Journey,
+        observation: Result<Observation, String>,
+        now: Instant,
+    ) {
+        journey.observe(observation.clone(), now);
+        let later = now + crate::completion_gate::DEFAULT_COMPLETION_DELAY;
+        let fresh = observation.map(|mut o| {
+            o.started = later;
+            o.seen = later;
+            o
+        });
+        journey.observe(fresh, later);
+    }
     fn reply(role: Role, state: u8) -> [u8; 32] {
         let mut bytes = [0; 32];
         bytes[..8].copy_from_slice(&PREFIX);
@@ -624,10 +685,66 @@ mod tests {
         bytes
     }
     #[test]
+    fn connected_success_waits_five_seconds_and_mode_loss_restarts_it() {
+        let now = Instant::now();
+        let mut journey = Journey::new();
+        let good = |t| {
+            Ok(observation(
+                Some(snapshot(Link::Encrypted, true)),
+                Some(snapshot(Link::Encrypted, false)),
+                t,
+            ))
+        };
+        journey.observe(good(now), now);
+        journey.observe(
+            good(now + Duration::from_secs(4)),
+            now + Duration::from_secs(4),
+        );
+        assert_ne!(journey.state(), &State::Connected);
+        let changed = now + Duration::from_secs(5);
+        journey.observe(
+            Ok(observation(
+                Some(snapshot(Link::Idle, false)),
+                Some(snapshot(Link::Searching, false)),
+                changed,
+            )),
+            changed,
+        );
+        let again = now + Duration::from_secs(6);
+        journey.observe(good(again), again);
+        journey.observe(
+            good(now + Duration::from_secs(10)),
+            now + Duration::from_secs(10),
+        );
+        assert_ne!(journey.state(), &State::Connected);
+        journey.observe(
+            good(now + Duration::from_secs(11)),
+            now + Duration::from_secs(11),
+        );
+        assert_eq!(journey.state(), &State::Connected);
+        assert!(journey.machine.inner().request.is_none());
+    }
+    #[test]
+    fn whole_keyboard_never_completes_with_only_the_split_link() {
+        let now = Instant::now();
+        let mut journey = Journey::whole_keyboard();
+        observe_settled(
+            &mut journey,
+            Ok(observation(
+                Some(snapshot(Link::Encrypted, true)),
+                None,
+                now,
+            )),
+            now,
+        );
+        assert_eq!(journey.state(), &State::Connect);
+    }
+    #[test]
     fn mode_switch_usb_reenumeration_before_pairing_returns_to_connection_check() {
         let now = Instant::now();
         let mut journey = Journey::new();
-        journey.observe(
+        observe_settled(
+            &mut journey,
             Ok(observation(
                 Some(snapshot(Link::Idle, false)),
                 Some(snapshot(Link::Searching, false)),
@@ -636,7 +753,8 @@ mod tests {
             now,
         );
         assert_eq!(journey.state(), &State::SwitchMode);
-        journey.observe(
+        observe_settled(
+            &mut journey,
             Err(
                 "A USB connection changed. Pairing was stopped; it will not retry automatically."
                     .into(),
@@ -645,7 +763,8 @@ mod tests {
         );
         assert_eq!(journey.state(), &State::Connect);
         assert!(journey.machine.inner().request.is_none());
-        journey.observe(
+        observe_settled(
+            &mut journey,
             Ok(observation(
                 Some(snapshot(Link::Encrypted, true)),
                 Some(snapshot(Link::Encrypted, false)),
@@ -663,9 +782,10 @@ mod tests {
             *journey.machine.state_mut() = State::Pairing;
             journey.machine.inner_mut().deadline = Some(now + PAIRING_TIMEOUT);
         }
-        journey.observe(Err(USB_CHANGED.into()), now);
+        observe_settled(&mut journey, Err(USB_CHANGED.into()), now);
         assert_eq!(journey.state(), &State::Failed(USB_CHANGED.into()));
-        journey.observe(
+        observe_settled(
+            &mut journey,
             Ok(observation(
                 Some(snapshot(Link::Encrypted, true)),
                 Some(snapshot(Link::Encrypted, false)),
@@ -743,9 +863,10 @@ mod tests {
     fn reconnect_is_detected_without_pairing_and_searching_never_completes() {
         let now = Instant::now();
         let mut journey = Journey::new();
-        journey.observe(Ok(observation(None, None, now)), now);
+        observe_settled(&mut journey, Ok(observation(None, None, now)), now);
         assert_eq!(journey.state(), &State::Connect);
-        journey.observe(
+        observe_settled(
+            &mut journey,
             Ok(observation(
                 Some(snapshot(Link::Idle, false)),
                 Some(snapshot(Link::Searching, false)),
@@ -754,7 +875,8 @@ mod tests {
             now,
         );
         assert_eq!(journey.state(), &State::SwitchMode);
-        journey.observe(
+        observe_settled(
+            &mut journey,
             Ok(observation(
                 Some(snapshot(Link::Searching, true)),
                 Some(snapshot(Link::Searching, false)),
@@ -776,7 +898,8 @@ mod tests {
                 )
                 .is_err()
         );
-        journey.observe(
+        observe_settled(
+            &mut journey,
             Ok(observation(
                 Some(snapshot(Link::Encrypted, true)),
                 Some(snapshot(Link::Encrypted, false)),
@@ -802,12 +925,16 @@ mod tests {
         assert!(!halves.connected());
         assert!(halves.complete());
         let mut journey = Journey::new();
-        journey.observe(Ok(halves), now);
+        observe_settled(&mut journey, Ok(halves), now);
         assert_eq!(journey.state(), &State::Connected);
         let mut right_off = left;
         right_off.right_link = SplitLink::Disconnected;
         let mut journey = Journey::new();
-        journey.observe(Ok(observation(Some(right_off), None, now)), now);
+        observe_settled(
+            &mut journey,
+            Ok(observation(Some(right_off), None, now)),
+            now,
+        );
         assert_eq!(journey.state(), &State::TurnOnRight);
     }
     #[test]
@@ -826,14 +953,16 @@ mod tests {
             Some(snapshot(Link::Encrypted, false)),
             now,
         );
-        journey.observe(Ok(old), now + Duration::from_secs(2));
+        observe_settled(&mut journey, Ok(old), now + Duration::from_secs(2));
         assert_eq!(journey.state(), &State::Pairing);
-        journey.observe(
+        observe_settled(
+            &mut journey,
             Err(crate::battery::NATIVE_BUSY.into()),
             now + Duration::from_secs(2),
         );
         assert_eq!(journey.state(), &State::Pairing);
-        journey.observe(
+        observe_settled(
+            &mut journey,
             Ok(observation(
                 Some(snapshot(Link::Encrypted, true)),
                 Some(snapshot(Link::Encrypted, false)),
@@ -849,7 +978,8 @@ mod tests {
         let mut journey = Journey::new();
         let mut left = snapshot(Link::Idle, true);
         left.repair_supported = false;
-        journey.observe(
+        observe_settled(
+            &mut journey,
             Ok(observation(
                 Some(left),
                 Some(snapshot(Link::Idle, false)),
@@ -858,10 +988,14 @@ mod tests {
             now,
         );
         assert!(matches!(journey.state(), State::Failed(_)));
-        journey.observe(Ok(observation(None, None, now)), now);
+        observe_settled(&mut journey, Ok(observation(None, None, now)), now);
         assert!(matches!(journey.state(), State::Failed(_)));
         let mut journey = Journey::new();
-        journey.observe(Ok(observation(None, None, now)), now + REQUEST_AGE);
+        observe_settled(
+            &mut journey,
+            Ok(observation(None, None, now)),
+            now + REQUEST_AGE,
+        );
         assert!(matches!(journey.state(), State::Failed(_)));
         let mut journey = Journey::new();
         let token = Arc::new(AtomicU8::new(0));
@@ -870,7 +1004,8 @@ mod tests {
         }
         journey.cancel();
         assert_eq!(token.load(Ordering::Acquire), 2);
-        journey.observe(
+        observe_settled(
+            &mut journey,
             Ok(observation(
                 Some(snapshot(Link::Encrypted, true)),
                 Some(snapshot(Link::Encrypted, false)),
@@ -903,7 +1038,8 @@ mod tests {
         }
         journey.accepted(Ok(()), now);
         assert_eq!(journey.state(), &State::Pairing);
-        journey.observe(
+        observe_settled(
+            &mut journey,
             Ok(observation(
                 Some(snapshot(Link::Pairing, true)),
                 Some(snapshot(Link::Searching, false)),
@@ -912,7 +1048,8 @@ mod tests {
             now,
         );
         assert_eq!(journey.state(), &State::Pairing);
-        journey.observe(
+        observe_settled(
+            &mut journey,
             Ok(observation(
                 Some(snapshot(Link::Encrypted, true)),
                 Some(snapshot(Link::Encrypted, false)),

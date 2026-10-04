@@ -134,6 +134,7 @@ pub struct View {
     pub role: Role,
     pub step: usize,
     pub needs_power_on_ack: bool,
+    pub needs_wired_ack: bool,
     pub can_transfer: bool,
     pub needs_recovery: bool,
     pub verification: bool,
@@ -159,6 +160,9 @@ struct FirmwareData {
     verified_locations: Vec<(Role, u64)>,
     // This is failure history, not a second mutable current state.
     retry_phase: Option<Phase>,
+    completion_gate: crate::completion_gate::CompletionGate<(usize, Phase)>,
+    wired_ack: bool,
+    wired_ack_available: bool,
 }
 impl FirmwareData {
     fn role(&self) -> Role {
@@ -173,7 +177,12 @@ enum FirmwareEvent<'a> {
     TransferResult(&'a Result<(), String>),
     Verified,
     PowerOn(Instant),
-    Observe(&'a Result<Snapshot, String>, Instant),
+    Observe(
+        &'a Result<Snapshot, String>,
+        Instant,
+        Option<crate::device_status::Mode>,
+    ),
+    ConfirmWired,
     Cancel,
 }
 impl IntoStateMachine for FirmwareData {
@@ -194,6 +203,18 @@ impl StatigState<FirmwareData> for Phase {
     ) -> Outcome<Self> {
         use Outcome::{Handled, Transition};
         match event {
+            FirmwareEvent::ConfirmWired
+                if data.wired_ack_available
+                    && data.release.factory()
+                    && data.role() == Role::Left
+                    && matches!(
+                        self,
+                        Phase::Disconnect | Phase::OffWait(_) | Phase::Reconnect
+                    ) =>
+            {
+                data.wired_ack = true;
+                return Handled;
+            }
             FirmwareEvent::AuthorizeInstall => {
                 if !matches!(self, Phase::Cancelled | Phase::Complete) {
                     data.install_authorized = true;
@@ -239,7 +260,7 @@ impl StatigState<FirmwareData> for Phase {
             }
             _ => {}
         }
-        let FirmwareEvent::Observe(observation, now) = event else {
+        let FirmwareEvent::Observe(observation, now, mode) = event else {
             return Handled;
         };
         if matches!(self, Phase::Complete | Phase::Cancelled) {
@@ -247,6 +268,9 @@ impl StatigState<FirmwareData> for Phase {
         }
         let (snapshot, phase) = match observation {
             Err(error) => {
+                data.completion_gate.reset();
+                data.wired_ack = false;
+                data.wired_ack_available = false;
                 if *self != Phase::Failed {
                     data.retry_phase = Some(match self {
                         Phase::OffWait(_)
@@ -296,7 +320,21 @@ impl StatigState<FirmwareData> for Phase {
             baseline.location,
             data.release.factory(),
         );
-        if returned {
+        data.wired_ack_available = returned && data.role() == Role::Left && data.release.factory();
+        if !returned {
+            data.wired_ack = false;
+        }
+        let return_allowed = data.role() != Role::Left
+            || if data.release.factory() {
+                data.wired_ack
+            } else {
+                *mode == Some(crate::device_status::Mode::Wired)
+            };
+        if data.completion_gate.ready(
+            (data.index, Phase::Disconnect),
+            returned && return_allowed,
+            *now,
+        ) {
             return if data.index == data.plan.len() - 1 {
                 Transition(Phase::Complete)
             } else {
@@ -304,6 +342,8 @@ impl StatigState<FirmwareData> for Phase {
                 data.baseline = None;
                 data.attempted = false;
                 data.already_current = false;
+                data.wired_ack = false;
+                data.completion_gate.reset();
                 Transition(Phase::Recovery)
             };
         }
@@ -326,7 +366,7 @@ impl StatigState<FirmwareData> for Phase {
             {
                 Phase::Reconnect
             }
-            Phase::Reconnect if connected => Phase::Disconnect,
+            Phase::Reconnect if connected && !returned => Phase::Disconnect,
             phase => phase,
         };
         if next == *self {
@@ -669,6 +709,9 @@ impl FirmwareJourney {
                 install_authorized: false,
                 verified_locations: vec![],
                 retry_phase: None,
+                completion_gate: Default::default(),
+                wired_ack: false,
+                wired_ack_available: false,
             }
             .state_machine(),
         }
@@ -693,6 +736,9 @@ impl FirmwareJourney {
                 install_authorized: false,
                 verified_locations: vec![],
                 retry_phase: None,
+                completion_gate: Default::default(),
+                wired_ack: false,
+                wired_ack_available: false,
             }
             .state_machine(),
         })
@@ -790,6 +836,14 @@ impl FirmwareJourney {
             instruction: instruction.into(),
             role: self.role(),
             step: self.machine.inner().index,
+            needs_wired_ack: self.machine.inner().wired_ack_available
+                && self.is_factory()
+                && self.role() == Role::Left
+                && !self.machine.inner().wired_ack
+                && matches!(
+                    *self.machine.state(),
+                    Phase::Disconnect | Phase::OffWait(_) | Phase::Reconnect
+                ),
             needs_power_on_ack: *self.machine.state() == Phase::PowerOn,
             can_transfer: *self.machine.state() == Phase::Approval
                 && !self.machine.inner().attempted,
@@ -960,15 +1014,50 @@ impl FirmwareJourney {
         self.machine.handle(&FirmwareEvent::Verified);
         Ok(())
     }
+    pub(crate) fn completion_remaining(&self) -> Option<Duration> {
+        if matches!(
+            *self.machine.state(),
+            Phase::Disconnect
+                | Phase::OffWait(_)
+                | Phase::PowerOn
+                | Phase::StartWait(_)
+                | Phase::Reconnect
+        ) {
+            self.machine
+                .inner()
+                .completion_gate
+                .remaining(Instant::now())
+        } else {
+            None
+        }
+    }
+    pub fn confirm_wired(&mut self) {
+        self.machine.handle(&FirmwareEvent::ConfirmWired);
+    }
     pub fn confirm_power_on(&mut self) {
         self.machine.handle(&FirmwareEvent::PowerOn(Instant::now()));
     }
     pub fn observe(&mut self, observation: Result<Snapshot, String>) {
         self.observe_at(observation, Instant::now());
     }
+    pub(crate) fn observe_with_mode(
+        &mut self,
+        observation: Result<Snapshot, String>,
+        mode: Option<crate::device_status::Mode>,
+    ) {
+        self.observe_mode_at(observation, mode, Instant::now());
+    }
     fn observe_at(&mut self, observation: Result<Snapshot, String>, now: Instant) {
+        self.observe_mode_at(observation, None, now);
+    }
+    fn observe_mode_at(
+        &mut self,
+        observation: Result<Snapshot, String>,
+        mode: Option<crate::device_status::Mode>,
+        now: Instant,
+    ) {
         self.machine
-            .handle(&FirmwareEvent::Observe(&observation, now));
+            .handle(&FirmwareEvent::Observe(&observation, now, mode));
     }
     pub fn cancel(&mut self) {
         self.machine.handle(&FirmwareEvent::Cancel);
@@ -995,6 +1084,118 @@ fn reconcile_prior(
 mod tests {
     use super::*;
     use crate::device::Device;
+    fn settle(journey: &mut FirmwareJourney, snapshot: Result<Snapshot, String>) {
+        let now = Instant::now();
+        journey.observe_mode_at(
+            snapshot.clone(),
+            Some(crate::device_status::Mode::Wired),
+            now,
+        );
+        assert!(!journey.view().complete);
+        journey.observe_mode_at(
+            snapshot,
+            Some(crate::device_status::Mode::Wired),
+            now + Duration::from_secs(5),
+        );
+    }
+    #[test]
+    fn left_return_requires_live_wired_for_a_full_window_and_resets_on_mode_loss() {
+        use crate::device_status::Mode;
+        let mut journey =
+            FirmwareJourney::new_scoped(crate::release::fixture(), Scope::Part(Role::Left));
+        unsafe {
+            journey.machine.inner_mut().baseline = Some(Baseline {
+                location: 10,
+                mount: BootMount {
+                    path: PathBuf::new(),
+                    info: String::new(),
+                },
+                folder: PathBuf::new(),
+                bytes: vec![],
+            });
+            *journey.machine.state_mut() = Phase::Disconnect;
+        }
+        let now = Instant::now();
+        for mode in [None, Some(Mode::Dongle), Some(Mode::Bluetooth)] {
+            journey.observe_mode_at(Ok(normal(Role::Left, 10)), mode, now);
+            journey.observe_mode_at(
+                Ok(normal(Role::Left, 10)),
+                mode,
+                now + Duration::from_secs(20),
+            );
+            assert!(!journey.view().complete);
+        }
+        journey.observe_mode_at(
+            Ok(normal(Role::Left, 10)),
+            Some(Mode::Wired),
+            now + Duration::from_secs(21),
+        );
+        journey.observe_mode_at(
+            Ok(normal(Role::Left, 10)),
+            Some(Mode::Wired),
+            now + Duration::from_secs(25),
+        );
+        assert!(!journey.view().complete);
+        journey.observe_mode_at(
+            Ok(normal(Role::Left, 10)),
+            Some(Mode::Dongle),
+            now + Duration::from_secs(26),
+        );
+        journey.observe_mode_at(
+            Ok(normal(Role::Left, 10)),
+            Some(Mode::Wired),
+            now + Duration::from_secs(27),
+        );
+        journey.observe_mode_at(
+            Ok(normal(Role::Left, 10)),
+            Some(Mode::Wired),
+            now + Duration::from_secs(31),
+        );
+        assert!(!journey.view().complete);
+        journey.observe_mode_at(
+            Ok(normal(Role::Left, 10)),
+            Some(Mode::Wired),
+            now + Duration::from_secs(32),
+        );
+        assert!(journey.view().complete);
+    }
+    #[test]
+    fn factory_left_return_requires_explicit_wired_confirmation_after_normal_usb_return() {
+        let mut journey = model(Role::Left);
+        unsafe {
+            journey.machine.inner_mut().release = TargetRelease::Factory(
+                FactoryRelease::at(std::env::temp_dir().join("nocfree-wired-ack-no-sources"))
+                    .unwrap(),
+            );
+        }
+        let now = Instant::now();
+        let stock = || {
+            Ok(Snapshot {
+                devices: vec![Device {
+                    location: 10,
+                    vendor: 0x2886,
+                    product: 0x8029,
+                    name: "NocFree & ANSI".into(),
+                }],
+                mounts: vec![],
+            })
+        };
+        journey.confirm_wired();
+        journey.observe_at(stock(), now);
+        journey.observe_at(stock(), now + Duration::from_secs(20));
+        assert!(!journey.view().complete);
+        assert!(journey.view().needs_wired_ack);
+        journey.confirm_wired();
+        journey.observe_at(stock(), now + Duration::from_secs(21));
+        assert!(!journey.view().complete);
+        journey.observe_at(Ok(Snapshot::default()), now + Duration::from_secs(22));
+        journey.observe_at(stock(), now + Duration::from_secs(23));
+        assert!(journey.view().needs_wired_ack);
+        journey.confirm_wired();
+        journey.observe_at(stock(), now + Duration::from_secs(24));
+        journey.observe_at(stock(), now + Duration::from_secs(29));
+        assert!(journey.view().complete);
+    }
     fn archive_with(image: &ReleaseImage) -> Vec<u8> {
         let mut archive = device::tests::archive();
         let (start, target) = target(image).unwrap();
@@ -1164,7 +1365,16 @@ mod tests {
         unsafe {
             *journey.machine.state_mut() = Phase::Reconnect;
         }
-        journey.observe_at(Ok(normal(Role::Right, 10)), now + Duration::from_secs(18));
+        journey.observe_mode_at(
+            Ok(normal(Role::Right, 10)),
+            None,
+            now + Duration::from_secs(18),
+        );
+        journey.observe_mode_at(
+            Ok(normal(Role::Right, 10)),
+            None,
+            now + Duration::from_secs(23),
+        );
         assert_eq!(journey.role(), Role::Left);
         assert_eq!(*journey.machine.state(), Phase::Recovery);
     }
@@ -1201,7 +1411,7 @@ mod tests {
                 unsafe {
                     *journey.machine.state_mut() = phase;
                 }
-                journey.observe(Ok(normal(role, 10)));
+                settle(&mut journey, Ok(normal(role, 10)));
                 assert!(journey.view().complete || journey.view().needs_recovery);
                 assert_ne!(*journey.machine.state(), phase);
             }
@@ -1281,7 +1491,7 @@ mod tests {
             .handle(&FirmwareEvent::RecoverySaved(&baseline, true));
         assert_eq!(journey.view().title, "Already latest version");
         assert!(!journey.view().can_transfer);
-        journey.observe(Ok(normal(Role::Right, 10)));
+        settle(&mut journey, Ok(normal(Role::Right, 10)));
         assert_eq!(journey.role(), Role::Left);
         assert!(!journey.machine.inner().already_current);
         assert_eq!(journey.view().title, "Connect your keyboard");
@@ -1443,6 +1653,9 @@ mod tests {
                 install_authorized: true,
                 verified_locations: vec![],
                 retry_phase: None,
+                completion_gate: Default::default(),
+                wired_ack: false,
+                wired_ack_available: false,
             }
             .state_machine(),
         };
@@ -1525,7 +1738,7 @@ mod tests {
             journey.observe(snapshot(wrong));
             assert!(!journey.view().complete);
             assert_eq!(journey.role(), role);
-            journey.observe(snapshot(role));
+            settle(&mut journey, snapshot(role));
             assert!(journey.view().complete);
             assert_eq!(journey.role(), role);
         }
