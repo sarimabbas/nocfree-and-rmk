@@ -8,6 +8,7 @@ pub enum Page {
     Recovery,
     Pairing,
     Firmware,
+    Restore,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Start {
@@ -15,6 +16,7 @@ pub enum Start {
     Recovery(Role),
     Pairing,
     Firmware,
+    Restore,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Stage {
@@ -36,6 +38,7 @@ fn select(page: &Page) -> Outcome<State> {
         Page::Recovery => State::recovery(stage),
         Page::Pairing => State::pairing(stage),
         Page::Firmware => State::firmware(stage),
+        Page::Restore => State::restore(stage),
     })
 }
 fn entry(
@@ -60,6 +63,7 @@ fn entry(
                 (Page::Recovery, Stage::Setup(Some(role))) => Some(Start::Recovery(role)),
                 (Page::Pairing, _) => Some(Start::Pairing),
                 (Page::Firmware, _) => Some(Start::Firmware),
+                (Page::Restore, _) => Some(Start::Restore),
                 _ => None,
             };
             if let Some(start) = start {
@@ -86,6 +90,10 @@ impl Storage {
         entry(Page::Pairing, stage, event, context)
     }
     #[state]
+    fn restore(stage: &mut Stage, event: &Event, context: &mut Option<Start>) -> Outcome<State> {
+        entry(Page::Restore, stage, event, context)
+    }
+    #[state]
     fn firmware(stage: &mut Stage, event: &Event, context: &mut Option<Start>) -> Outcome<State> {
         entry(Page::Firmware, stage, event, context)
     }
@@ -103,6 +111,7 @@ impl Navigation {
             State::Recovery { stage } => (Page::Recovery, *stage),
             State::Pairing { stage } => (Page::Pairing, *stage),
             State::Firmware { stage } => (Page::Firmware, *stage),
+            State::Restore { stage } => (Page::Restore, *stage),
         }
     }
     pub fn page(&self) -> Page {
@@ -119,7 +128,8 @@ impl Navigation {
     }
     pub fn can_start(&self) -> bool {
         self.setup()
-            && (matches!(self.page(), Page::Pairing | Page::Firmware) || self.selected().is_some())
+            && (matches!(self.page(), Page::Pairing | Page::Firmware | Page::Restore)
+                || self.selected().is_some())
     }
     pub fn navigate(&mut self, page: Page) {
         self.0
@@ -148,6 +158,7 @@ mod tests {
             Page::Recovery,
             Page::Pairing,
             Page::Firmware,
+            Page::Restore,
         ] {
             let mut nav = Navigation::default();
             nav.navigate(page);

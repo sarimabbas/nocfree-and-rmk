@@ -31,7 +31,7 @@ impl Procedure {
                     "Disconnect the other parts from USB. Unplug the right USB cable, then reconnect it to the same port."
                 }
                 Role::Receiver => {
-                    "Disconnect both halves from USB. Unplug the dongle, then reconnect it to the same port."
+                    "Unplug both halves and the dongle for five seconds. Reconnect only the dongle to the same port; leave left USB unplugged."
                 }
             },
             Self::FactoryLeft => {
@@ -41,7 +41,7 @@ impl Procedure {
                 "Factory firmware: turn the right half ON and keep USB connected. Hold Fn + the main-row 0 key for five seconds, then release."
             }
             Self::FactoryReceiver => {
-                "Factory firmware: keep only the dongle connected by USB. Using its paired factory left half in 2.4G mode, hold Fn + 6 for five seconds. This requires the factory Fn-layer 6 key mapped to DongleDFU."
+                "Factory firmware: keep only the dongle connected by USB. Move its paired factory left half to top DONGLE, with left USB unplugged, and hold Fn + 6 for five seconds. This requires the factory Fn-layer 6 key mapped to DongleDFU."
             }
             Self::RuntimeApp => {
                 "RMK firmware: keep USB connected. We’re opening its recovery drive automatically."

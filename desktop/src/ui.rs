@@ -44,6 +44,7 @@ use gpui_kit::component::{
     stepper::{Stepper, StepperItem},
 };
 
+use crate::factory_release::FactoryRelease;
 use crate::install_journey::{self, Machine as InstallMachine, Stage as InstallStage};
 use crate::navigation::{Navigation, Page, Start};
 use gpui_kit::component::input::{Input, InputEvent, InputState};
@@ -58,6 +59,8 @@ pub struct Companion {
     appearance_subscription: Option<gpui::Subscription>,
     dongle_connected: bool,
     bluetooth_connected: bool,
+    factory_bluetooth_connected: bool,
+    factory_release: Option<FactoryRelease>,
     pairing: PairingJourney,
     pairing_observation: Option<dongle_pairing::Observation>,
     pairing_generation: u64,
@@ -125,11 +128,16 @@ impl Companion {
                 if bluetooth_checked.is_none_or(|t| t.elapsed() >= Duration::from_secs(10)) {
                     let connected = cx
                         .background_executor()
-                        .spawn(async { device::bluetooth_connected() })
+                        .spawn(async { device::bluetooth_links() })
                         .await;
                     let _ = this.update(cx, |this, cx| {
-                        this.bluetooth_connected = connected;
-                        this.bluetooth_seen = Some(Instant::now());
+                        if let Some((rmk, factory)) = connected {
+                            this.bluetooth_connected = rmk;
+                            this.factory_bluetooth_connected = factory;
+                            this.bluetooth_seen = Some(Instant::now());
+                        } else {
+                            this.bluetooth_seen = None;
+                        }
                         cx.notify();
                     });
                     bluetooth_checked = Some(Instant::now());
@@ -177,7 +185,7 @@ impl Companion {
                                                         && d.name == "NocFree RMK Receiver"))
                                         })
                                     });
-                                if this.navigation.page() == Page::Firmware
+                                if this.firmware_page()
                                     && !this.navigation.setup()
                                     && !this.operation.busy()
                                     && let Some(journey) = this.firmware.as_mut()
@@ -256,7 +264,10 @@ impl Companion {
                         && !this.operation.busy()
                         && (this.navigation.setup()
                             || this.install_checks_active()
-                            || !matches!(this.navigation.page(), Page::Firmware | Page::Pairing))
+                            || !matches!(
+                                this.navigation.page(),
+                                Page::Firmware | Page::Restore | Page::Pairing
+                            ))
                         && !matches!(
                             &this.rescue.state(),
                             RecoveryState::Identify(_) | RecoveryState::Guiding(_, _)
@@ -280,7 +291,7 @@ impl Companion {
                             && (this.navigation.setup()
                                 || !matches!(
                                     this.navigation.page(),
-                                    Page::Firmware | Page::Pairing
+                                    Page::Firmware | Page::Restore | Page::Pairing
                                 ))
                             && !matches!(
                                 &this.rescue.state(),
@@ -303,7 +314,10 @@ impl Companion {
                     (!this.backup_state.active())
                         && (this.navigation.setup()
                             || this.install_checks_active()
-                            || !matches!(this.navigation.page(), Page::Firmware | Page::Pairing))
+                            || !matches!(
+                                this.navigation.page(),
+                                Page::Firmware | Page::Restore | Page::Pairing
+                            ))
                         && crate::device_status::battery_available(
                             &this.device_key,
                             &this.rescue.state(),
@@ -395,6 +409,8 @@ impl Companion {
             appearance_subscription: None,
             dongle_connected: false,
             bluetooth_connected: false,
+            factory_bluetooth_connected: false,
+            factory_release: None,
             pairing: PairingJourney::new(),
             pairing_observation: None,
             pairing_generation: 0,
@@ -484,21 +500,173 @@ impl Companion {
         true
     }
 
+    fn firmware_page(&self) -> bool {
+        matches!(self.navigation.page(), Page::Firmware | Page::Restore)
+    }
+    fn load_factory_sources(
+        &mut self,
+        selected: Option<(RecoveryRole, PathBuf)>,
+        cx: &mut Context<Self>,
+    ) {
+        if self.navigation.page() != Page::Restore
+            || !self.navigation.setup()
+            || self.operation.busy()
+        {
+            return;
+        }
+        let Some(ticket) =
+            self.operation
+                .begin(crate::operation::Kind::PrepareFirmware, None, None)
+        else {
+            return;
+        };
+        let existing = self.factory_release.clone();
+        cx.spawn(async move |this, cx| {
+            let result = cx
+                .background_executor()
+                .spawn(async move {
+                    let mut release = match existing {
+                        Some(r) => r,
+                        None => FactoryRelease::discover()?,
+                    };
+                    if let Some((role, path)) = selected {
+                        release.import(role, &path)?;
+                    }
+                    Ok::<_, String>(release)
+                })
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                if !this.operation.complete(ticket) {
+                    return;
+                }
+                match result {
+                    Ok(release) => this.factory_release = Some(release),
+                    Err(error) => this.operation.fail(error),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+    fn choose_factory_file(&mut self, role: RecoveryRole, cx: &mut Context<Self>) {
+        let paths = cx.prompt_for_paths(gpui::PathPromptOptions {
+            files: true,
+            directories: false,
+            multiple: false,
+            prompt: Some("Choose factory firmware".into()),
+        });
+        cx.spawn(async move |this, cx| {
+            if let Ok(Ok(Some(paths))) = paths.await
+                && paths.len() == 1
+            {
+                let _ = this.update(cx, |this, cx| {
+                    this.load_factory_sources(Some((role, paths[0].clone())), cx)
+                });
+            }
+        })
+        .detach();
+    }
+    fn factory_sources_screen(&self, cx: &mut Context<Self>) -> gpui::Div {
+        let mut cards = div().flex().gap(px(12.)).w_full();
+        for (role, label, id) in [
+            (RecoveryRole::Left, "Left half", "factory-left"),
+            (RecoveryRole::Right, "Right half", "factory-right"),
+            (RecoveryRole::Receiver, "USB dongle", "factory-dongle"),
+        ] {
+            let ready = self
+                .factory_release
+                .as_ref()
+                .is_some_and(|release| release.has(role));
+            let content = div()
+                .flex()
+                .flex_col()
+                .items_center()
+                .gap(px(18.))
+                .child(img(peripheral_image(role)).w(px(140.)).h(px(110.)))
+                .child(label)
+                .child(
+                    div()
+                        .text_size(px(12.))
+                        .text_color(cx.theme().muted_foreground)
+                        .child(if ready {
+                            "Factory backup ready"
+                        } else {
+                            "Choose a factory file"
+                        }),
+                );
+            cards = cards.child(
+                div()
+                    .id(id)
+                    .flex_1()
+                    .on_drop(
+                        cx.listener(move |this, paths: &gpui::ExternalPaths, _, cx| {
+                            if paths.0.len() == 1 {
+                                this.load_factory_sources(Some((role, paths.0[0].clone())), cx);
+                            }
+                        }),
+                    )
+                    .child(
+                        Button::new(id)
+                            .accessibility_label(format!(
+                                "{label}: {}",
+                                if ready {
+                                    "factory backup ready"
+                                } else {
+                                    "choose factory file"
+                                }
+                            ))
+                            .outline()
+                            .w_full()
+                            .h(px(225.))
+                            .cursor_pointer()
+                            .disabled(self.operation.busy())
+                            .child(content)
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.choose_factory_file(role, cx)
+                            })),
+                    ),
+            );
+        }
+        let mut body = div().flex().flex_col().gap(px(24.)).child(div().text_center().text_color(cx.theme().muted_foreground).child("Restore your saved factory firmware. Your current RMK firmware will be backed up first.")).child(cards);
+        if self.operation.busy() {
+            body = body.child(waiting_indicator("Checking factory backups…", cx));
+        }
+        if let Some(error) = self.operation.error() {
+            body = body.child(
+                div()
+                    .text_center()
+                    .text_color(cx.theme().danger)
+                    .child(error.to_owned()),
+            );
+        }
+        body
+    }
     fn start_selected_journey(&mut self, cx: &mut Context<Self>) {
         if self.operation.busy() {
+            return;
+        }
+        if self.navigation.page() == Page::Restore
+            && (self.operation.error().is_some()
+                || !self
+                    .factory_release
+                    .as_ref()
+                    .is_some_and(FactoryRelease::complete))
+        {
             return;
         }
         match self.navigation.next() {
             Some(Start::Backup(role)) => self.start_copies(role, cx),
             Some(Start::Recovery(role)) => self.start_recovery(role, cx),
             Some(Start::Pairing) => self.start_pairing(cx),
-            Some(Start::Firmware) => self.start_firmware(cx),
+            Some(Start::Firmware | Start::Restore) => self.start_firmware(cx),
             None => return,
         }
         cx.notify();
     }
     fn setup_screen(&self, cx: &mut Context<Self>) -> JourneyScreen {
         let body = match self.navigation.page() {
+            Page::Restore => self.factory_sources_screen(cx),
             Page::Backups | Page::Home => {
                 self.peripheral_picker("Choose the part you want to back up", cx)
             }
@@ -520,11 +688,17 @@ impl Companion {
                 cx,
             ),
         };
+        let enabled = self.navigation.can_start()
+            && !self.operation.busy()
+            && (self.navigation.page() != Page::Restore
+                || (self
+                    .factory_release
+                    .as_ref()
+                    .is_some_and(FactoryRelease::complete)
+                    && self.operation.error().is_none()));
         let next = button("start-journey", "Next")
-            .disabled(!self.navigation.can_start())
-            .when(!self.navigation.can_start(), |button| {
-                button.cursor_default()
-            })
+            .disabled(!enabled)
+            .when(!enabled, |button| button.cursor_default())
             .on_click(cx.listener(|this, _, _, cx| this.start_selected_journey(cx)));
         JourneyScreen {
             body,
@@ -630,7 +804,7 @@ impl Companion {
         let cancellable = !self.navigation.setup()
             && !self.operation.busy()
             && match self.navigation.page() {
-                Page::Firmware => self
+                Page::Firmware | Page::Restore => self
                     .install
                     .as_ref()
                     .is_none_or(|m| m.stage() != InstallStage::Complete),
@@ -862,7 +1036,7 @@ impl Companion {
                 recovery_guide(Some(role), "Let’s try again", error.clone(), None, cx),
                 Some(
                     button("retry-recovery", "Next").on_click(cx.listener(|this, _, _, cx| {
-                        if this.navigation.page() == Page::Firmware {
+                        if this.firmware_page() {
                             this.cancel_recovery();
                             this.operation.clear_error();
                             this.advance_firmware(cx);
@@ -882,7 +1056,7 @@ impl Companion {
     }
 
     fn install_pairing_active(&self) -> bool {
-        self.navigation.page() == Page::Firmware
+        self.firmware_page()
             && !self.navigation.setup()
             && self
                 .install
@@ -894,7 +1068,7 @@ impl Companion {
             || self.install_pairing_active()
     }
     fn install_checks_active(&self) -> bool {
-        self.navigation.page() == Page::Firmware
+        self.firmware_page()
             && self.install.as_ref().is_some_and(|m| {
                 matches!(
                     m.stage(),
@@ -936,15 +1110,61 @@ impl Companion {
         } else {
             self.telemetry_seen
         };
-        let evidence = install_journey::Evidence {
-            mode: status.left.mode,
-            route: status.connection,
-            left_usb: usb_fresh.then_some(status.left.usb_connected),
-            right_usb: usb_fresh.then_some(status.right.usb_connected),
-            dongle_usb: usb_fresh.then_some(self.dongle_connected),
-            right_link: status.right.link_connected,
-            fresh: usb_fresh && source_seen.is_some_and(|t| t.elapsed() < Duration::from_secs(30)),
-            observed_at: source_seen.unwrap_or_else(Instant::now),
+        let factory = self
+            .install
+            .as_ref()
+            .is_some_and(|m| m.target() == install_journey::Target::Factory);
+        let evidence = if factory {
+            // Stock left and dongle share a descriptor and can reuse one port.
+            // Fresh inventory proves only how many are present. The owner
+            // confirms the intended setup before the typing check.
+            let stock_count = self
+                .device_key
+                .iter()
+                .filter(|(p, v, id, name)| {
+                    crate::device::Device {
+                        location: *p,
+                        vendor: *v,
+                        product: *id,
+                        name: name.clone(),
+                    }
+                    .factory_left()
+                })
+                .count();
+            let bt_seen = self
+                .bluetooth_seen
+                .is_some_and(|t| t.elapsed() < Duration::from_secs(30));
+            install_journey::Evidence {
+                mode: None,
+                route: if self.factory_bluetooth_connected {
+                    crate::status_strip::Connection::Bluetooth
+                } else {
+                    crate::status_strip::Connection::Unknown
+                },
+                left_usb: None,
+                right_usb: usb_fresh
+                    .then_some(!crate::device_status::right_usb(&self.device_key).is_empty()),
+                dongle_usb: None,
+                factory_usb_count: usb_fresh.then_some(stock_count),
+                right_link: None,
+                bluetooth_connected: bt_seen.then_some(self.factory_bluetooth_connected),
+                fresh: usb_fresh && bt_seen,
+                observed_at: self.discovery_seen.unwrap_or_else(Instant::now),
+            }
+        } else {
+            install_journey::Evidence {
+                mode: status.left.mode,
+                factory_usb_count: None,
+                route: status.connection,
+                left_usb: usb_fresh.then_some(status.left.usb_connected),
+                right_usb: usb_fresh.then_some(status.right.usb_connected),
+                dongle_usb: usb_fresh.then_some(self.dongle_connected),
+                right_link: status.right.link_connected,
+                bluetooth_connected: self.bluetooth_seen.map(|_| self.bluetooth_connected),
+                fresh: usb_fresh
+                    && source_seen.is_some_and(|t| t.elapsed() < Duration::from_secs(30)),
+                observed_at: source_seen.unwrap_or_else(Instant::now),
+            }
         };
         if let Some(install) = self.install.as_mut() {
             install.observe(install.ticket(), evidence);
@@ -998,8 +1218,17 @@ impl Companion {
             InstallStage::Setup(mode) | InstallStage::Typing(mode) => {
                 let typing = matches!(stage, InstallStage::Typing(_));
                 let ticket = self.install.as_ref().expect("active install").ticket();
-                let mut body =
-                    recovery_guide(None, mode.label(), mode.install_instruction(), None, cx);
+                let mut body = recovery_guide(
+                    None,
+                    mode.label(),
+                    self.install
+                        .as_ref()
+                        .expect("active install")
+                        .target()
+                        .instruction(mode),
+                    None,
+                    cx,
+                );
                 if mode == crate::device_status::Mode::Bluetooth && !typing {
                     body = body.child(
                         Button::new("open-bluetooth-settings")
@@ -1049,7 +1278,18 @@ impl Companion {
                 } else {
                     // A lost route invalidates the old confirmation and its widget together.
                     self.typing_input = None;
-                    body = body.child(waiting_indicator("Waiting for this connection…", cx));
+                    if self.install.as_ref().is_some_and(|m| {
+                        m.target() == install_journey::Target::Factory && m.can_next()
+                    }) {
+                        body = body.child(
+                            div()
+                                .text_center()
+                                .text_color(cx.theme().muted_foreground)
+                                .child("Confirm this setup, then click Next."),
+                        );
+                    } else {
+                        body = body.child(waiting_indicator("Waiting for this connection…", cx));
+                    }
                 }
                 let enabled = self.install.as_ref().is_some_and(InstallMachine::can_next);
                 JourneyScreen {
@@ -1077,7 +1317,11 @@ impl Companion {
                 body: recovery_guide(
                     None,
                     "You’re ready",
-                    "RMK is installed. Pairing, wired, Bluetooth and dongle typing checks are complete.",
+                    if self.navigation.page() == Page::Restore {
+                        "Factory firmware is restored. Wired, Bluetooth and dongle typing checks are complete."
+                    } else {
+                        "RMK is installed. Pairing, wired, Bluetooth and dongle typing checks are complete."
+                    },
                     None,
                     cx,
                 ),
@@ -1320,7 +1564,13 @@ impl Companion {
         self.cancel_recovery();
         self.operation.clear_error();
         self.firmware = None;
-        self.install = Some(InstallMachine::new());
+        let factory = self.navigation.page() == Page::Restore;
+        self.install = Some(if factory {
+            InstallMachine::factory()
+        } else {
+            InstallMachine::new()
+        });
+        let originals = self.factory_release.clone();
         self.typing_input = None;
 
         let Some(ticket) =
@@ -1332,15 +1582,22 @@ impl Companion {
         cx.spawn(async move |this, cx| {
             let result = cx
                 .background_executor()
-                .spawn(async { FirmwareRelease::bundled() })
+                .spawn(async move {
+                    if factory {
+                        FirmwareJourney::factory(
+                            originals.ok_or("Choose all three factory backups first.")?,
+                        )
+                    } else {
+                        FirmwareRelease::bundled().map(FirmwareJourney::new)
+                    }
+                })
                 .await;
             let _ = this.update(cx, |this, cx| {
                 if !this.operation.complete(ticket) {
                     return;
                 }
                 match result {
-                    Ok(release) => {
-                        let mut journey = FirmwareJourney::new(release);
+                    Ok(mut journey) => {
                         journey.authorize_install();
 
                         this.firmware = Some(journey);
@@ -1398,7 +1655,7 @@ impl Companion {
     }
 
     fn advance_firmware(&mut self, cx: &mut Context<Self>) {
-        if self.navigation.page() != Page::Firmware
+        if !self.firmware_page()
             || self.navigation.setup()
             || self.operation.busy()
             || self.operation.error().is_some()
@@ -1417,11 +1674,18 @@ impl Companion {
             return;
         }
         if view.complete {
+            if let Some(journey) = self.firmware.as_ref() {
+                for (role, location) in journey.verified_locations() {
+                    self.recovery_locations[role_index(role)] = Some(location);
+                }
+            }
             if let Some(install) = self.install.as_mut() {
                 install.installed(install.ticket(), Ok(()));
             }
             self.cancel_recovery();
-            self.start_pairing(cx);
+            if self.install_pairing_active() {
+                self.start_pairing(cx);
+            }
             return;
         }
         if view.can_transfer {
@@ -1445,7 +1709,7 @@ impl Companion {
                     tokio::select! {
                         result = &mut worker => {
                             let _ = this.update(cx, |this, cx| {
-                                if this.navigation.page() != Page::Firmware || !this.rescue_cancel.as_ref().is_some_and(|c| Arc::ptr_eq(c, &cancelled)) || cancelled.load(Ordering::Relaxed) { return; }
+                                if !this.firmware_page() || !this.rescue_cancel.as_ref().is_some_and(|c| Arc::ptr_eq(c, &cancelled)) || cancelled.load(Ordering::Relaxed) { return; }
                                 this.rescue_cancel = None;
                                 match result {
                                     Ok(session) => {
@@ -1725,18 +1989,18 @@ impl Companion {
         }
         if (self.navigation.page() == Page::Recovery && page != Page::Recovery)
             || leaving_backup
-            || (self.navigation.page() == Page::Firmware && page != Page::Firmware)
+            || (self.firmware_page() && page != self.navigation.page())
         {
             self.cancel_recovery();
         }
-        if self.navigation.page() == Page::Firmware
-            && page != Page::Firmware
+        if self.firmware_page()
+            && page != self.navigation.page()
             && let Some(journey) = self.firmware.as_mut()
             && !journey.view().complete
         {
             journey.cancel();
         }
-        if self.navigation.page() == Page::Firmware && page != Page::Firmware {
+        if self.firmware_page() && page != self.navigation.page() {
             if let Some(install) = self.install.as_mut() {
                 install.cancel();
             }
@@ -1750,6 +2014,9 @@ impl Companion {
         }
         self.operation.clear_error();
         self.navigation.navigate(page);
+        if page == Page::Restore {
+            self.load_factory_sources(None, cx);
+        }
         cx.notify();
     }
 
@@ -1804,11 +2071,16 @@ impl Render for Companion {
                     .on_click(cx.listener(|this, _, _, cx| this.navigate(Page::Firmware, cx))),
             );
         }
-        if self.home.can_restore() {
+        if self.home.can_restore() || self.navigation.page() == Page::Restore {
             tasks = tasks.child(
                 SidebarMenuItem::new("Restore factory")
                     .icon(IconName::Undo)
-                    .disable(true),
+                    .mb(px(6.))
+                    .h(px(36.))
+                    .when(!self.operation.busy(), |item| item.cursor_pointer())
+                    .disable(self.operation.busy())
+                    .active(self.navigation.page() == Page::Restore)
+                    .on_click(cx.listener(|this, _, _, cx| this.navigate(Page::Restore, cx))),
             );
         }
         let navigation = Sidebar::new("navigation")
@@ -1821,7 +2093,12 @@ impl Render for Companion {
                     .font_weight(FontWeight::SEMIBOLD)
                     .child("NocFree RMK Companion"),
             )
-            .when(firmware_action.is_some(), |nav| nav.child(tasks))
+            .when(
+                firmware_action.is_some()
+                    || self.home.can_restore()
+                    || self.navigation.page() == Page::Restore,
+                |nav| nav.child(tasks),
+            )
             .child(
                 SidebarGroup::new("Additional utilities")
                     .child(self.nav_row(
@@ -1844,7 +2121,7 @@ impl Render for Companion {
                     )),
             );
 
-        let title = if self.navigation.page() == Page::Firmware && !self.navigation.setup() {
+        let title = if self.firmware_page() && !self.navigation.setup() {
             match self.install.as_ref().map(InstallMachine::stage) {
                 Some(InstallStage::Pairing) => "Check pairing".to_owned(),
                 Some(InstallStage::Setup(mode)) | Some(InstallStage::Typing(mode)) => {
@@ -1879,6 +2156,7 @@ impl Render for Companion {
                 Page::Recovery => "Enter recovery mode",
                 Page::Pairing => "Check pairing",
                 Page::Firmware => "Install RMK",
+                Page::Restore => "Restore factory",
             })
             .to_owned()
         };
@@ -1899,14 +2177,26 @@ impl Render for Companion {
                     heading = heading.child(flow_indicator(progress, "backup-steps", cx));
                 }
             }
-            Page::Firmware if !self.navigation.setup() => {
+            Page::Firmware | Page::Restore if !self.navigation.setup() => {
                 let current = match self.install.as_ref().map(InstallMachine::stage) {
                     Some(InstallStage::Installing) | None => {
                         self.firmware_view().map_or(0, |v| v.step)
                     }
                     Some(InstallStage::Pairing) => 3,
-                    Some(InstallStage::Setup(_)) | Some(InstallStage::Typing(_)) => 4,
-                    Some(InstallStage::Complete) => 5,
+                    Some(InstallStage::Setup(_)) | Some(InstallStage::Typing(_)) => {
+                        if self.navigation.page() == Page::Restore {
+                            3
+                        } else {
+                            4
+                        }
+                    }
+                    Some(InstallStage::Complete) => {
+                        if self.navigation.page() == Page::Restore {
+                            4
+                        } else {
+                            5
+                        }
+                    }
                     _ => 0,
                 };
                 heading = heading.child(
@@ -1915,9 +2205,13 @@ impl Render for Companion {
                         .selected_index(current)
                         .disabled(true)
                         .items(
-                            ["Dongle", "Right half", "Left half", "Pairing", "Test modes"]
-                                .into_iter()
-                                .map(|label| StepperItem::new().child(label)),
+                            (if self.navigation.page() == Page::Restore {
+                                vec!["Left half", "Right half", "Dongle", "Test modes"]
+                            } else {
+                                vec!["Dongle", "Right half", "Left half", "Pairing", "Test modes"]
+                            })
+                            .into_iter()
+                            .map(|label| StepperItem::new().child(label)),
                         ),
                 );
             }
@@ -1935,7 +2229,7 @@ impl Render for Companion {
                 },
                 Page::Recovery => self.recovery_screen(cx),
                 Page::Pairing => self.pairing_screen(cx),
-                Page::Firmware => self.install_screen(window, cx),
+                Page::Firmware | Page::Restore => self.install_screen(window, cx),
             }
         };
         let canvas = div()

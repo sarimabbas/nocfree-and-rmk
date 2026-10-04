@@ -12,6 +12,30 @@ static GENERATION: AtomicU64 = AtomicU64::new(1);
 pub(crate) const TOKEN: &str = "qwert HJKL h";
 const EVIDENCE_AGE: Duration = Duration::from_secs(45);
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum Target {
+    #[default]
+    Rmk,
+    Factory,
+}
+impl Target {
+    pub(crate) fn instruction(self, mode: Mode) -> &'static str {
+        if self == Self::Rmk {
+            return mode.install_instruction();
+        }
+        match mode {
+            Mode::Wired => {
+                "Connect left USB and move its switch to WIRED. Keep right ON with USB unplugged. Unplug the dongle and disconnect direct Bluetooth, then click Next."
+            }
+            Mode::Bluetooth => {
+                "Unplug both halves and the dongle. Move left to Bluetooth, keep right ON and connect NocFree in Bluetooth settings, then click Next."
+            }
+            Mode::Dongle => {
+                "Unplug both halves. Connect the dongle, move left to DONGLE and keep right ON. Disconnect direct Bluetooth, then click Next."
+            }
+        }
+    }
+}
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct Ticket {
     generation: u64,
@@ -36,11 +60,35 @@ pub(crate) struct Evidence {
     pub right_usb: Option<bool>,
     pub dongle_usb: Option<bool>,
     pub right_link: Option<bool>,
+    pub bluetooth_connected: Option<bool>,
+    pub factory_usb_count: Option<usize>,
     pub fresh: bool,
     pub observed_at: Instant,
 }
 impl Evidence {
-    fn ready(self, mode: Mode) -> bool {
+    fn ready(self, mode: Mode, target: Target) -> bool {
+        if target == Target::Factory {
+            return self.fresh
+                && self.observed_at.elapsed() <= EVIDENCE_AGE
+                && self.right_usb == Some(false)
+                && match mode {
+                    Mode::Wired => {
+                        self.factory_usb_count == Some(1)
+                            && self.bluetooth_connected == Some(false)
+                            && matches!(self.route, Connection::Unknown | Connection::Usb)
+                    }
+                    Mode::Bluetooth => {
+                        self.factory_usb_count == Some(0)
+                            && self.bluetooth_connected == Some(true)
+                            && self.route == Connection::Bluetooth
+                    }
+                    Mode::Dongle => {
+                        self.factory_usb_count == Some(1)
+                            && self.bluetooth_connected == Some(false)
+                            && matches!(self.route, Connection::Unknown | Connection::Dongle)
+                    }
+                };
+        }
         self.fresh
             && self.observed_at.elapsed() <= EVIDENCE_AGE
             && self.right_usb == Some(false)
@@ -78,6 +126,8 @@ impl Evidence {
             && self.dongle_usb == other.dongle_usb
             && self.right_link == other.right_link
             && self.fresh == other.fresh
+            && self.bluetooth_connected == other.bluetooth_connected
+            && self.factory_usb_count == other.factory_usb_count
     }
 }
 impl Mode {
@@ -102,6 +152,7 @@ mod machine {
     pub struct Install {
         pub generation: u64,
         pub phase: u64,
+        pub target: Target,
     }
     pub enum Event {
         Installed(Ticket, Result<(), String>),
@@ -129,7 +180,15 @@ mod machine {
                     match result {
                         Ok(()) => {
                             self.advance();
-                            Transition(State::pairing())
+                            match self.target {
+                                Target::Rmk => Transition(State::pairing()),
+                                Target::Factory => Transition(State::checking(
+                                    Mode::Wired,
+                                    None,
+                                    String::new(),
+                                    false,
+                                )),
+                            }
                         }
                         Err(error) => Transition(State::failed(error.clone())),
                     }
@@ -145,7 +204,7 @@ mod machine {
                     match result {
                         Ok(()) => {
                             self.advance();
-                            Transition(State::checking(Mode::Wired, None, String::new()))
+                            Transition(State::checking(Mode::Wired, None, String::new(), true))
                         }
                         Err(error) => Transition(State::failed(error.clone())),
                     }
@@ -160,6 +219,7 @@ mod machine {
             mode: &Mode,
             evidence: &Option<Evidence>,
             input: &String,
+            armed: &bool,
             event: &Event,
             context: &mut bool,
         ) -> Outcome<State> {
@@ -167,7 +227,8 @@ mod machine {
                 Event::Observed(ticket, latest) if self.current(*ticket) => {
                     *context = true;
                     let changed = evidence.is_some_and(|old| {
-                        !old.same_setup(*latest) || old.ready(*mode) != latest.ready(*mode)
+                        !old.same_setup(*latest)
+                            || old.ready(*mode, self.target) != latest.ready(*mode, self.target)
                     });
                     if changed {
                         // A recreated typing widget must not accept callbacks from
@@ -175,34 +236,56 @@ mod machine {
                         self.advance();
                     }
                     let keep = evidence.is_some_and(|old| {
-                        old.ready(*mode) && latest.ready(*mode) && old.same_setup(*latest)
+                        old.ready(*mode, self.target)
+                            && latest.ready(*mode, self.target)
+                            && old.same_setup(*latest)
                     });
                     Transition(State::checking(
                         *mode,
                         Some(*latest),
                         if keep { input.clone() } else { String::new() },
+                        *armed && !changed || self.target == Target::Rmk,
                     ))
                 }
                 Event::Input(ticket, text)
-                    if self.current(*ticket) && evidence.is_some_and(|e| e.ready(*mode)) =>
+                    if self.current(*ticket)
+                        && *armed
+                        && evidence.is_some_and(|e| e.ready(*mode, self.target)) =>
                 {
                     *context = true;
-                    Transition(State::checking(*mode, *evidence, text.clone()))
+                    Transition(State::checking(*mode, *evidence, text.clone(), *armed))
                 }
                 Event::Next(ticket)
                     if self.current(*ticket)
-                        && evidence.is_some_and(|e| e.ready(*mode))
+                        && self.target == Target::Factory
+                        && !*armed
+                        && evidence.is_some_and(|e| e.ready(*mode, self.target)) =>
+                {
+                    *context = true;
+                    self.advance();
+                    Transition(State::checking(*mode, *evidence, String::new(), true))
+                }
+                Event::Next(ticket)
+                    if self.current(*ticket)
+                        && evidence.is_some_and(|e| e.ready(*mode, self.target))
+                        && *armed
                         && input.trim() == TOKEN =>
                 {
                     *context = true;
                     self.advance();
                     match mode {
-                        Mode::Wired => {
-                            Transition(State::checking(Mode::Bluetooth, None, String::new()))
-                        }
-                        Mode::Bluetooth => {
-                            Transition(State::checking(Mode::Dongle, None, String::new()))
-                        }
+                        Mode::Wired => Transition(State::checking(
+                            Mode::Bluetooth,
+                            None,
+                            String::new(),
+                            self.target == Target::Rmk,
+                        )),
+                        Mode::Bluetooth => Transition(State::checking(
+                            Mode::Dongle,
+                            None,
+                            String::new(),
+                            self.target == Target::Rmk,
+                        )),
                         Mode::Dongle => Transition(State::complete()),
                     }
                 }
@@ -247,6 +330,15 @@ impl Default for Machine {
 }
 impl Machine {
     pub fn new() -> Self {
+        Self::for_target(Target::Rmk)
+    }
+    pub fn factory() -> Self {
+        Self::for_target(Target::Factory)
+    }
+    pub fn target(&self) -> Target {
+        self.machine.inner().target
+    }
+    fn for_target(target: Target) -> Self {
         Self {
             machine: machine::Install {
                 generation: GENERATION
@@ -255,6 +347,7 @@ impl Machine {
                     })
                     .expect("Install generation exhausted"),
                 phase: 0,
+                target,
             }
             .state_machine(),
         }
@@ -270,8 +363,13 @@ impl Machine {
         match self.machine.state() {
             machine::State::Installing {} => Stage::Installing,
             machine::State::Pairing {} => Stage::Pairing,
-            machine::State::Checking { mode, evidence, .. } => {
-                if evidence.is_some_and(|e| e.ready(*mode)) {
+            machine::State::Checking {
+                mode,
+                evidence,
+                armed,
+                ..
+            } => {
+                if *armed && evidence.is_some_and(|e| e.ready(*mode, self.target())) {
                     Stage::Typing(*mode)
                 } else {
                     Stage::Setup(*mode)
@@ -283,8 +381,9 @@ impl Machine {
         }
     }
     pub fn can_next(&self) -> bool {
-        matches!(self.machine.state(), machine::State::Checking {mode, evidence, input}
-            if evidence.is_some_and(|e| e.ready(*mode)) && input.trim() == TOKEN)
+        matches!(self.machine.state(), machine::State::Checking {mode, evidence, input, armed}
+            if evidence.is_some_and(|e| e.ready(*mode, self.target()))
+                && ((!*armed && self.target() == Target::Factory) || (*armed && input.trim() == TOKEN)))
     }
     pub fn text(&self) -> &str {
         match self.machine.state() {
@@ -332,6 +431,8 @@ mod tests {
             right_usb: Some(false),
             dongle_usb: Some(mode == Mode::Dongle),
             right_link: Some(true),
+            bluetooth_connected: Some(mode == Mode::Bluetooth),
+            factory_usb_count: None,
             fresh: true,
             observed_at: Instant::now(),
         }
@@ -341,6 +442,104 @@ mod tests {
         assert!(machine.installed(machine.ticket(), Ok(())));
         assert!(machine.paired(machine.ticket(), Ok(())));
         machine
+    }
+    fn factory_evidence(mode: Mode) -> Evidence {
+        let mut result = evidence(mode);
+        result.mode = None;
+        result.right_link = None;
+        result.left_usb = None;
+        result.dongle_usb = None;
+        result.factory_usb_count = Some(usize::from(mode != Mode::Bluetooth));
+        if mode != Mode::Bluetooth {
+            result.route = Connection::Unknown;
+        }
+        result
+    }
+    #[test]
+    fn factory_skips_rmk_pairing_and_requires_setup_ack_then_typing_for_every_mode() {
+        let mut machine = Machine::factory();
+        assert_eq!(machine.target(), Target::Factory);
+        assert!(machine.installed(machine.ticket(), Ok(())));
+        assert_eq!(machine.stage(), Stage::Setup(Mode::Wired));
+        assert!(!machine.paired(machine.ticket(), Ok(())));
+        for mode in [Mode::Wired, Mode::Bluetooth, Mode::Dongle] {
+            assert!(machine.observe(machine.ticket(), factory_evidence(mode)));
+            assert_eq!(machine.stage(), Stage::Setup(mode));
+            assert!(machine.can_next());
+            assert!(!machine.input(machine.ticket(), TOKEN.into()));
+            let setup_ticket = machine.ticket();
+            assert!(machine.next(setup_ticket));
+            assert_eq!(machine.stage(), Stage::Typing(mode));
+            assert!(!machine.next(setup_ticket));
+            assert!(!machine.can_next());
+            assert!(machine.input(machine.ticket(), TOKEN.into()));
+            assert!(machine.next(machine.ticket()));
+        }
+        assert_eq!(machine.stage(), Stage::Complete);
+    }
+    #[test]
+    fn factory_setup_requires_known_usb_and_bluetooth_facts_and_resets_after_route_loss() {
+        let mut machine = Machine::factory();
+        machine.installed(machine.ticket(), Ok(()));
+        for change in 0..4 {
+            let mut invalid = factory_evidence(Mode::Wired);
+            match change {
+                0 => invalid.bluetooth_connected = None,
+                1 => invalid.bluetooth_connected = Some(true),
+                2 => invalid.factory_usb_count = None,
+                _ => invalid.factory_usb_count = Some(2),
+            }
+            machine.observe(machine.ticket(), invalid);
+            assert!(!machine.can_next());
+            assert!(!machine.next(machine.ticket()));
+        }
+        machine.observe(machine.ticket(), factory_evidence(Mode::Wired));
+        assert!(machine.next(machine.ticket()));
+        let typing_ticket = machine.ticket();
+        let mut unplugged = factory_evidence(Mode::Wired);
+        unplugged.factory_usb_count = Some(0);
+        machine.observe(typing_ticket, unplugged);
+        machine.observe(machine.ticket(), factory_evidence(Mode::Wired));
+        assert_eq!(machine.stage(), Stage::Setup(Mode::Wired));
+        assert!(!machine.input(typing_ticket, TOKEN.into()));
+        assert!(!machine.input(machine.ticket(), TOKEN.into()));
+        assert!(machine.next(machine.ticket()));
+        assert!(machine.input(machine.ticket(), TOKEN.into()));
+        assert!(machine.next(machine.ticket()));
+    }
+    #[test]
+    fn factory_shared_identity_requires_unique_count_and_owner_ack_without_role_guessing() {
+        for mode in [Mode::Wired, Mode::Bluetooth, Mode::Dongle] {
+            let valid = factory_evidence(mode);
+            assert!(valid.left_usb.is_none());
+            assert!(valid.dongle_usb.is_none());
+            assert!(valid.ready(mode, Target::Factory));
+            for count in [None, Some(2), Some(usize::from(mode == Mode::Bluetooth))] {
+                let mut invalid = valid;
+                invalid.factory_usb_count = count;
+                assert!(!invalid.ready(mode, Target::Factory));
+            }
+        }
+        let mut machine = Machine::factory();
+        machine.installed(machine.ticket(), Ok(()));
+        let mut ambiguous = factory_evidence(Mode::Wired);
+        ambiguous.factory_usb_count = None;
+        machine.observe(machine.ticket(), ambiguous);
+        assert!(!machine.next(machine.ticket()));
+        machine.observe(machine.ticket(), factory_evidence(Mode::Wired));
+        assert_eq!(machine.stage(), Stage::Setup(Mode::Wired));
+        assert!(!machine.input(machine.ticket(), TOKEN.into()));
+        assert!(machine.next(machine.ticket()));
+        let acknowledged = machine.ticket();
+        machine.input(acknowledged, TOKEN.into());
+        let mut two = factory_evidence(Mode::Wired);
+        two.factory_usb_count = Some(2);
+        machine.observe(acknowledged, two);
+        assert_eq!(machine.text(), "");
+        assert!(!machine.next(machine.ticket()));
+        machine.observe(machine.ticket(), factory_evidence(Mode::Wired));
+        assert_eq!(machine.stage(), Stage::Setup(Mode::Wired));
+        assert!(!machine.input(acknowledged, TOKEN.into()));
     }
     #[test]
     fn children_and_each_transport_require_explicit_completion() {

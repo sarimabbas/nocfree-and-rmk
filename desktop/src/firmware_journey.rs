@@ -2,6 +2,7 @@
 //! shared recovery worker; a copy is attempted once and reconciled by readback.
 use crate::{
     device::{self, BootMount, Snapshot},
+    factory_release::{FactoryImage, FactoryRelease},
     release::{FirmwareRelease, ReleaseImage},
     runtime_recovery::Role,
     session::Session,
@@ -21,6 +22,89 @@ use std::{
 
 const PLAN: [Role; 3] = [Role::Receiver, Role::Right, Role::Left];
 const ARCHIVE_LIMIT: usize = 1728 * 512;
+#[derive(Clone)]
+enum TargetRelease {
+    Rmk(FirmwareRelease),
+    Factory(FactoryRelease),
+}
+#[derive(Clone)]
+enum TargetImage {
+    Rmk(Box<ReleaseImage>),
+    Factory(FactoryImage),
+}
+impl TargetRelease {
+    fn plan(&self) -> [Role; 3] {
+        match self {
+            Self::Rmk(_) => PLAN,
+            Self::Factory(_) => [Role::Left, Role::Right, Role::Receiver],
+        }
+    }
+    fn id(&self) -> String {
+        match self {
+            Self::Rmk(r) => r.id().into(),
+            Self::Factory(r) => r.id(),
+        }
+    }
+    fn image(&self, role: Role) -> Result<TargetImage, String> {
+        match self {
+            Self::Rmk(r) => Ok(TargetImage::Rmk(Box::new(r.image(role).clone()))),
+            Self::Factory(r) => Ok(TargetImage::Factory(r.image(role)?.clone())),
+        }
+    }
+    fn factory(&self) -> bool {
+        matches!(self, Self::Factory(_))
+    }
+}
+impl TargetImage {
+    fn sha(&self) -> &str {
+        match self {
+            Self::Rmk(i) => &i.metadata.uf2_sha256,
+            Self::Factory(i) => &i.sha256,
+        }
+    }
+    fn uf2(&self) -> &[u8] {
+        match self {
+            Self::Rmk(i) => &i.uf2,
+            Self::Factory(i) => &i.uf2,
+        }
+    }
+    fn target(&self) -> Result<(usize, Vec<u8>), String> {
+        match self {
+            Self::Rmk(i) => target(i),
+            Self::Factory(i) => {
+                i.checked()?;
+                Ok((0, i.bytes.clone()))
+            }
+        }
+    }
+    fn exact(&self, archive: &[u8]) -> Result<bool, String> {
+        match self {
+            Self::Rmk(i) => exact_candidate(archive, i),
+            Self::Factory(_) => {
+                let (start, p) = self.target()?;
+                let actual = flash_bytes(archive)?;
+                Ok(actual[start..start + p.len()] == p)
+            }
+        }
+    }
+    fn verify(&self, archive: &[u8], baseline: &[u8]) -> Result<usize, String> {
+        match self {
+            Self::Rmk(i) => verify(archive, baseline, i),
+            Self::Factory(_) => {
+                if !self.exact(archive)? {
+                    return Err("Factory readback differs from the complete planned restore, including S140 and saved settings.".into());
+                }
+                let old = flash_bytes(baseline)?;
+                let actual = flash_bytes(archive)?;
+                Ok(actual[0x64000..]
+                    .iter()
+                    .zip(&old[0x64000..])
+                    .filter(|(a, b)| a != b)
+                    .count())
+            }
+        }
+    }
+}
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Phase {
     Recovery,
@@ -56,18 +140,19 @@ struct Baseline {
     bytes: Vec<u8>,
 }
 struct FirmwareData {
-    release: FirmwareRelease,
+    release: TargetRelease,
     index: usize,
     baseline: Option<Baseline>,
     error: Option<String>,
     attempted: bool,
     install_authorized: bool,
+    verified_locations: Vec<(Role, u64)>,
     // This is failure history, not a second mutable current state.
     retry_phase: Option<Phase>,
 }
 impl FirmwareData {
     fn role(&self) -> Role {
-        PLAN[self.index]
+        self.release.plan()[self.index]
     }
 }
 
@@ -112,6 +197,10 @@ impl StatigState<FirmwareData> for Phase {
             FirmwareEvent::RecoverySaved(baseline, installed) if *self == Phase::Recovery => {
                 data.baseline = Some((*baseline).clone());
                 data.error = None;
+                if *installed {
+                    data.verified_locations
+                        .push((data.role(), baseline.location));
+                }
                 return Transition(if *installed {
                     Phase::Disconnect
                 } else {
@@ -127,6 +216,10 @@ impl StatigState<FirmwareData> for Phase {
                 return Handled;
             }
             FirmwareEvent::Verified if *self == Phase::Reconcile => {
+                if let Some(baseline) = &data.baseline {
+                    data.verified_locations
+                        .push((data.role(), baseline.location));
+                }
                 data.error = None;
                 return Transition(Phase::Disconnect);
             }
@@ -186,7 +279,12 @@ impl StatigState<FirmwareData> for Phase {
                 | Phase::PowerOn
                 | Phase::StartWait(_)
                 | Phase::Reconnect
-        ) && normal_return(snapshot, data.role(), baseline.location);
+        ) && normal_return(
+            snapshot,
+            data.role(),
+            baseline.location,
+            data.release.factory(),
+        );
         if returned {
             return if data.index == PLAN.len() - 1 {
                 Transition(Phase::Complete)
@@ -302,23 +400,167 @@ fn correlated(snapshot: &Snapshot, location: u64, mount: &BootMount) -> bool {
         && boots[0].location == location
         && snapshot.mounts.as_slice() == [mount.clone()]
 }
-fn normal_return(snapshot: &Snapshot, role: Role, location: u64) -> bool {
+fn normal_return(snapshot: &Snapshot, role: Role, location: u64, factory: bool) -> bool {
     let mut normal = snapshot.devices.iter().filter(|d| {
-        d.vendor == 0x4c4b && d.product == role.product() as u64 && d.name == role.name()
+        if factory {
+            d.location == location
+                && match role {
+                    Role::Right => d.factory_right(),
+                    Role::Left | Role::Receiver => d.factory_left(),
+                }
+        } else {
+            d.vendor == 0x4c4b && d.product == role.product() as u64 && d.name == role.name()
+        }
     });
     normal.next().is_some_and(|d| d.location == location)
         && normal.next().is_none()
         && snapshot.mounts.is_empty()
         && !snapshot.devices.iter().any(|d| d.bootloader())
 }
+fn rmk_intent(record: &serde_json::Value) -> bool {
+    record["kind"].as_str() == Some("RMK")
+        || record["release"]
+            .as_str()
+            .is_some_and(|r| r.starts_with("nocfree-"))
+}
+fn sibling_folder(root: &Path, value: &serde_json::Value) -> Result<PathBuf, String> {
+    let p = PathBuf::from(
+        value
+            .as_str()
+            .ok_or("Factory verification path is missing.")?,
+    );
+    if p.parent() != Some(root)
+        || !fs::symlink_metadata(&p)
+            .map_err(|_| "Factory verification folder is unavailable.")?
+            .is_dir()
+        || fs::symlink_metadata(&p)
+            .map_err(|_| "Factory verification folder is unavailable.")?
+            .file_type()
+            .is_symlink()
+    {
+        return Err("Factory verification must remain in the private backup folder.".into());
+    }
+    Ok(p)
+}
+fn superseded(prior: &Path, raw_intent: &[u8], role: Role) -> Result<bool, String> {
+    let marker_path = prior.join("install-superseded.json");
+    if !marker_path.exists() {
+        return Ok(false);
+    }
+    let root = prior.parent().ok_or("Backup folder is unavailable.")?;
+    let marker: serde_json::Value =
+        serde_json::from_slice(&device::read_bounded(&marker_path, 8192)?)
+            .map_err(|_| "Factory supersession record is unreadable.")?;
+    let old: serde_json::Value = serde_json::from_slice(raw_intent)
+        .map_err(|_| "Original operation record is unreadable.")?;
+    if marker["schema"].as_u64() != Some(1)
+        || !rmk_intent(&old)
+        || marker["old_intent_sha256"].as_str() != Some(hash(raw_intent).as_str())
+        || marker["role"] != old["role"]
+        || marker["location"] != old["location"]
+    {
+        return Err("Factory supersession does not bind the original RMK attempt.".into());
+    }
+    let folder = sibling_folder(root, &marker["factory_verification"])?;
+    let proof: serde_json::Value = serde_json::from_slice(&device::read_bounded(
+        &folder.join("factory-verified.json"),
+        8192,
+    )?)
+    .map_err(|_| "Factory verification record is unreadable.")?;
+    if proof["schema"].as_u64() != Some(1)
+        || proof["role"] != marker["role"]
+        || proof["location"] != marker["location"]
+        || proof["target_sha256"] != marker["factory_target_sha256"]
+        || proof["readback_sha256"] != marker["factory_readback_sha256"]
+    {
+        return Err("Factory verification does not bind the supersession record.".into());
+    }
+    let readback = sibling_folder(root, &proof["readback"])?;
+    let actual = device::read_bounded(&readback.join("CURRENT.UF2"), ARCHIVE_LIMIT)?;
+    let image = FactoryRelease::archive_image(role, &actual)?;
+    if proof["readback_sha256"].as_str() != Some(hash(&actual).as_str())
+        || proof["target_sha256"].as_str() != Some(image.sha256.as_str())
+    {
+        return Err(
+            "Verified factory readback changed; the old RMK attempt remains uncertain.".into(),
+        );
+    }
+    Ok(true)
+}
+fn record_factory_supersession(
+    folder: &Path,
+    readback: &Path,
+    role: Role,
+    location: u64,
+    actual: &[u8],
+    image: &TargetImage,
+) -> Result<(), String> {
+    if !matches!(image, TargetImage::Factory(_)) || !image.exact(actual)? {
+        return Err("Exact complete factory verification is required before supersession.".into());
+    }
+    let root = folder.parent().ok_or("Backup folder is unavailable.")?;
+    let proof = serde_json::json!({"schema":1,"role":format!("{role:?}"),"location":location,"target_sha256":image.sha(),"readback_sha256":hash(actual),"readback":readback,"classification":"factory readback exact; preceding RMK result remains uncertain"});
+    let proof_path = folder.join("factory-verified.json");
+    if proof_path.exists() {
+        let old: serde_json::Value =
+            serde_json::from_slice(&device::read_bounded(&proof_path, 8192)?)
+                .map_err(|_| "Factory verification record is unreadable.")?;
+        if old != proof {
+            return Err("Factory verification record differs from this observation.".into());
+        }
+    } else {
+        durable(
+            folder,
+            "factory-verified.json",
+            &serde_json::to_vec_pretty(&proof)
+                .map_err(|_| "Could not encode factory verification.")?,
+        )?;
+    }
+    for entry in fs::read_dir(root).map_err(|_| "Could not check earlier RMK attempts.")? {
+        let entry = entry.map_err(|_| "Could not read earlier RMK attempt.")?;
+        if !entry
+            .file_type()
+            .map_err(|_| "Could not inspect earlier RMK attempt.")?
+            .is_dir()
+            || entry.path() == folder
+        {
+            continue;
+        }
+        let prior = entry.path();
+        let intent = prior.join("install-intent.json");
+        if !intent.exists() || prior.join("install-verified.json").exists() {
+            continue;
+        }
+        let raw = device::read_bounded(&intent, 8192)?;
+        let old: serde_json::Value =
+            serde_json::from_slice(&raw).map_err(|_| "Earlier RMK intent is unreadable.")?;
+        if old["schema"].as_u64() != Some(1)
+            || !rmk_intent(&old)
+            || old["role"].as_str() != Some(format!("{role:?}").as_str())
+            || old["location"].as_u64() != Some(location)
+        {
+            continue;
+        }
+        if superseded(&prior, &raw, role)? {
+            continue;
+        }
+        let marker = serde_json::json!({"schema":1,"old_intent_sha256":hash(&raw),"role":old["role"],"location":old["location"],"factory_verification":folder,"factory_target_sha256":image.sha(),"factory_readback_sha256":hash(actual)});
+        durable(
+            &prior,
+            "install-superseded.json",
+            &serde_json::to_vec_pretty(&marker).map_err(|_| "Could not encode supersession.")?,
+        )?;
+    }
+    Ok(())
+}
 // An app restart does not erase uncertainty. A pending journal for this part
 // must reconcile against its original backup and the same pinned target.
-fn reconcile_prior(
+fn reconcile_target(
     folder: &Path,
     role: Role,
     location: u64,
     actual: &[u8],
-    image: &ReleaseImage,
+    image: &TargetImage,
 ) -> Result<(), String> {
     let root = folder.parent().ok_or("Backup folder is unavailable.")?;
     for entry in fs::read_dir(root).map_err(|_| "Could not check previous installations.")? {
@@ -358,8 +600,23 @@ fn reconcile_prior(
         if record["role"].as_str() != Some(format!("{role:?}").as_str()) {
             continue;
         }
+        if matches!(image, TargetImage::Factory(_)) && rmk_intent(&record) {
+            // Explicit undo uses a new fresh full backup and its own one-shot
+            // intent. Keep the old RMK attempt uncertain; never replay or claim
+            // it verified merely because a different restore was requested.
+            image.target()?;
+            flash_bytes(actual)?;
+            continue;
+        }
+        if superseded(
+            &prior,
+            &device::read_bounded(&prior.join("install-intent.json"), 8192)?,
+            role,
+        )? {
+            continue;
+        }
         if record["location"].as_u64() != Some(location)
-            || record["target_sha256"].as_str() != Some(image.metadata.uf2_sha256.as_str())
+            || record["target_sha256"].as_str() != Some(image.sha())
         {
             return Err("An earlier installation needs reconciliation on its original USB connection and release.".into());
         }
@@ -367,7 +624,7 @@ fn reconcile_prior(
         if record["backup_sha256"].as_str() != Some(hash(&previous).as_str()) {
             return Err("The earlier installation backup changed.".into());
         }
-        let storage = verify(actual, &previous, image)?;
+        let storage = image.verify(actual, &previous)?;
         durable(&prior,"install-verified.json",&serde_json::to_vec_pretty(&serde_json::json!({"schema":1,"readback_sha256":hash(actual),"settings_changed_bytes":storage,"reconciled_after_restart":true})).map_err(|_| "Could not encode reconciliation.")?)?;
     }
     Ok(())
@@ -376,16 +633,41 @@ impl FirmwareJourney {
     pub fn new(release: FirmwareRelease) -> Self {
         Self {
             machine: FirmwareData {
-                release,
+                release: TargetRelease::Rmk(release),
                 index: 0,
                 baseline: None,
                 error: None,
                 attempted: false,
                 install_authorized: false,
+                verified_locations: vec![],
                 retry_phase: None,
             }
             .state_machine(),
         }
+    }
+    pub fn factory(release: FactoryRelease) -> Result<Self, String> {
+        if !release.is_complete() {
+            return Err("Add factory backups for all three parts first.".into());
+        }
+        Ok(Self {
+            machine: FirmwareData {
+                release: TargetRelease::Factory(release),
+                index: 0,
+                baseline: None,
+                error: None,
+                attempted: false,
+                install_authorized: false,
+                verified_locations: vec![],
+                retry_phase: None,
+            }
+            .state_machine(),
+        })
+    }
+    pub fn is_factory(&self) -> bool {
+        self.machine.inner().release.factory()
+    }
+    pub fn verified_locations(&self) -> Vec<(Role, u64)> {
+        self.machine.inner().verified_locations.clone()
     }
     /// Overall install approval authorizes subsequent guarded per-part copies.
     /// Readback, fresh backup, bound port and durable one-shot intent still apply.
@@ -400,7 +682,7 @@ impl FirmwareJourney {
         Ok(true)
     }
     pub fn role(&self) -> Role {
-        PLAN[self.machine.inner().index]
+        self.machine.inner().release.plan()[self.machine.inner().index]
     }
     pub fn view(&self) -> View {
         let (title, instruction) = match *self.machine.state() {
@@ -432,6 +714,10 @@ impl FirmwareJourney {
             ),
             Phase::StartWait(_) => ("Let it start", "Keep USB unplugged for ten seconds."),
             Phase::Reconnect => ("Reconnect USB", "Reconnect it to the same USB port."),
+            Phase::Complete if self.is_factory() => (
+                "Factory firmware restored",
+                "All three parts are running factory firmware.",
+            ),
             Phase::Complete => (
                 "You’re up to date",
                 "All three parts are running the installed firmware.",
@@ -464,18 +750,28 @@ impl FirmwareJourney {
             return Err("This recovery result is no longer needed.".into());
         }
         let (role, location, mount) = session.recovery_binding()?;
+        if self.is_factory() && !self.machine.inner().install_authorized {
+            return Err("Choose Restore factory before starting its guided steps.".into());
+        }
         if role != self.role() {
             return Err("Recovery belongs to a different component.".into());
         }
+        let require_factory_role = session.shared_factory_recovery();
         let folder = session.save_backup()?;
         let bytes = device::read_bounded(&folder.join("CURRENT.UF2"), ARCHIVE_LIMIT)?;
         device::inspect_archive(&bytes)?;
-        reconcile_prior(
+        if require_factory_role && FactoryRelease::archive_role(&bytes) != Some(role) {
+            return Err("This stock firmware is not recognized for the selected part. Currently supported sources are the known original firmware and official ANSI 2.4.5.".into());
+        }
+        if FactoryRelease::archive_role(&bytes).is_some_and(|actual| actual != role) {
+            return Err("The recovery drive contains another part's factory firmware. Connect the selected part before continuing.".into());
+        }
+        reconcile_target(
             &folder,
             role,
             location,
             &bytes,
-            self.machine.inner().release.image(role),
+            &self.machine.inner().release.image(role)?,
         )?;
         let baseline = Baseline {
             location,
@@ -483,7 +779,25 @@ impl FirmwareJourney {
             folder,
             bytes,
         };
-        let installed = exact_candidate(&baseline.bytes, self.machine.inner().release.image(role))?;
+        if !self.is_factory() {
+            FactoryRelease::discover()?.retain_original(role, &baseline.bytes)?;
+        }
+        let installed = self
+            .machine
+            .inner()
+            .release
+            .image(role)?
+            .exact(&baseline.bytes)?;
+        if installed && self.is_factory() {
+            record_factory_supersession(
+                &baseline.folder,
+                &baseline.folder,
+                role,
+                location,
+                &baseline.bytes,
+                &self.machine.inner().release.image(role)?,
+            )?;
+        }
         self.machine
             .handle(&FirmwareEvent::RecoverySaved(&baseline, installed));
         Ok(())
@@ -501,8 +815,8 @@ impl FirmwareJourney {
             .as_ref()
             .ok_or("A fresh backup is required.")?
             .clone();
-        let image = self.machine.inner().release.image(self.role()).clone();
-        target(&image)?;
+        let image = self.machine.inner().release.image(self.role())?;
+        image.target()?;
         if !correlated(&device::discover()?, baseline.location, &baseline.mount) {
             return Err("Recovery connection changed. No firmware was copied.".into());
         }
@@ -521,7 +835,7 @@ impl FirmwareJourney {
                 "Firmware or connection changed after backup. No firmware was copied.".into(),
             );
         }
-        let intent = serde_json::json!({"schema":1,"release":self.machine.inner().release.id(),"role":format!("{:?}",self.role()),"backup_sha256":hash(&fresh),"target_sha256":image.metadata.uf2_sha256,"location":baseline.location,"attempt":"one-shot; reconcile readback before continuing"});
+        let intent = serde_json::json!({"schema":1,"release":self.machine.inner().release.id(),"kind":if self.is_factory(){"factory"}else{"RMK"},"role":format!("{:?}",self.role()),"backup_sha256":hash(&fresh),"target_sha256":image.sha(),"location":baseline.location,"attempt":"one-shot; reconcile readback before continuing"});
         durable(
             &baseline.folder,
             "install-intent.json",
@@ -540,7 +854,7 @@ impl FirmwareJourney {
             }
             let mut destination = fs::OpenOptions::new().write(true).create_new(true).open(baseline.mount.path.join("COMPANION.UF2")).map_err(|_| "The transfer could not start. Check the recovery drive; don’t repeat the copy.")?;
             destination
-                .write_all(&image.uf2)
+                .write_all(image.uf2())
                 .and_then(|_| destination.sync_all())
                 .map_err(|_| {
                     "The transfer result is uncertain. Open recovery to check it.".to_owned()
@@ -566,12 +880,23 @@ impl FirmwareJourney {
         }
         let folder = session.save_backup()?;
         let actual = device::read_bounded(&folder.join("CURRENT.UF2"), ARCHIVE_LIMIT)?;
-        let changed_storage = verify(
-            &actual,
-            &baseline.bytes,
-            self.machine.inner().release.image(role),
-        )?;
-        durable(&baseline.folder,"install-verified.json",&serde_json::to_vec_pretty(&serde_json::json!({"schema":1,"readback_sha256":hash(&actual),"settings_changed_bytes":changed_storage,"settings_range":"0x65000..0x6d000","readback":folder})).map_err(|_| "Could not encode verification record.")?)?;
+        let changed_storage = self
+            .machine
+            .inner()
+            .release
+            .image(role)?
+            .verify(&actual, &baseline.bytes)?;
+        durable(&baseline.folder,"install-verified.json",&serde_json::to_vec_pretty(&serde_json::json!({"schema":1,"readback_sha256":hash(&actual),"settings_changed_bytes":changed_storage,"settings_range":"0x65000..0x6d000","settings_action":if self.is_factory(){"restore original factory settings exactly"}else{"RMK schema migration permitted"},"readback":folder})).map_err(|_| "Could not encode verification record.")?)?;
+        if self.is_factory() {
+            record_factory_supersession(
+                &baseline.folder,
+                &folder,
+                role,
+                location,
+                &actual,
+                &self.machine.inner().release.image(role)?,
+            )?;
+        }
         self.machine.handle(&FirmwareEvent::Verified);
         Ok(())
     }
@@ -590,6 +915,22 @@ impl FirmwareJourney {
     }
 }
 
+#[cfg(test)]
+fn reconcile_prior(
+    folder: &Path,
+    role: Role,
+    location: u64,
+    actual: &[u8],
+    image: &ReleaseImage,
+) -> Result<(), String> {
+    reconcile_target(
+        folder,
+        role,
+        location,
+        actual,
+        &TargetImage::Rmk(Box::new(image.clone())),
+    )
+}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -824,8 +1165,119 @@ mod tests {
         assert!(!journey.transfer_if_ready().unwrap());
     }
     #[test]
-    fn factory_plan_keeps_left_until_dongle_entry_is_finished() {
+    fn factory_shared_left_and_dongle_identity_requires_the_bound_port() {
+        let mut stock = Snapshot::default();
+        for location in [10, 11] {
+            stock.devices.push(Device {
+                location,
+                vendor: 0x2886,
+                product: 0x8029,
+                name: "NocFree & ANSI".into(),
+            });
+        }
+        assert!(normal_return(&stock, Role::Left, 10, true));
+        assert!(normal_return(&stock, Role::Receiver, 11, true));
+        assert!(!normal_return(&stock, Role::Receiver, 12, true));
+        assert!(!normal_return(&stock, Role::Right, 10, true));
+        assert!(!normal_return(&stock, Role::Left, 10, false));
+        stock.devices.push(stock.devices[0].clone());
+        assert!(!normal_return(&stock, Role::Left, 10, true));
+    }
+    #[test]
+    #[ignore = "requires private original factory archives; offline only"]
+    fn factory_target_roundtrip_verifies_softdevice_application_and_settings_exactly() {
+        let root = std::env::temp_dir().join(format!(
+            "factory-target-test-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let mut release = FactoryRelease::at(root.clone()).unwrap();
+        let evidence = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .join(".evidence");
+        // Imports only local original bytes. No hardware is queried or written.
+        // A separate temporary copy is used for target validation below.
+        for (role, folder) in [
+            (Role::Left, "factory-left"),
+            (Role::Right, "factory-right"),
+            (Role::Receiver, "receiver-backup"),
+        ] {
+            let source = evidence.join(folder).join("CURRENT.UF2");
+            release.import(role, &source).unwrap();
+            let archive = fs::read(source).unwrap();
+            let image = TargetImage::Factory(release.image(role).unwrap().clone());
+            let prior = root.join(format!("{role:?}-prior"));
+            let current = root.join(format!("{role:?}-current"));
+            fs::create_dir(&prior).unwrap();
+            fs::create_dir(&current).unwrap();
+            fs::write(prior.join("CURRENT.UF2"), &archive).unwrap();
+            let intent = serde_json::json!({"schema":1,"kind":"RMK","role":format!("{role:?}"),"location":10,"target_sha256":"different-unfinished-RMK-target","backup_sha256":hash(&archive)});
+            fs::write(
+                prior.join("install-intent.json"),
+                serde_json::to_vec(&intent).unwrap(),
+            )
+            .unwrap();
+            assert!(
+                reconcile_target(&current, role, 10, &device::tests::archive(), &image).is_ok()
+            );
+            assert!(!prior.join("install-verified.json").exists());
+            assert_eq!(
+                fs::read(prior.join("install-intent.json")).unwrap(),
+                serde_json::to_vec(&intent).unwrap()
+            );
+            let next = root.join(format!("{role:?}-next-RMK"));
+            fs::create_dir(&next).unwrap();
+            let rmk = TargetImage::Rmk(Box::new(crate::release::fixture().image(role).clone()));
+            assert!(reconcile_target(&next, role, 10, &archive, &rmk).is_err());
+            fs::write(current.join("CURRENT.UF2"), &archive).unwrap();
+            record_factory_supersession(&current, &current, role, 10, &archive, &image).unwrap();
+            assert!(reconcile_target(&next, role, 10, &archive, &rmk).is_ok());
+            assert!(!prior.join("install-verified.json").exists());
+            assert_eq!(
+                fs::read(prior.join("install-intent.json")).unwrap(),
+                serde_json::to_vec(&intent).unwrap()
+            );
+            let mut changed = archive.clone();
+            changed[32 + 100] ^= 1;
+            fs::write(current.join("CURRENT.UF2"), changed).unwrap();
+            assert!(reconcile_target(&next, role, 10, &archive, &rmk).is_err());
+            fs::write(current.join("CURRENT.UF2"), &archive).unwrap();
+            let marker = prior.join("install-superseded.json");
+            let saved = fs::read(&marker).unwrap();
+            let mut wrong: serde_json::Value = serde_json::from_slice(&saved).unwrap();
+            wrong["old_intent_sha256"] = serde_json::json!("wrong");
+            fs::write(&marker, serde_json::to_vec(&wrong).unwrap()).unwrap();
+            assert!(reconcile_target(&next, role, 10, &archive, &rmk).is_err());
+            fs::write(marker, saved).unwrap();
+            assert!(image.exact(&archive).unwrap());
+            assert_eq!(image.verify(&archive, &archive).unwrap(), 0);
+            for address in [0x1000, 0x27000, 0x65000] {
+                let mut wrong = archive.clone();
+                for b in wrong.as_chunks_mut::<512>().0 {
+                    if u32::from_le_bytes(b[12..16].try_into().unwrap()) == address {
+                        b[32 + 100] ^= 1;
+                        break;
+                    }
+                }
+                assert!(image.verify(&wrong, &archive).is_err());
+            }
+        }
+        fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn restore_and_install_have_explicit_distinct_role_order() {
         assert_eq!(PLAN, [Role::Receiver, Role::Right, Role::Left]);
+        let source = FactoryRelease::at(
+            std::env::temp_dir().join(format!("empty-factory-plan-{}", std::process::id())),
+        )
+        .unwrap();
+        assert_eq!(
+            TargetRelease::Factory(source).plan(),
+            [Role::Left, Role::Right, Role::Receiver]
+        );
     }
     #[test]
     fn interrupted_transfer_requires_exact_original_backup_and_cannot_be_blindly_retried() {

@@ -196,6 +196,21 @@ fn factory_observation(
     } else {
         device::Role::Left
     };
+    // Stock left and dongle have indistinguishable USB descriptors. Require
+    // their shared identities to disappear before the owner reconnects only
+    // the selected part; never pick one of two identities by enumeration order.
+    let ambiguous_stock = role != Role::Right
+        && snapshot
+            .devices
+            .iter()
+            .filter(|device| device.factory_left())
+            .count()
+            > 1;
+    if ambiguous_stock || session.shared_factory_connection_conflicts(&snapshot) {
+        session.select_recovery_role(role);
+        *disconnected = false;
+        return Ok((Some(Procedure::Reconnect), false));
+    }
     if !*disconnected {
         if !snapshot
             .devices
@@ -296,11 +311,7 @@ mod tests {
     fn factory_flow_requires_disconnect_identification_and_same_port_drive() {
         for role in [Role::Left, Role::Right, Role::Receiver] {
             let mut session = Session::new();
-            session.select(if role == Role::Right {
-                device::Role::Right
-            } else {
-                device::Role::Left
-            });
+            session.select_recovery_role(role);
             let mut disconnected = false;
             assert_eq!(
                 factory_observation(&mut session, role, &mut disconnected, factory_boot(10))
@@ -341,6 +352,114 @@ mod tests {
                     .is_err()
             );
         }
+    }
+    #[test]
+    fn stock_dongle_recovery_requires_all_shared_usb_identities_to_disconnect() {
+        let mut session = Session::new();
+        session.select_recovery_role(Role::Receiver);
+        let mut disconnected = false;
+        let mut both = factory_normal(Role::Receiver);
+        let mut left = factory_normal(Role::Left).devices.remove(0);
+        left.location = 20;
+        both.devices.push(left.clone());
+        assert_eq!(
+            factory_observation(&mut session, Role::Receiver, &mut disconnected, both).unwrap(),
+            (Some(Procedure::Reconnect), false)
+        );
+        // Unplugging the dongle alone leaves the factory left's identical USB
+        // identity. It cannot satisfy the disconnect or identify the dongle.
+        let left_only = device::Snapshot {
+            devices: vec![left],
+            mounts: vec![],
+        };
+        assert_eq!(
+            factory_observation(&mut session, Role::Receiver, &mut disconnected, left_only)
+                .unwrap(),
+            (Some(Procedure::Reconnect), false)
+        );
+        assert!(!disconnected);
+        assert!(session.recovery_binding().is_err());
+        factory_observation(
+            &mut session,
+            Role::Receiver,
+            &mut disconnected,
+            device::Snapshot::default(),
+        )
+        .unwrap();
+        assert_eq!(
+            factory_observation(
+                &mut session,
+                Role::Receiver,
+                &mut disconnected,
+                factory_normal(Role::Receiver)
+            )
+            .unwrap(),
+            (Some(Procedure::FactoryReceiver), false)
+        );
+        assert!(
+            factory_observation(
+                &mut session,
+                Role::Receiver,
+                &mut disconnected,
+                factory_boot(10)
+            )
+            .unwrap()
+            .1
+        );
+        assert!(session.shared_factory_recovery());
+        assert_eq!(session.recovery_binding().unwrap().0, Role::Receiver);
+    }
+    #[test]
+    fn reconnecting_stock_left_during_dongle_dfu_invalidates_the_binding() {
+        let mut session = Session::new();
+        session.select_recovery_role(Role::Receiver);
+        let mut disconnected = true;
+        factory_observation(
+            &mut session,
+            Role::Receiver,
+            &mut disconnected,
+            factory_normal(Role::Receiver),
+        )
+        .unwrap();
+        let mut mixed = factory_boot(10);
+        let mut left = factory_normal(Role::Left).devices.remove(0);
+        left.location = 20;
+        mixed.devices.push(left);
+        assert_eq!(
+            factory_observation(&mut session, Role::Receiver, &mut disconnected, mixed).unwrap(),
+            (Some(Procedure::Reconnect), false)
+        );
+        assert!(!disconnected);
+        assert!(!session.shared_factory_recovery());
+        assert!(session.recovery_binding().is_err());
+        // An isolated boot drive after that conflict still cannot infer its role.
+        assert_eq!(
+            factory_observation(
+                &mut session,
+                Role::Receiver,
+                &mut disconnected,
+                factory_boot(10)
+            )
+            .unwrap(),
+            (Some(Procedure::Reconnect), false)
+        );
+        assert!(session.recovery_binding().is_err());
+    }
+    #[test]
+    fn stock_origin_requires_observed_normal_binding_not_defaults_or_an_archive() {
+        let mut session = Session::new();
+        session.select_recovery_role(Role::Receiver);
+        session.observe(Ok(factory_boot(10)));
+        assert!(!session.shared_factory_recovery());
+        session.bind_recovery(10);
+        session.observe(Ok(factory_boot(10)));
+        assert!(session.recovery_binding().is_ok());
+        assert!(!session.shared_factory_recovery());
+        let mut archive = Session::new();
+        archive.select_recovery_role(Role::Receiver);
+        assert!(archive.adopt_archive_drive(factory_boot(10)).unwrap());
+        assert!(!archive.shared_factory_recovery());
+        assert!(archive.recovery_binding().is_err());
     }
     #[test]
     fn factory_ready_requires_reviewed_metadata_and_unique_mount() {

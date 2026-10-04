@@ -65,40 +65,57 @@ pub struct Snapshot {
 }
 
 /// Host-connected Bluetooth identity only; paired-but-disconnected entries do not count.
-pub(crate) fn bluetooth_connected() -> bool {
-    let Ok(output) = Command::new("/usr/sbin/system_profiler")
+/// None means the host query failed, never proof that Bluetooth is disconnected.
+pub(crate) fn bluetooth_links() -> Option<(bool, bool)> {
+    let output = Command::new("/usr/sbin/system_profiler")
         .args(["SPBluetoothDataType", "-json", "-timeout", "3"])
         .output()
-    else {
-        return false;
-    };
+        .ok()?;
     if !output.status.success() || output.stdout.len() > 1024 * 1024 {
-        return false;
+        return None;
     }
-    serde_json::from_slice::<serde_json::Value>(&output.stdout)
-        .ok()
-        .is_some_and(|report| connected_bluetooth_report(&report))
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).ok()?;
+    report["SPBluetoothDataType"].as_array()?;
+    if connected_count(&report, |name| name == "NocFree RMK") > 1
+        || connected_count(&report, factory_bluetooth_name) > 1
+    {
+        return None;
+    }
+    Some((
+        connected_bluetooth_report(&report),
+        connected_factory_bluetooth_report(&report),
+    ))
 }
-fn connected_bluetooth_report(report: &serde_json::Value) -> bool {
+fn connected_count(report: &serde_json::Value, accepts: impl Fn(&str) -> bool) -> usize {
     report["SPBluetoothDataType"]
         .as_array()
-        .is_some_and(|controllers| {
-            controllers.iter().any(|controller| {
-                controller["device_connected"]
-                    .as_array()
-                    .is_some_and(|devices| {
-                        devices
-                            .iter()
-                            .filter(|device| {
-                                device
-                                    .as_object()
-                                    .is_some_and(|names| names.contains_key("NocFree RMK"))
-                            })
-                            .count()
-                            == 1
-                    })
-            })
+        .map_or(0, |controllers| {
+            controllers
+                .iter()
+                .filter_map(|controller| controller["device_connected"].as_array())
+                .flatten()
+                .filter_map(|device| device.as_object())
+                .flat_map(|names| names.keys())
+                .filter(|name| accepts(name))
+                .count()
         })
+}
+fn factory_bluetooth_name(name: &str) -> bool {
+    matches!(
+        name,
+        "NocFree & BLE1"
+            | "NocFree & BLE2"
+            | "NocFree & BLE3"
+            | "NocFree _ BLE1"
+            | "NocFree _ BLE2"
+            | "NocFree _ BLE3"
+    )
+}
+fn connected_bluetooth_report(report: &serde_json::Value) -> bool {
+    connected_count(report, |name| name == "NocFree RMK") == 1
+}
+fn connected_factory_bluetooth_report(report: &serde_json::Value) -> bool {
+    connected_count(report, factory_bluetooth_name) == 1
 }
 
 pub fn discover() -> Result<Snapshot, String> {
@@ -408,5 +425,28 @@ mod bluetooth_tests {
         assert!(!super::connected_bluetooth_report(
             &json!({"SPBluetoothDataType":[{"device_connected":[{"NocFree RMK":{}},{"NocFree RMK":{}}]}]})
         ));
+    }
+}
+
+#[cfg(test)]
+mod factory_bluetooth_tests {
+    #[test]
+    fn duplicate_connected_profiles_across_controllers_are_ambiguous() {
+        let report = serde_json::json!({"SPBluetoothDataType":[{"device_connected":[{"NocFree & BLE1":{}}]},{"device_connected":[{"NocFree & BLE2":{}}]}]});
+        assert_eq!(
+            super::connected_count(&report, super::factory_bluetooth_name),
+            2
+        );
+        assert!(!super::connected_factory_bluetooth_report(&report));
+        let report = serde_json::json!({"SPBluetoothDataType":[{"device_connected":[{"NocFree RMK":{}}]},{"device_connected":[{"NocFree RMK":{}}]}]});
+        assert!(!super::connected_bluetooth_report(&report));
+    }
+    #[test]
+    fn stock_profiles_are_distinct_from_rmk_and_paired_only_entries() {
+        let report = serde_json::json!({"SPBluetoothDataType":[{"device_connected":[{"NocFree & BLE2":{}}],"device_not_connected":[{"NocFree RMK":{}}]}]});
+        assert!(super::connected_factory_bluetooth_report(&report));
+        assert!(!super::connected_bluetooth_report(&report));
+        let report = serde_json::json!({"SPBluetoothDataType":[{"device_not_connected":[{"NocFree & BLE2":{}}]}]});
+        assert!(!super::connected_factory_bluetooth_report(&report));
     }
 }

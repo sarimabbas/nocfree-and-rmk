@@ -36,6 +36,7 @@ pub struct Session {
     normal_present: bool,
     rmk_left: bool,
     rmk_receiver: bool,
+    shared_factory_origin: bool,
     legacy_left_start: bool,
     factory_right: bool,
     connection_present: bool,
@@ -56,6 +57,7 @@ impl Session {
         self.rmk_left = self.role == Some(Role::Left);
         self.rmk_receiver = self.role == Some(Role::Receiver);
         self.factory_right = false;
+        self.shared_factory_origin = false;
     }
     pub(crate) fn selected_component(&self) -> Option<Role> {
         self.role
@@ -181,6 +183,7 @@ impl Session {
                 self.rmk_left = normal[0].rmk_left();
                 self.rmk_receiver = normal[0].rmk_receiver();
                 self.factory_right = normal[0].factory_right();
+                self.shared_factory_origin = normal[0].factory_left();
                 self.normal_present = true;
                 self.connection_present = true;
                 self.problem = None;
@@ -235,6 +238,7 @@ impl Session {
             self.rmk_left = normal.rmk_left();
             self.rmk_receiver = normal.rmk_receiver();
             self.factory_right = normal.factory_right();
+            self.shared_factory_origin = normal.factory_left();
             self.normal_present = true;
             self.problem = None;
             self.status =
@@ -369,6 +373,23 @@ impl Session {
     }
     pub(crate) fn identified_normal(&self) -> bool {
         self.location.is_some() && self.normal_present && self.problem.is_none()
+    }
+    /// Stock left and dongle share a descriptor. A second such device cannot
+    /// remain connected while the physically selected stock part enters DFU.
+    pub(crate) fn shared_factory_connection_conflicts(&self, snapshot: &Snapshot) -> bool {
+        self.shared_factory_origin
+            && self.location.is_some_and(|location| {
+                snapshot
+                    .devices
+                    .iter()
+                    .any(|device| device.factory_left() && device.location != location)
+            })
+    }
+    /// Proven stock shared-descriptor origin, retained through its correlated
+    /// normal-to-recovery transition. An unbound archive or runtime DFU endpoint
+    /// cannot manufacture this factory provenance.
+    pub(crate) fn shared_factory_recovery(&self) -> bool {
+        self.shared_factory_origin && !self.archive_only && self.recovery_binding().is_ok()
     }
     pub fn view(&self) -> View {
         let identified = self.location.is_some();

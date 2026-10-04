@@ -52,11 +52,11 @@ normal runtime recovery and deliberate-hang recovery are separate validation
 results, not a guarantee against every possible damaged application.
 
 Use Companion's available guided journeys to save backups and open recovery.
-The public factory-return journey is still disabled pending completion and
-acceptance; controlled developer restore trials do not make it available to
-newcomers. Official firmware is not bundled: the completed flow will use the
-appropriate user-supplied files or a verified local backup. Restart, settings
-reset, and factory restoration are different actions.
+Restore factory uses the same guided recovery, backup, transfer and readback
+machines as Install RMK. Official firmware is never bundled. A complete local
+factory backup is required for each part, including its S140 system firmware;
+an official application-only UF2 can be selected only over a validated complete
+backup. Restart, settings reset and factory restoration are different actions.
 
 ## Sleep
 
@@ -117,3 +117,30 @@ A changed or lost connection clears that confirmation. The Bluetooth check uses
 fresh macOS connection discovery and owner typing because USB telemetry is
 unavailable with every cable and dongle unplugged. These are functional owner
 checks, not measured latency or current tests.
+
+## Restore factory in Companion
+
+Open **Restore factory** to inspect the three saved factory files without starting
+recovery. Choose or drop a file on the matching part card if needed; **Next**
+authorizes the guided restore only when all three files pass validation.
+The first recognized complete factory backup is retained privately and never
+replaced by later RMK backups. Factory bytes are not distributed with the app.
+
+Restoration handles left, right, then dongle. Restoring left first makes the
+factory dongle recovery shortcut available again. Every part receives a fresh
+RMK backup before any copy, and its complete S140, application and settings
+readback must match before proceeding. Interrupted RMK installation can be
+undone with the validated factory target without retrying its pending RMK write.
+No bootloader, MBR or UICR writes are part of either journey.
+
+Factory firmware does not expose RMK's pairing/status protocol. The shared mode
+check machine instead asks you to confirm the physical setup and type
+`qwert HJKL h` over wired, Bluetooth and dongle connections. Fresh USB and macOS
+Bluetooth observations gate these checks; unknown switch or split telemetry is
+not invented. Stock left and dongle share a USB descriptor, so only the intended
+one is plugged in for each check. You can then return to Install RMK using the
+same recovery and transfer machines and the preserved factory originals.
+
+Software tests cover both targets, refusal guards, interruptions, role binding,
+and stale callbacks. A repeated live factory → RMK → factory roundtrip remains
+a separate hardware acceptance gate; software tests do not establish it.
