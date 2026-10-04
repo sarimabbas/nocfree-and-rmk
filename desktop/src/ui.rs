@@ -40,6 +40,7 @@ use gpui_kit::component::{
     ActiveTheme, Disableable, Icon, Sizable, Theme,
     button::{Button, ButtonVariants},
     checkbox::Checkbox,
+    kbd::Kbd,
     sidebar::{Sidebar, SidebarGroup, SidebarMenuItem},
     spinner::Spinner,
     stepper::{Stepper, StepperItem},
@@ -1920,7 +1921,7 @@ impl Companion {
                     if input.read(cx).value().as_ref() != expected {
                         input.update(cx, |state, cx| state.set_value(expected, window, cx));
                     }
-                    body = body.child(instruction_line("Type qwert on the left, a space, hold left Shift for right HJKL, release Shift, then a space and right h.", self.install.as_ref().is_some_and(InstallMachine::can_next), cx))
+                    body = body.child(instruction_line("Type qwert on the left, `space`, hold left Shift for right HJKL, release Shift, then `space` and right h.", self.install.as_ref().is_some_and(InstallMachine::can_next), cx))
                         .child(Input::new(input));
                 } else {
                     // A lost route invalidates the old confirmation and its widget together.
@@ -3114,6 +3115,59 @@ fn recovery_guide(
     recovery_guide_status(role, title, instruction, controls, false, cx)
 }
 
+// Key annotations belong to presentation; journey instructions stay plain text.
+fn instruction_content(instruction: gpui::SharedString) -> gpui::Div {
+    if !instruction.contains('`') && !instruction.contains("Fn") && !instruction.contains("Shift") {
+        return div().whitespace_normal().child(instruction);
+    }
+    let mut text = instruction.to_string();
+    for key in ["0", "1", "5", "6"] {
+        text = text.replace(&format!("Fn + {key}"), &format!("`fn` + `{key}`"));
+        text = text.replace(
+            &format!("Fn + the main-row {key} key"),
+            &format!("`fn` + the main-row `{key}` key"),
+        );
+    }
+    text = text.replace("tap the main-row 0 key", "tap the main-row `0` key");
+    let mut content = div()
+        .flex()
+        .flex_wrap()
+        .items_center()
+        .justify_center()
+        .gap_x(px(4.))
+        .gap_y(px(4.));
+    for (index, fragment) in text.split('`').enumerate() {
+        if index % 2 == 1 {
+            if let Ok(stroke) = gpui::Keystroke::parse(fragment) {
+                content = content.child(Kbd::new(stroke));
+            } else {
+                content = content.child(div().child(fragment.to_owned()));
+            }
+        } else {
+            for word in fragment.split_whitespace() {
+                let key = match word {
+                    "Fn" | "Fn," | "Fn." => Some("fn"),
+                    "Shift" | "Shift," | "Shift." => Some("shift"),
+                    _ => None,
+                };
+                content = if let Some(key) = key {
+                    let mut badge = div()
+                        .flex()
+                        .items_center()
+                        .child(Kbd::new(gpui::Keystroke::parse(key).expect("static key")));
+                    if word.ends_with([',', '.']) {
+                        badge = badge.child(word[word.len() - 1..].to_owned());
+                    }
+                    content.child(badge)
+                } else {
+                    content.child(div().child(word.to_owned()))
+                };
+            }
+        }
+    }
+    content
+}
+
 fn instruction_line(
     instruction: impl Into<gpui::SharedString>,
     satisfied: bool,
@@ -3144,7 +3198,7 @@ fn instruction_line(
                 .text_size(px(15.))
                 .line_height(px(23.))
                 .text_color(cx.theme().muted_foreground)
-                .child(instruction.into()),
+                .child(instruction_content(instruction.into())),
         )
 }
 
