@@ -14,8 +14,12 @@ and must not be used as current startup instructions.
   remaining capacity and battery life are not physically calibrated.
 - USB-powered halves have the reviewed awake override. Owner reports immediate
   first keys after six minutes idle with both USB cables connected.
-- The 30-minute battery idle candidate is installed on LEFT with settings
-  preserved; first-key sleep/wake acceptance is pending.
+- Interrupt-driven idle scanning is installed on both halves with the existing
+  30-minute RMK sleep policy. The combined update reset settings as expected
+  after the RMK revision change; exact readbacks and Companion recovery passed.
+  Owner typing, USB attach/detach, purple Dongle indication, and Bluetooth blue
+  blink/steady checks passed. Sleep entry, first-key latency and current remain
+  pending on this combined build.
 
 ## Finish before v1
 

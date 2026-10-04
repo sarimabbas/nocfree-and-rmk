@@ -117,3 +117,14 @@ that a third LED die is absent.
 The remaining useful evidence is an AND LED part number plus its wiring, or a
 controlled optical/electrical observation of the documented red and blue
 channels. A generic RGB LED datasheet cannot identify the fitted component.
+
+## Combined trial observations, 2026-10-04
+
+LEFT mixing and interrupt-driven scanning were installed together. Exact
+readback and Companion recovery passed on both halves. The owner observed
+purple in battery-powered Dongle mode, blinking blue when Bluetooth was
+unpaired and steady blue after pairing. Typing and USB attach/detach were
+reported working. RIGHT's indicator is deliberately unchanged: LEFT selects
+the host mode, while RIGHT follows the split link. Sleep entry and electrical
+current remain unmeasured; these optical observations do not establish charger
+current or battery endurance.
