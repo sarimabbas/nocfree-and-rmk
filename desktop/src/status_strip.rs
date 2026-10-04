@@ -56,13 +56,6 @@ fn segment(
         content = content.child(Icon::new(icon).size(px(14.)).text_color(color));
     }
     if let Some(state) = battery {
-        if state.usb_connected && connection.is_none_or(|(icon, _, _)| icon != IconName::Plug) {
-            content = content.child(
-                Icon::new(IconName::Plug)
-                    .size(px(14.))
-                    .text_color(cx.theme().muted_foreground),
-            );
-        }
         let level = state
             .level
             .map(|v| format!("{v}%"))
