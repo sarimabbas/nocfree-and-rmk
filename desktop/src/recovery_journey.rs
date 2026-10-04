@@ -53,76 +53,166 @@ impl Procedure {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Attempt(u64);
 
-pub struct RecoveryJourney {
-    state: State,
-    generation: u64,
+mod machine {
+    use super::{Attempt, Procedure, Role};
+    use statig::prelude::*;
+
+    #[derive(Default)]
+    pub struct Recovery {
+        pub generation: u64,
+    }
+    pub enum Event {
+        Start(Role),
+        Observe(Attempt, Role, Procedure),
+        Complete(Attempt, Role, Result<(), String>),
+        Cancel,
+        Retry,
+    }
+    impl Recovery {
+        fn next_attempt(&mut self) {
+            self.generation = self
+                .generation
+                .checked_add(1)
+                .expect("Recovery attempt counter exhausted");
+        }
+        fn start_attempt(&mut self, role: Role, context: &mut bool) -> Outcome<State> {
+            self.next_attempt();
+            *context = true;
+            Transition(State::identify(role))
+        }
+        fn progress(&self, role: Role, event: &Event, context: &mut bool) -> Outcome<State> {
+            match event {
+                Event::Observe(attempt, selected, procedure)
+                    if attempt.0 == self.generation && *selected == role =>
+                {
+                    *context = true;
+                    Transition(State::guiding(role, *procedure))
+                }
+                Event::Complete(attempt, selected, result)
+                    if attempt.0 == self.generation && *selected == role =>
+                {
+                    *context = true;
+                    match result {
+                        Ok(()) => Transition(State::ready(role)),
+                        Err(error) => Transition(State::failed(role, error.clone())),
+                    }
+                }
+                _ => Super,
+            }
+        }
+    }
+    #[state_machine(initial = "State::choose()", state(derive(Debug)))]
+    impl Recovery {
+        #[state(superstate = "cancellable")]
+        fn choose(&mut self, event: &Event, context: &mut bool) -> Outcome<State> {
+            match event {
+                Event::Start(role) => self.start_attempt(*role, context),
+                _ => Super,
+            }
+        }
+        #[state(superstate = "cancellable")]
+        fn identify(&mut self, role: &Role, event: &Event, context: &mut bool) -> Outcome<State> {
+            self.progress(*role, event, context)
+        }
+        #[state(superstate = "cancellable")]
+        fn guiding(
+            &mut self,
+            role: &Role,
+            procedure: &Procedure,
+            event: &Event,
+            context: &mut bool,
+        ) -> Outcome<State> {
+            let _ = procedure;
+            self.progress(*role, event, context)
+        }
+        #[state(superstate = "cancellable")]
+        fn ready(&mut self, role: &Role, event: &Event, context: &mut bool) -> Outcome<State> {
+            let _ = role;
+            match event {
+                Event::Start(role) => self.start_attempt(*role, context),
+                _ => Super,
+            }
+        }
+        #[state(superstate = "cancellable")]
+        fn failed(
+            &mut self,
+            role: &Role,
+            error: &String,
+            event: &Event,
+            context: &mut bool,
+        ) -> Outcome<State> {
+            let _ = error;
+            match event {
+                Event::Retry => self.start_attempt(*role, context),
+                Event::Start(role) => self.start_attempt(*role, context),
+                _ => Super,
+            }
+        }
+        #[superstate]
+        fn cancellable(&mut self, event: &Event, context: &mut bool) -> Outcome<State> {
+            match event {
+                Event::Cancel => {
+                    self.next_attempt();
+                    *context = true;
+                    Transition(State::choose())
+                }
+                _ => Super,
+            }
+        }
+    }
 }
 
+/// Statig owns the state; the public enum is an immutable rendering projection.
+pub struct RecoveryJourney {
+    machine: statig::blocking::StateMachine<machine::Recovery>,
+}
 impl Default for RecoveryJourney {
     fn default() -> Self {
         Self::new()
     }
 }
-
 impl RecoveryJourney {
     pub fn new() -> Self {
+        use statig::prelude::IntoStateMachineExt;
         Self {
-            state: State::Choose,
-            generation: 0,
+            machine: machine::Recovery::default().state_machine(),
         }
     }
-    pub fn state(&self) -> &State {
-        &self.state
+    pub fn state(&self) -> State {
+        match self.machine.state() {
+            machine::State::Choose {} => State::Choose,
+            machine::State::Identify { role } => State::Identify(*role),
+            machine::State::Guiding { role, procedure } => State::Guiding(*role, *procedure),
+            machine::State::Ready { role } => State::Ready(*role),
+            machine::State::Failed { role, error } => State::Failed(*role, error.clone()),
+        }
     }
-    fn invalidate(&mut self) {
-        self.generation = self
-            .generation
-            .checked_add(1)
-            .expect("Recovery attempt counter exhausted");
+    fn dispatch(&mut self, event: machine::Event) -> bool {
+        let mut accepted = false;
+        self.machine.handle_with_context(&event, &mut accepted);
+        accepted
     }
     pub fn start(&mut self, role: Role) -> Option<Attempt> {
-        if matches!(self.state, State::Identify(_) | State::Guiding(_, _)) {
-            return None;
-        }
-        self.invalidate();
-        self.state = State::Identify(role);
-        Some(Attempt(self.generation))
-    }
-    fn active(&self, attempt: Attempt, role: Role) -> bool {
-        attempt == Attempt(self.generation)
-            && match self.state {
-                State::Identify(selected) | State::Guiding(selected, _) => selected == role,
-                _ => false,
-            }
+        self.dispatch(machine::Event::Start(role))
+            .then(|| Attempt(self.machine.inner().generation))
     }
     pub fn observe(&mut self, attempt: Attempt, role: Role, procedure: Procedure) -> bool {
-        if !self.active(attempt, role) {
-            return false;
-        }
-        self.state = State::Guiding(role, procedure);
-        true
+        self.dispatch(machine::Event::Observe(attempt, role, procedure))
     }
-    /// Stale, cancelled, duplicate or wrong-role callbacks cannot replace current guidance.
     pub fn complete(&mut self, attempt: Attempt, role: Role, result: Result<(), String>) -> bool {
-        if !self.active(attempt, role) {
-            return false;
-        }
-        self.state = match result {
-            Ok(()) => State::Ready(role),
-            Err(error) => State::Failed(role, error),
-        };
-        true
+        self.dispatch(machine::Event::Complete(attempt, role, result))
     }
     pub fn cancel(&mut self) {
-        self.invalidate();
-        self.state = State::Choose;
+        self.dispatch(machine::Event::Cancel);
     }
     pub fn retry(&mut self) -> Option<(Role, Attempt)> {
-        let State::Failed(role, _) = &self.state else {
+        if !self.dispatch(machine::Event::Retry) {
             return None;
+        }
+        let State::Identify(role) = self.state() else {
+            unreachable!()
         };
-        let role = *role;
-        self.start(role).map(|attempt| (role, attempt))
+        Some((role, Attempt(self.machine.inner().generation)))
     }
 }
 
@@ -145,7 +235,7 @@ mod tests {
         assert!(flow.observe(old, Role::Left, Procedure::FactoryLeft));
         assert_eq!(
             flow.state(),
-            &State::Guiding(Role::Left, Procedure::FactoryLeft)
+            State::Guiding(Role::Left, Procedure::FactoryLeft)
         );
         flow.cancel();
         let current = flow.start(Role::Left).unwrap();
@@ -155,7 +245,7 @@ mod tests {
         assert!(flow.complete(current, Role::Left, Err("Different USB connection".into())));
         let (_, retry) = flow.retry().unwrap();
         assert!(!flow.observe(current, Role::Left, Procedure::FactoryLeft));
-        assert_eq!(flow.state(), &State::Identify(Role::Left));
+        assert_eq!(flow.state(), State::Identify(Role::Left));
         assert!(flow.observe(retry, Role::Left, Procedure::FactoryLeft));
     }
     #[test]
@@ -164,13 +254,13 @@ mod tests {
         let old = flow.start(Role::Left).unwrap();
         flow.cancel();
         assert!(!flow.complete(old, Role::Left, Ok(())));
-        assert_eq!(flow.state(), &State::Choose);
+        assert_eq!(flow.state(), State::Choose);
         let current = flow.start(Role::Right).unwrap();
         assert!(!flow.complete(old, Role::Left, Ok(())));
         assert!(!flow.complete(current, Role::Left, Ok(())));
-        assert_eq!(flow.state(), &State::Identify(Role::Right));
+        assert_eq!(flow.state(), State::Identify(Role::Right));
         assert!(flow.complete(current, Role::Right, Ok(())));
-        assert_eq!(flow.state(), &State::Ready(Role::Right));
+        assert_eq!(flow.state(), State::Ready(Role::Right));
     }
     #[test]
     fn failure_retry_is_a_fresh_explicit_attempt() {
@@ -187,13 +277,13 @@ mod tests {
         assert!(flow.complete(current, role, Ok(())));
         assert!(flow.retry().is_none());
         assert!(!flow.complete(current, role, Err("late error".into())));
-        assert_eq!(flow.state(), &State::Ready(role));
+        assert_eq!(flow.state(), State::Ready(role));
     }
     #[test]
     fn waiting_never_becomes_ready_without_a_correlated_transport_result() {
         let mut flow = RecoveryJourney::new();
         let attempt = flow.start(Role::Left).unwrap();
-        assert_eq!(flow.state(), &State::Identify(Role::Left));
+        assert_eq!(flow.state(), State::Identify(Role::Left));
         assert!(flow.complete(
             attempt,
             Role::Left,

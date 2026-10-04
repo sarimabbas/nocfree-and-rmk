@@ -8,6 +8,10 @@ use crate::{
     update_image,
 };
 use sha2::{Digest, Sha256};
+use statig::{
+    Outcome,
+    blocking::{IntoStateMachine, IntoStateMachineExt, State as StatigState, StateMachine},
+};
 use std::{
     fs,
     io::Write,
@@ -44,22 +48,186 @@ pub struct View {
     pub complete: bool,
     pub error: Option<String>,
 }
+#[derive(Clone)]
 struct Baseline {
     location: u64,
     mount: BootMount,
     folder: PathBuf,
     bytes: Vec<u8>,
 }
-pub struct FirmwareJourney {
+struct FirmwareData {
     release: FirmwareRelease,
     index: usize,
-    phase: Phase,
     baseline: Option<Baseline>,
     error: Option<String>,
     attempted: bool,
-    // Discovery failure suspends a state, never erases transfer evidence.
+    // This is failure history, not a second mutable current state.
     retry_phase: Option<Phase>,
 }
+impl FirmwareData {
+    fn role(&self) -> Role {
+        PLAN[self.index]
+    }
+}
+
+enum FirmwareEvent<'a> {
+    RecoverySaved(&'a Baseline, bool),
+    TransferAttempted,
+    TransferResult(&'a Result<(), String>),
+    Verified,
+    PowerOn(Instant),
+    Observe(&'a Result<Snapshot, String>, Instant),
+    Cancel,
+}
+impl IntoStateMachine for FirmwareData {
+    type Event<'a> = FirmwareEvent<'a>;
+    type Context<'a> = ();
+    type State = Phase;
+    type Superstate<'a> = ();
+    fn initial() -> Phase {
+        Phase::Recovery
+    }
+}
+impl StatigState<FirmwareData> for Phase {
+    fn call_handler(
+        &mut self,
+        data: &mut FirmwareData,
+        event: &FirmwareEvent<'_>,
+        _: &mut (),
+    ) -> Outcome<Self> {
+        use Outcome::{Handled, Transition};
+        match event {
+            FirmwareEvent::Cancel => {
+                data.retry_phase = None;
+                return Transition(Phase::Cancelled);
+            }
+            FirmwareEvent::RecoverySaved(baseline, installed) if *self == Phase::Recovery => {
+                data.baseline = Some((*baseline).clone());
+                data.error = None;
+                return Transition(if *installed {
+                    Phase::Disconnect
+                } else {
+                    Phase::Approval
+                });
+            }
+            FirmwareEvent::TransferAttempted if *self == Phase::Approval && !data.attempted => {
+                data.attempted = true;
+                return Transition(Phase::Reconcile);
+            }
+            FirmwareEvent::TransferResult(result) if *self == Phase::Reconcile => {
+                data.error = result.as_ref().err().cloned();
+                return Handled;
+            }
+            FirmwareEvent::Verified if *self == Phase::Reconcile => {
+                data.error = None;
+                return Transition(Phase::Disconnect);
+            }
+            FirmwareEvent::PowerOn(now) if *self == Phase::PowerOn => {
+                return Transition(Phase::StartWait(*now));
+            }
+            _ => {}
+        }
+        let FirmwareEvent::Observe(observation, now) = event else {
+            return Handled;
+        };
+        if matches!(self, Phase::Complete | Phase::Cancelled) {
+            return Handled;
+        }
+        let (snapshot, phase) = match observation {
+            Err(error) => {
+                if *self != Phase::Failed {
+                    data.retry_phase = Some(match self {
+                        Phase::OffWait(_)
+                        | Phase::PowerOn
+                        | Phase::StartWait(_)
+                        | Phase::Reconnect => Phase::Disconnect,
+                        phase => *phase,
+                    });
+                }
+                data.error = Some(format!("Could not check the keyboard: {error}"));
+                return Transition(Phase::Failed);
+            }
+            Ok(snapshot) => {
+                let phase = if *self == Phase::Failed {
+                    data.error = None;
+                    data.retry_phase.take().unwrap_or(Phase::Recovery)
+                } else {
+                    *self
+                };
+                (snapshot, phase)
+            }
+        };
+        let Some(baseline) = &data.baseline else {
+            return if phase == *self {
+                Handled
+            } else {
+                Transition(phase)
+            };
+        };
+        let connected = snapshot
+            .devices
+            .iter()
+            .any(|d| d.location == baseline.location);
+        let next = match phase {
+            Phase::Disconnect if !connected => Phase::OffWait(*now),
+            Phase::OffWait(_) | Phase::PowerOn | Phase::StartWait(_) if connected => {
+                Phase::Disconnect
+            }
+            Phase::OffWait(since)
+                if now.saturating_duration_since(since) >= Duration::from_secs(5) =>
+            {
+                if data.role() == Role::Right {
+                    Phase::PowerOn
+                } else {
+                    Phase::Reconnect
+                }
+            }
+            Phase::StartWait(since)
+                if now.saturating_duration_since(since) >= Duration::from_secs(10) =>
+            {
+                Phase::Reconnect
+            }
+            Phase::Reconnect if connected => {
+                let normal: Vec<_> = snapshot
+                    .devices
+                    .iter()
+                    .filter(|d| {
+                        d.vendor == 0x4c4b
+                            && d.product == data.role().product() as u64
+                            && d.name == data.role().name()
+                    })
+                    .collect();
+                if normal.len() == 1
+                    && normal[0].location == baseline.location
+                    && snapshot.mounts.is_empty()
+                    && !snapshot.devices.iter().any(|d| d.bootloader())
+                {
+                    if data.index == PLAN.len() - 1 {
+                        Phase::Complete
+                    } else {
+                        data.index += 1;
+                        data.baseline = None;
+                        data.attempted = false;
+                        Phase::Recovery
+                    }
+                } else {
+                    Phase::Disconnect
+                }
+            }
+            phase => phase,
+        };
+        if next == *self {
+            Handled
+        } else {
+            Transition(next)
+        }
+    }
+}
+
+pub struct FirmwareJourney {
+    machine: StateMachine<FirmwareData>,
+}
+
 fn hash(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
 }
@@ -195,20 +363,22 @@ fn reconcile_prior(
 impl FirmwareJourney {
     pub fn new(release: FirmwareRelease) -> Self {
         Self {
-            release,
-            index: 0,
-            phase: Phase::Recovery,
-            baseline: None,
-            error: None,
-            attempted: false,
-            retry_phase: None,
+            machine: FirmwareData {
+                release,
+                index: 0,
+                baseline: None,
+                error: None,
+                attempted: false,
+                retry_phase: None,
+            }
+            .state_machine(),
         }
     }
     pub fn role(&self) -> Role {
-        PLAN[self.index]
+        PLAN[self.machine.inner().index]
     }
     pub fn view(&self) -> View {
-        let (title, instruction) = match self.phase {
+        let (title, instruction) = match *self.machine.state() {
             Phase::Recovery => (
                 "Connect your keyboard",
                 "Follow the recovery steps to save a copy before installing.",
@@ -257,17 +427,18 @@ impl FirmwareJourney {
             title: title.into(),
             instruction: instruction.into(),
             role: self.role(),
-            step: self.index,
-            needs_power_on_ack: self.phase == Phase::PowerOn,
-            can_transfer: self.phase == Phase::Approval && !self.attempted,
-            needs_recovery: matches!(self.phase, Phase::Recovery | Phase::Reconcile),
-            verification: self.phase == Phase::Reconcile,
-            complete: self.phase == Phase::Complete,
-            error: self.error.clone(),
+            step: self.machine.inner().index,
+            needs_power_on_ack: *self.machine.state() == Phase::PowerOn,
+            can_transfer: *self.machine.state() == Phase::Approval
+                && !self.machine.inner().attempted,
+            needs_recovery: matches!(*self.machine.state(), Phase::Recovery | Phase::Reconcile),
+            verification: *self.machine.state() == Phase::Reconcile,
+            complete: *self.machine.state() == Phase::Complete,
+            error: self.machine.inner().error.clone(),
         }
     }
     pub fn accept_recovery(&mut self, mut session: Session) -> Result<(), String> {
-        if self.phase != Phase::Recovery {
+        if *self.machine.state() != Phase::Recovery {
             return Err("This recovery result is no longer needed.".into());
         }
         let (role, location, mount) = session.recovery_binding()?;
@@ -277,36 +448,39 @@ impl FirmwareJourney {
         let folder = session.save_backup()?;
         let bytes = device::read_bounded(&folder.join("CURRENT.UF2"), ARCHIVE_LIMIT)?;
         device::inspect_archive(&bytes)?;
-        reconcile_prior(&folder, role, location, &bytes, self.release.image(role))?;
-        self.baseline = Some(Baseline {
+        reconcile_prior(
+            &folder,
+            role,
+            location,
+            &bytes,
+            self.machine.inner().release.image(role),
+        )?;
+        let baseline = Baseline {
             location,
             mount,
             folder,
             bytes,
-        });
-        self.error = None;
-        self.phase = if exact_candidate(
-            &self.baseline.as_ref().unwrap().bytes,
-            self.release.image(role),
-        )? {
-            Phase::Disconnect
-        } else {
-            Phase::Approval
         };
+        let installed = exact_candidate(&baseline.bytes, self.machine.inner().release.image(role))?;
+        self.machine
+            .handle(&FirmwareEvent::RecoverySaved(&baseline, installed));
         Ok(())
     }
     pub fn transfer(&mut self) -> Result<(), String> {
-        if self.phase != Phase::Approval || self.attempted {
+        if *self.machine.state() != Phase::Approval || self.machine.inner().attempted {
             return Err(
                 "A transfer cannot be repeated. Check the installed firmware first.".into(),
             );
         }
         let baseline = self
+            .machine
+            .inner()
             .baseline
             .as_ref()
-            .ok_or("A fresh backup is required.")?;
-        let image = self.release.image(self.role());
-        target(image)?;
+            .ok_or("A fresh backup is required.")?
+            .clone();
+        let image = self.machine.inner().release.image(self.role()).clone();
+        target(&image)?;
         if !correlated(&device::discover()?, baseline.location, &baseline.mount) {
             return Err("Recovery connection changed. No firmware was copied.".into());
         }
@@ -325,7 +499,7 @@ impl FirmwareJourney {
                 "Firmware or connection changed after backup. No firmware was copied.".into(),
             );
         }
-        let intent = serde_json::json!({"schema":1,"release":self.release.id(),"role":format!("{:?}",self.role()),"backup_sha256":hash(&fresh),"target_sha256":image.metadata.uf2_sha256,"location":baseline.location,"attempt":"one-shot; reconcile readback before continuing"});
+        let intent = serde_json::json!({"schema":1,"release":self.machine.inner().release.id(),"role":format!("{:?}",self.role()),"backup_sha256":hash(&fresh),"target_sha256":image.metadata.uf2_sha256,"location":baseline.location,"attempt":"one-shot; reconcile readback before continuing"});
         durable(
             &baseline.folder,
             "install-intent.json",
@@ -334,8 +508,7 @@ impl FirmwareJourney {
         )?;
         // Set the state before touching the drive: even a partial/failed copy cannot
         // return this live journey to an install button.
-        self.attempted = true;
-        self.phase = Phase::Reconcile;
+        self.machine.handle(&FirmwareEvent::TransferAttempted);
         let result = (|| {
             if !correlated(&device::discover()?, baseline.location, &baseline.mount)
                 || device::read_bounded(&baseline.mount.path.join("INFO_UF2.TXT"), 8192)?
@@ -351,15 +524,17 @@ impl FirmwareJourney {
                     "The transfer result is uncertain. Open recovery to check it.".to_owned()
                 })
         })();
-        self.error = result.as_ref().err().cloned();
+        self.machine.handle(&FirmwareEvent::TransferResult(&result));
         result
     }
     pub fn accept_verification(&mut self, mut session: Session) -> Result<(), String> {
-        if self.phase != Phase::Reconcile {
+        if *self.machine.state() != Phase::Reconcile {
             return Err("This verification result is no longer needed.".into());
         }
         let (role, location, mount) = session.recovery_binding()?;
         let baseline = self
+            .machine
+            .inner()
             .baseline
             .as_ref()
             .ok_or("Saved installation evidence is missing.")?;
@@ -369,110 +544,27 @@ impl FirmwareJourney {
         }
         let folder = session.save_backup()?;
         let actual = device::read_bounded(&folder.join("CURRENT.UF2"), ARCHIVE_LIMIT)?;
-        let changed_storage = verify(&actual, &baseline.bytes, self.release.image(role))?;
+        let changed_storage = verify(
+            &actual,
+            &baseline.bytes,
+            self.machine.inner().release.image(role),
+        )?;
         durable(&baseline.folder,"install-verified.json",&serde_json::to_vec_pretty(&serde_json::json!({"schema":1,"readback_sha256":hash(&actual),"settings_changed_bytes":changed_storage,"settings_range":"0x65000..0x6d000","readback":folder})).map_err(|_| "Could not encode verification record.")?)?;
-        self.error = None;
-        self.phase = Phase::Disconnect;
+        self.machine.handle(&FirmwareEvent::Verified);
         Ok(())
     }
     pub fn confirm_power_on(&mut self) {
-        if self.phase == Phase::PowerOn {
-            self.phase = Phase::StartWait(Instant::now());
-        }
+        self.machine.handle(&FirmwareEvent::PowerOn(Instant::now()));
     }
     pub fn observe(&mut self, observation: Result<Snapshot, String>) {
         self.observe_at(observation, Instant::now());
     }
     fn observe_at(&mut self, observation: Result<Snapshot, String>, now: Instant) {
-        if matches!(self.phase, Phase::Complete | Phase::Cancelled) {
-            return;
-        }
-        let snapshot = match observation {
-            Err(error) => {
-                if self.phase != Phase::Failed {
-                    self.retry_phase = Some(match self.phase {
-                        // A discovery outage cannot count as a physical power-off
-                        // interval or establish that the board restarted normally.
-                        Phase::OffWait(_)
-                        | Phase::PowerOn
-                        | Phase::StartWait(_)
-                        | Phase::Reconnect => Phase::Disconnect,
-                        phase => phase,
-                    });
-                }
-                self.phase = Phase::Failed;
-                self.error = Some(format!("Could not check the keyboard: {error}"));
-                return;
-            }
-            Ok(snapshot) => {
-                if self.phase == Phase::Failed {
-                    // A successful read-only discovery retries only observation.
-                    // The original baseline, journal and one-shot attempt survive.
-                    self.phase = self.retry_phase.take().unwrap_or(Phase::Recovery);
-                    self.error = None;
-                }
-                snapshot
-            }
-        };
-        let Some(baseline) = &self.baseline else {
-            return;
-        };
-        let connected = snapshot
-            .devices
-            .iter()
-            .any(|d| d.location == baseline.location);
-        self.phase = match self.phase {
-            Phase::Disconnect if !connected => Phase::OffWait(now),
-            Phase::OffWait(_) | Phase::PowerOn | Phase::StartWait(_) if connected => {
-                Phase::Disconnect
-            }
-            Phase::OffWait(since)
-                if now.saturating_duration_since(since) >= Duration::from_secs(5) =>
-            {
-                if self.role() == Role::Right {
-                    Phase::PowerOn
-                } else {
-                    Phase::Reconnect
-                }
-            }
-            Phase::StartWait(since)
-                if now.saturating_duration_since(since) >= Duration::from_secs(10) =>
-            {
-                Phase::Reconnect
-            }
-            Phase::Reconnect if connected => {
-                let normal: Vec<_> = snapshot
-                    .devices
-                    .iter()
-                    .filter(|d| {
-                        d.vendor == 0x4c4b
-                            && d.product == self.role().product() as u64
-                            && d.name == self.role().name()
-                    })
-                    .collect();
-                if normal.len() == 1
-                    && normal[0].location == baseline.location
-                    && snapshot.mounts.is_empty()
-                    && !snapshot.devices.iter().any(|d| d.bootloader())
-                {
-                    if self.index == PLAN.len() - 1 {
-                        Phase::Complete
-                    } else {
-                        self.index += 1;
-                        self.baseline = None;
-                        self.attempted = false;
-                        Phase::Recovery
-                    }
-                } else {
-                    Phase::Disconnect
-                }
-            }
-            other => other,
-        };
+        self.machine
+            .handle(&FirmwareEvent::Observe(&observation, now));
     }
     pub fn cancel(&mut self) {
-        self.retry_phase = None;
-        self.phase = Phase::Cancelled;
+        self.machine.handle(&FirmwareEvent::Cancel);
     }
 }
 
@@ -491,17 +583,19 @@ mod tests {
     }
     fn model(role: Role) -> FirmwareJourney {
         let mut journey = FirmwareJourney::new(crate::release::fixture());
-        journey.index = PLAN.iter().position(|r| *r == role).unwrap();
-        journey.baseline = Some(Baseline {
-            location: 10,
-            mount: BootMount {
-                path: PathBuf::new(),
-                info: String::new(),
-            },
-            folder: PathBuf::new(),
-            bytes: device::tests::archive(),
-        });
-        journey.phase = Phase::Disconnect;
+        unsafe {
+            journey.machine.inner_mut().index = PLAN.iter().position(|r| *r == role).unwrap();
+            journey.machine.inner_mut().baseline = Some(Baseline {
+                location: 10,
+                mount: BootMount {
+                    path: PathBuf::new(),
+                    info: String::new(),
+                },
+                folder: PathBuf::new(),
+                bytes: device::tests::archive(),
+            });
+            *journey.machine.state_mut() = Phase::Disconnect;
+        }
         journey
     }
     fn normal(role: Role, location: u64) -> Snapshot {
@@ -514,6 +608,50 @@ mod tests {
             }],
             mounts: vec![],
         }
+    }
+    #[test]
+    fn explicit_events_keep_transfer_one_shot_and_reject_late_completion() {
+        let mut journey = FirmwareJourney::new(crate::release::fixture());
+        let baseline = Baseline {
+            location: 10,
+            mount: BootMount {
+                path: PathBuf::new(),
+                info: String::new(),
+            },
+            folder: PathBuf::new(),
+            bytes: device::tests::archive(),
+        };
+        journey.machine.handle(&FirmwareEvent::Verified);
+        journey.machine.handle(&FirmwareEvent::TransferAttempted);
+        assert_eq!(*journey.machine.state(), Phase::Recovery);
+        assert!(!journey.machine.inner().attempted);
+        journey
+            .machine
+            .handle(&FirmwareEvent::RecoverySaved(&baseline, false));
+        assert_eq!(*journey.machine.state(), Phase::Approval);
+        journey.machine.handle(&FirmwareEvent::TransferAttempted);
+        assert_eq!(*journey.machine.state(), Phase::Reconcile);
+        assert!(journey.machine.inner().attempted);
+        journey.machine.handle(&FirmwareEvent::TransferAttempted);
+        journey.observe(Err("inventory denied".into()));
+        assert_eq!(*journey.machine.state(), Phase::Failed);
+        journey.observe(Ok(Snapshot {
+            devices: vec![],
+            mounts: vec![],
+        }));
+        assert_eq!(*journey.machine.state(), Phase::Reconcile);
+        assert!(journey.machine.inner().attempted);
+        assert_eq!(
+            journey.machine.inner().baseline.as_ref().unwrap().bytes,
+            baseline.bytes
+        );
+        journey.cancel();
+        journey.machine.handle(&FirmwareEvent::Verified);
+        journey
+            .machine
+            .handle(&FirmwareEvent::TransferResult(&Ok(())));
+        assert_eq!(*journey.machine.state(), Phase::Cancelled);
+        assert!(journey.machine.inner().attempted);
     }
     #[test]
     fn readback_requires_target_padding_and_untouched_gap_but_reports_settings_separately() {
@@ -542,14 +680,18 @@ mod tests {
     #[test]
     fn cancelled_and_attempted_journeys_cannot_transfer_or_accept_late_results() {
         let mut journey = model(Role::Right);
-        journey.phase = Phase::Approval;
-        journey.attempted = true;
+        unsafe {
+            *journey.machine.state_mut() = Phase::Approval;
+        }
+        unsafe {
+            journey.machine.inner_mut().attempted = true;
+        }
         assert!(journey.transfer().is_err());
         journey.cancel();
         assert!(journey.accept_recovery(Session::new()).is_err());
         assert!(journey.accept_verification(Session::new()).is_err());
         journey.observe(Ok(normal(Role::Right, 10)));
-        assert_eq!(journey.phase, Phase::Cancelled);
+        assert_eq!(*journey.machine.state(), Phase::Cancelled);
     }
     #[test]
     fn recovery_role_is_explicit_and_wrong_role_is_rejected_before_io() {
@@ -583,21 +725,25 @@ mod tests {
         let now = Instant::now();
         journey.observe_at(Ok(Snapshot::default()), now);
         journey.observe_at(Ok(Snapshot::default()), now + Duration::from_secs(5));
-        assert_eq!(journey.phase, Phase::PowerOn);
+        assert_eq!(*journey.machine.state(), Phase::PowerOn);
         assert!(journey.view().needs_power_on_ack);
-        journey.phase = Phase::StartWait(now + Duration::from_secs(5));
+        unsafe {
+            *journey.machine.state_mut() = Phase::StartWait(now + Duration::from_secs(5));
+        }
         journey.observe_at(Ok(Snapshot::default()), now + Duration::from_secs(14));
-        assert!(matches!(journey.phase, Phase::StartWait(_)));
+        assert!(matches!(*journey.machine.state(), Phase::StartWait(_)));
         journey.observe_at(Ok(Snapshot::default()), now + Duration::from_secs(15));
-        assert_eq!(journey.phase, Phase::Reconnect);
+        assert_eq!(*journey.machine.state(), Phase::Reconnect);
         journey.observe_at(Ok(normal(Role::Right, 11)), now + Duration::from_secs(16));
-        assert_eq!(journey.phase, Phase::Reconnect);
+        assert_eq!(*journey.machine.state(), Phase::Reconnect);
         journey.observe_at(Ok(normal(Role::Left, 10)), now + Duration::from_secs(17));
-        assert_eq!(journey.phase, Phase::Disconnect);
-        journey.phase = Phase::Reconnect;
+        assert_eq!(*journey.machine.state(), Phase::Disconnect);
+        unsafe {
+            *journey.machine.state_mut() = Phase::Reconnect;
+        }
         journey.observe_at(Ok(normal(Role::Right, 10)), now + Duration::from_secs(18));
         assert_eq!(journey.role(), Role::Left);
-        assert_eq!(journey.phase, Phase::Recovery);
+        assert_eq!(*journey.machine.state(), Phase::Recovery);
     }
     #[test]
     fn failed_discovery_cannot_satisfy_power_off_interval() {
@@ -605,8 +751,8 @@ mod tests {
         let now = Instant::now();
         journey.observe_at(Ok(Snapshot::default()), now);
         journey.observe_at(Err("unavailable".into()), now + Duration::from_secs(5));
-        assert_eq!(journey.phase, Phase::Failed);
-        assert_eq!(journey.retry_phase, Some(Phase::Disconnect));
+        assert_eq!(*journey.machine.state(), Phase::Failed);
+        assert_eq!(journey.machine.inner().retry_phase, Some(Phase::Disconnect));
         assert!(
             journey
                 .view()
@@ -616,7 +762,7 @@ mod tests {
                 .contains("unavailable")
         );
         journey.observe_at(Ok(Snapshot::default()), now + Duration::from_secs(20));
-        assert!(matches!(journey.phase, Phase::OffWait(_)));
+        assert!(matches!(*journey.machine.state(), Phase::OffWait(_)));
     }
     #[test]
     fn factory_plan_keeps_left_until_dongle_entry_is_finished() {
@@ -670,33 +816,67 @@ mod tests {
     fn discovery_failure_is_visible_during_recovery_and_verification_without_retrying_copy() {
         let mut journey = FirmwareJourney::new(crate::release::fixture());
         journey.observe(Err("Recovery drive access was denied.".into()));
-        assert_eq!(journey.phase, Phase::Failed);
+        assert_eq!(*journey.machine.state(), Phase::Failed);
         assert!(journey.view().error.unwrap().contains("denied"));
         assert!(!journey.view().can_transfer);
         journey.observe(Ok(Snapshot::default()));
-        assert_eq!(journey.phase, Phase::Recovery);
+        assert_eq!(*journey.machine.state(), Phase::Recovery);
         assert!(journey.view().needs_recovery);
 
         let mut journey = model(Role::Left);
-        journey.phase = Phase::Reconcile;
-        journey.attempted = true;
-        let original_bytes = journey.baseline.as_ref().unwrap().bytes.clone();
-        let original_mount = journey.baseline.as_ref().unwrap().mount.clone();
-        let original_folder = journey.baseline.as_ref().unwrap().folder.clone();
+        unsafe {
+            *journey.machine.state_mut() = Phase::Reconcile;
+        }
+        unsafe {
+            journey.machine.inner_mut().attempted = true;
+        }
+        let original_bytes = journey
+            .machine
+            .inner()
+            .baseline
+            .as_ref()
+            .unwrap()
+            .bytes
+            .clone();
+        let original_mount = journey
+            .machine
+            .inner()
+            .baseline
+            .as_ref()
+            .unwrap()
+            .mount
+            .clone();
+        let original_folder = journey
+            .machine
+            .inner()
+            .baseline
+            .as_ref()
+            .unwrap()
+            .folder
+            .clone();
         journey.observe(Err("USB inventory unavailable.".into()));
-        assert_eq!(journey.phase, Phase::Failed);
-        assert_eq!(journey.retry_phase, Some(Phase::Reconcile));
+        assert_eq!(*journey.machine.state(), Phase::Failed);
+        assert_eq!(journey.machine.inner().retry_phase, Some(Phase::Reconcile));
         assert!(journey.transfer().is_err());
         journey.observe(Err("Recovery drive access was denied.".into()));
-        assert_eq!(journey.retry_phase, Some(Phase::Reconcile));
+        assert_eq!(journey.machine.inner().retry_phase, Some(Phase::Reconcile));
         journey.observe(Ok(normal(Role::Left, 10)));
-        assert_eq!(journey.phase, Phase::Reconcile);
-        assert!(journey.attempted);
+        assert_eq!(*journey.machine.state(), Phase::Reconcile);
+        assert!(journey.machine.inner().attempted);
         assert!(journey.transfer().is_err());
         assert!(journey.view().verification);
-        assert_eq!(journey.baseline.as_ref().unwrap().bytes, original_bytes);
-        assert_eq!(journey.baseline.as_ref().unwrap().mount, original_mount);
-        assert_eq!(journey.baseline.as_ref().unwrap().folder, original_folder);
+        assert_eq!(
+            journey.machine.inner().baseline.as_ref().unwrap().bytes,
+            original_bytes
+        );
+        assert_eq!(
+            journey.machine.inner().baseline.as_ref().unwrap().mount,
+            original_mount
+        );
+        assert_eq!(
+            journey.machine.inner().baseline.as_ref().unwrap().folder,
+            original_folder
+        );
     }
 
     #[test]
@@ -710,18 +890,25 @@ mod tests {
             Phase::Reconnect,
         ] {
             let mut journey = model(Role::Right);
-            journey.attempted = true;
-            journey.phase = phase;
+            unsafe {
+                journey.machine.inner_mut().attempted = true;
+            }
+            unsafe {
+                *journey.machine.state_mut() = phase;
+            }
             journey.observe_at(Err("USB inventory unavailable.".into()), now);
-            assert_eq!(journey.phase, Phase::Failed);
-            assert_eq!(journey.retry_phase, Some(Phase::Disconnect));
+            assert_eq!(*journey.machine.state(), Phase::Failed);
+            assert_eq!(journey.machine.inner().retry_phase, Some(Phase::Disconnect));
             // An already attached board cannot bypass the restart dance.
             journey.observe_at(Ok(normal(Role::Right, 10)), now + Duration::from_secs(60));
-            assert_eq!(journey.phase, Phase::Disconnect);
+            assert_eq!(*journey.machine.state(), Phase::Disconnect);
             assert_eq!(journey.role(), Role::Right);
-            assert!(journey.attempted);
+            assert!(journey.machine.inner().attempted);
             journey.observe_at(Ok(Snapshot::default()), now + Duration::from_secs(61));
-            assert_eq!(journey.phase, Phase::OffWait(now + Duration::from_secs(61)));
+            assert_eq!(
+                *journey.machine.state(),
+                Phase::OffWait(now + Duration::from_secs(61))
+            );
             assert!(journey.transfer().is_err());
         }
     }

@@ -16,6 +16,7 @@ rynk-usb = { git = "https://github.com/sarimabbas/rmk-nocfree", rev = "b41bd7caa
 tokio = { version = "1", features = ["rt", "macros", "time"] }
 nusb = { version = "=0.2.7", features = ["tokio"] }
 hidapi = { version = "=2.6.7", default-features = false, features = ["macos-shared-device", "linux-native-basic-udev", "windows-native"] }
+statig = "=0.4.1"
 
 [profile.dev]
 debug = 0

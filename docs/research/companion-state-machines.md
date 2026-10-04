@@ -7,7 +7,7 @@ request generations) is separate from navigation and never inferred from the scr
 
 | Flow | Authoritative model | Transitions |
 | --- | --- | --- |
-| Backup orchestration | `backup_flow::State` and `Event` | Choose → Guiding → Recovering → Guiding → Saving → Returning → Complete. RecoveryFailed and Failed have explicit retry paths; navigation pauses a cancellable flow. |
+| Backup orchestration | `backup_flow::Machine` and `Event` | Choose → Guiding → Recovering → Guiding → Saving → Returning → Complete. RecoveryFailed and Failed have explicit retry paths; navigation pauses a cancellable flow. |
 | Backup evidence | `journey::Journey`, `session::Session` | Guiding → ReadyToSave → Returning → Complete; selection binds exactly one left half, right half or dongle. Paused/Failed retain saved archives; no other part is added automatically. |
 | Recovery prerequisite and utility | `recovery_journey::RecoveryJourney` | Choose → Identify → Guiding → Ready or Failed. Attempt generations reject late, wrong-role and cancelled callbacks. |
 | RMK install/update | `firmware_journey::FirmwareJourney` | Recovery → Approval → Reconcile → physical return states → next role/Complete. One-shot transfer and durable intent/readback records prevent replay after restart. Discovery failure enters Failed; successful read-only observation resumes without another transfer. |
@@ -41,15 +41,41 @@ A bootloader present without its mounted drive has a finite observation deadline
 USB requests distinguish failures before submission from uncertain outcomes after
 submission; uncertain outcomes reconcile against drive appearance without resending.
 
-## Library decision
+## Statig implementation
 
-Rust enums and exhaustive event matching are sufficient for these bounded workflows.
-No additional state-machine runtime is needed to make the transitions authoritative.
-[Statig](https://github.com/mdeloof/statig) supports hierarchical machines and
-[smlang](https://github.com/korken89/smlang-rs) offers a declarative transition DSL.
-Neither would repair duplicate UI flags, missing filesystem errors, or lost device
-correlation merely by adding a dependency. Reconsider one if nested reusable machines
-make the explicit reducers harder to inspect than a transition table.
+Companion pins [Statig](https://github.com/mdeloof/statig) 0.4.1. The library owns
+current states for navigation, backup orchestration, backup evidence reconciliation,
+recovery attempts, physical return, pairing and installation. Public enums are
+read-only projections; none is a separately writable copy of the machine state.
+
+State handlers consume explicit events and return transitions. Time is supplied in
+events. USB/HID requests, filesystem operations and cancellation of native permits
+remain outside handlers. Device observations and archived-byte evidence are inputs,
+not screen flags. This makes decisions deterministic for a given event sequence;
+Statig's engine mutates its state internally, rather than making the entire app immutable.
+
+`operation::Operation` owns Idle, Running and Failed states. Running holds a unique
+ticket, operation kind, selected role and, while the installer is owned by its worker,
+an immutable presentation snapshot. Completion must match the ticket before the UI
+adopts a result. Duplicate or old completion cannot clear a newer job. Recovery also
+requires its attempt generation and selected role; pairing retains native one-shot
+permits and fresh correlated observations.
+
+`ui::Companion` no longer stores separate `view`, `firmware_view`, `backup_component`,
+`busy`, `message` or page flags. Render reads the current journey or running-operation
+presentation. Backup saving progress derives from the Saving state while its worker
+owns the journey. Each role's battery/mode/USB facts retain their observation caches;
+the status strip projects these facts independently of the navigation machine.
+
+The backup orchestration and evidence machines are composed deliberately: the first
+owns recovery-worker and save lifecycle, while the second owns eligibility established
+by Session's observations. A recovery result must satisfy both before saving starts.
+Neither UI navigation nor a progress indicator grants write eligibility.
+
+This removes duplicated workflow/view authority and rejects invalid events; it cannot
+promise freedom from every possible stateful failure. Faulty observations or a missing
+event still need tests and clear error handling. Factory restoration remains unavailable,
+and the private legacy `trial.rs` controller is outside the shipped UI.
 
 ## Validation boundary
 

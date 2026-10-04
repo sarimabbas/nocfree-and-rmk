@@ -9,7 +9,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use crate::backup_flow::{Event as BackupEvent, State as BackupState};
+use crate::backup_flow::{Event as BackupEvent, Machine as BackupMachine, State as BackupState};
 use crate::dongle_pairing::{self, Journey as PairingJourney, State as PairingState};
 use crate::flow_presentation::{self, FlowProgress};
 use crate::{
@@ -44,14 +44,7 @@ use gpui_kit::component::{
     stepper::{Stepper, StepperItem},
 };
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Page {
-    Home,
-    Backups,
-    Recovery,
-    Pairing,
-    Firmware,
-}
+use crate::navigation::{Navigation, Page};
 
 struct JourneyScreen {
     body: gpui::Div,
@@ -59,7 +52,7 @@ struct JourneyScreen {
 }
 
 pub struct Companion {
-    page: Page,
+    navigation: Navigation,
     appearance_subscription: Option<gpui::Subscription>,
     dongle_connected: bool,
     bluetooth_connected: bool,
@@ -68,13 +61,10 @@ pub struct Companion {
     pairing_generation: u64,
     rescue: RecoveryJourney,
     rescue_cancel: Option<Arc<AtomicBool>>,
-    backup_state: BackupState,
+    backup_state: BackupMachine,
     session: Option<Journey>,
-    view: View,
-    backup_component: Option<RecoveryRole>,
-    busy: bool,
+    operation: crate::operation::Operation,
     copies_folder: Option<PathBuf>,
-    message: Option<String>,
     battery_levels: battery::Levels,
     left_mode: Option<crate::device_status::Mode>,
     telemetry: Option<battery::Telemetry>,
@@ -88,7 +78,6 @@ pub struct Companion {
     firmware_versions: Vec<crate::firmware_version::Observation>,
     home: Home,
     firmware: Option<FirmwareJourney>,
-    firmware_view: Option<FirmwareView>,
     recovery_locations: [Option<u64>; 3],
     focus_handle: FocusHandle,
     _poll: Task<()>,
@@ -107,7 +96,6 @@ impl Companion {
     pub fn new(cx: &mut Context<Self>) -> Self {
         Theme::sync_system_appearance(None, cx);
         let session = Journey::backup();
-        let view = session.view();
         let poll = cx.spawn(async move |this, cx| {
             let mut battery_checked = None;
             let mut version_checked: Option<Instant> = None;
@@ -176,12 +164,11 @@ impl Companion {
                                                         && d.name == "NocFree RMK Receiver"))
                                         })
                                     });
-                                if this.page == Page::Firmware
-                                    && !this.busy
+                                if this.navigation.page() == Page::Firmware
+                                    && !this.operation.busy()
                                     && let Some(journey) = this.firmware.as_mut()
                                 {
                                     journey.observe(observation.clone());
-                                    this.firmware_view = Some(journey.view());
                                 }
                                 let next = Home::observe(observation, UpdateAssessment::Unknown);
                                 this.home = next;
@@ -251,10 +238,10 @@ impl Companion {
                 }
                 let version_idle = this.update(cx, |this, _| {
                     (!this.backup_state.active())
-                        && !this.busy
-                        && !matches!(this.page, Page::Firmware | Page::Pairing)
+                        && !this.operation.busy()
+                        && !matches!(this.navigation.page(), Page::Firmware | Page::Pairing)
                         && !matches!(
-                            this.rescue.state(),
+                            &this.rescue.state(),
                             RecoveryState::Identify(_) | RecoveryState::Guiding(_, _)
                         )
                 });
@@ -272,10 +259,10 @@ impl Companion {
                         if this.device_generation == generation
                             && this.device_key == key
                             && (!this.backup_state.active())
-                            && !this.busy
-                            && !matches!(this.page, Page::Firmware | Page::Pairing)
+                            && !this.operation.busy()
+                            && !matches!(this.navigation.page(), Page::Firmware | Page::Pairing)
                             && !matches!(
-                                this.rescue.state(),
+                                &this.rescue.state(),
                                 RecoveryState::Identify(_) | RecoveryState::Guiding(_, _)
                             )
                         {
@@ -293,10 +280,10 @@ impl Companion {
                 }
                 let battery_idle = this.update(cx, |this, _| {
                     (!this.backup_state.active())
-                        && !matches!(this.page, Page::Firmware | Page::Pairing)
+                        && !matches!(this.navigation.page(), Page::Firmware | Page::Pairing)
                         && crate::device_status::battery_available(
                             &this.device_key,
-                            this.rescue.state(),
+                            &this.rescue.state(),
                         )
                 });
                 if matches!(battery_idle, Ok(true))
@@ -362,16 +349,16 @@ impl Companion {
                         && let Some(session) = this.session.as_mut()
                     {
                         session.observe(result);
-                        this.view = session.view();
-                        if let Some(error) = this.view.error.clone() {
+
+                        if let Some(error) = session.view().error.clone() {
                             this.backup_state
                                 .transition(BackupEvent::Observed(crate::journey::State::Failed));
-                            this.message = Some(error);
+                            this.operation.fail(error);
                         }
                         this.advance(cx);
                         cx.notify();
                     }
-                    this.backup_state != BackupState::Complete
+                    this.backup_state.state() != BackupState::Complete
                 });
                 if running.is_err() {
                     break;
@@ -381,7 +368,7 @@ impl Companion {
             }
         });
         Self {
-            page: Page::Backups,
+            navigation: Navigation::default(),
             appearance_subscription: None,
             dongle_connected: false,
             bluetooth_connected: false,
@@ -390,13 +377,10 @@ impl Companion {
             pairing_generation: 0,
             rescue: RecoveryJourney::new(),
             rescue_cancel: None,
-            backup_state: BackupState::Choose,
+            backup_state: BackupMachine::new(),
             session: Some(session),
-            view,
-            backup_component: None,
-            busy: false,
+            operation: Default::default(),
             copies_folder: None,
-            message: None,
             battery_levels: crate::status_cache::levels(),
             left_mode: None,
             telemetry: None,
@@ -410,11 +394,26 @@ impl Companion {
             firmware_versions: Vec::new(),
             home: Home::default(),
             firmware: None,
-            firmware_view: None,
             recovery_locations: [None; 3],
             focus_handle: cx.focus_handle(),
             _poll: poll,
         }
+    }
+
+    fn backup_component(&self) -> Option<RecoveryRole> {
+        self.session
+            .as_ref()
+            .map(Journey::component)
+            .or_else(|| self.operation.role(crate::operation::Kind::Backup))
+    }
+    fn backup_view(&self) -> Option<View> {
+        self.session.as_ref().map(Journey::view)
+    }
+    fn firmware_view(&self) -> Option<FirmwareView> {
+        self.firmware
+            .as_ref()
+            .map(FirmwareJourney::view)
+            .or_else(|| self.operation.firmware_view())
     }
 
     fn observe_device_key(&mut self, key: crate::device_status::UsbKey) -> bool {
@@ -472,12 +471,13 @@ impl Companion {
         cx: &mut Context<Self>,
     ) {
         if backup {
-            self.backup_state
-                .transition(if self.backup_state == BackupState::RecoveryFailed {
+            self.backup_state.transition(
+                if self.backup_state.state() == BackupState::RecoveryFailed {
                     BackupEvent::Retry
                 } else {
                     BackupEvent::RecoveryStarted
-                });
+                },
+            );
         }
         let cancelled = Arc::new(AtomicBool::new(false));
         self.rescue_cancel = Some(cancelled.clone());
@@ -501,7 +501,7 @@ impl Companion {
                             let result = result.and_then(|session| {
                                 if let Ok((_, location, _)) = session.recovery_binding() { this.recovery_locations[role_index(role)] = Some(location); }
                                 if !backup { return Ok(()); }
-                                if this.backup_state.active() && this.page == Page::Backups
+                                if this.backup_state.active() && this.navigation.page() == Page::Backups
                                     && this.session.as_mut().is_some_and(|journey| journey.accept_recovery(session))
                                 { Ok(()) } else { Err("This recovery result no longer belongs to the active backup.".into()) }
                             });
@@ -511,7 +511,7 @@ impl Companion {
                                     this.backup_state.transition(BackupEvent::RecoveryFinished(result.is_ok()));
                                     if let Err(error) = result {
                                         this.backup_state.transition(BackupEvent::Observed(crate::journey::State::Failed));
-                                        this.message = Some(error);
+                                        this.operation.fail(error);
                                     } else { this.advance(cx); }
                                 }
                                 cx.notify();
@@ -552,9 +552,9 @@ impl Companion {
             .child(waiting_indicator(label, cx))
     }
     fn footer(&self, next: Option<Button>, cx: &mut Context<Self>) -> gpui::Div {
-        let cancellable = !self.busy
-            && match self.page {
-                Page::Firmware => self.firmware_view.as_ref().is_none_or(|v| !v.complete),
+        let cancellable = !self.operation.busy()
+            && match self.navigation.page() {
+                Page::Firmware => self.firmware_view().as_ref().is_none_or(|v| !v.complete),
                 Page::Backups => self.backup_state.active(),
                 Page::Recovery => matches!(
                     self.rescue.state(),
@@ -581,7 +581,7 @@ impl Companion {
                         .h(px(40.))
                         .px(px(20.))
                         .on_click(cx.listener(|this, _, _, cx| {
-                            if this.page == Page::Recovery {
+                            if this.navigation.page() == Page::Recovery {
                                 this.cancel_recovery();
                                 cx.notify();
                             } else {
@@ -594,26 +594,28 @@ impl Companion {
             .when_some(next, |row, next| row.child(next))
     }
     fn backup_screen(&self, cx: &mut Context<Self>) -> JourneyScreen {
-        let title = if self.backup_state == BackupState::Complete {
+        let title = if self.backup_state.state() == BackupState::Complete {
             "Your firmware copy is saved".to_owned()
         } else if self.backup_state.failed() {
             "Let’s reconnect".to_owned()
-        } else if self.busy {
+        } else if self.operation.busy() {
             "Saving a copy…".to_owned()
         } else {
-            self.view.title.clone()
+            self.backup_view()
+                .map_or_else(|| "Preparing your backup".into(), |v| v.title)
         };
-        let instruction = if self.backup_state == BackupState::Complete {
+        let instruction = if self.backup_state.state() == BackupState::Complete {
             "Your firmware is saved locally.".to_owned()
         } else if self.backup_state.failed() {
-            self.message.clone().unwrap_or_default()
-        } else if self.busy {
+            self.operation.error().cloned().unwrap_or_default()
+        } else if self.operation.busy() {
             "Keep USB connected.".to_owned()
         } else {
-            self.view.instruction.clone()
+            self.backup_view()
+                .map_or_else(|| "Keep USB connected.".into(), |v| v.instruction)
         };
-        let mut screen = recovery_guide(self.backup_component, title, instruction, None, cx);
-        let next = if self.backup_state == BackupState::Complete {
+        let mut screen = recovery_guide(self.backup_component(), title, instruction, None, cx);
+        let next = if self.backup_state.state() == BackupState::Complete {
             Some(
                 button("backup-done", "Next").on_click(cx.listener(|this, _, _, cx| {
                     this.backup_state.transition(BackupEvent::Finish);
@@ -625,12 +627,13 @@ impl Companion {
                 button("retry-backup", "Next")
                     .on_click(cx.listener(|this, _, _, cx| this.retry(cx))),
             )
-        } else if self.view.needs_power_on_ack && !self.busy {
+        } else if self.backup_view().is_some_and(|v| v.needs_power_on_ack) && !self.operation.busy()
+        {
             Some(
                 button("power-on", "Next").on_click(cx.listener(|this, _, _, cx| {
                     if let Some(journey) = this.session.as_mut() {
                         journey.confirm_power_on();
-                        this.view = journey.view();
+
                         cx.notify();
                     }
                 })),
@@ -640,7 +643,7 @@ impl Companion {
         };
         if next.is_none() {
             screen = screen.child(waiting_indicator(
-                if self.busy {
+                if self.operation.busy() {
                     "Saving your firmware copy…"
                 } else {
                     "Waiting for the keyboard…"
@@ -694,7 +697,7 @@ impl Companion {
                 .child(div().font_weight(FontWeight::MEDIUM).child(label)),
         )
         .on_click(cx.listener(move |this, _, _, cx| {
-            if matches!(this.page, Page::Backups | Page::Home) {
+            if matches!(this.navigation.page(), Page::Backups | Page::Home) {
                 this.start_copies(role, cx);
             } else {
                 this.start_recovery(role, cx);
@@ -734,9 +737,9 @@ impl Companion {
             ),
             RecoveryState::Identify(role) => (
                 recovery_guide(
-                    Some(*role),
+                    Some(role),
                     "Connect your device",
-                    crate::recovery_journey::instruction(*role),
+                    crate::recovery_journey::instruction(role),
                     Some(
                         self.recovery_waiting("Checking its firmware…", cx)
                             .into_any_element(),
@@ -747,9 +750,9 @@ impl Companion {
             ),
             RecoveryState::Guiding(role, procedure) => (
                 recovery_guide(
-                    Some(*role),
+                    Some(role),
                     "Open the recovery drive",
-                    procedure.instruction(*role),
+                    procedure.instruction(role),
                     Some(
                         self.recovery_waiting("Waiting for the recovery drive…", cx)
                             .into_any_element(),
@@ -760,7 +763,7 @@ impl Companion {
             ),
             RecoveryState::Ready(role) => (
                 recovery_guide(
-                    Some(*role),
+                    Some(role),
                     "Recovery drive is ready",
                     "The recovery drive is open. Your firmware hasn’t been changed.",
                     None,
@@ -774,12 +777,12 @@ impl Companion {
                 ),
             ),
             RecoveryState::Failed(role, error) => (
-                recovery_guide(Some(*role), "Let’s try again", error.clone(), None, cx),
+                recovery_guide(Some(role), "Let’s try again", error.clone(), None, cx),
                 Some(
                     button("retry-recovery", "Next").on_click(cx.listener(|this, _, _, cx| {
-                        if this.page == Page::Firmware {
+                        if this.navigation.page() == Page::Firmware {
                             this.cancel_recovery();
-                            this.message = None;
+                            this.operation.clear_error();
                             this.advance_firmware(cx);
                             return;
                         }
@@ -804,7 +807,7 @@ impl Companion {
         cx.spawn(async move |this, cx| {
             loop {
                 let allowed = this.update(cx, |this, _| {
-                    this.page == Page::Pairing
+                    this.navigation.page() == Page::Pairing
                         && this.pairing_generation == generation
                         && !matches!(
                             this.pairing.state(),
@@ -816,16 +819,18 @@ impl Companion {
                 if !matches!(allowed, Ok(true)) {
                     break;
                 }
-                let busy = this.update(cx, |this, _| this.busy).unwrap_or(true);
+                let busy = this
+                    .update(cx, |this, _| this.operation.busy())
+                    .unwrap_or(true);
                 if !busy {
                     let result = cx
                         .background_executor()
                         .spawn(async { dongle_pairing::query() })
                         .await;
                     let _ = this.update(cx, |this, cx| {
-                        if this.page != Page::Pairing
+                        if this.navigation.page() != Page::Pairing
                             || this.pairing_generation != generation
-                            || this.busy
+                            || this.operation.busy()
                         {
                             return;
                         }
@@ -841,7 +846,7 @@ impl Companion {
     }
 
     fn begin_pairing(&mut self, cx: &mut Context<Self>) {
-        if self.busy {
+        if self.operation.busy() {
             return;
         }
         let Some(observed) = &self.pairing_observation else {
@@ -856,17 +861,25 @@ impl Companion {
             }
         };
         let generation = self.pairing_generation;
-        self.busy = true;
+        let Some(ticket) = self
+            .operation
+            .begin(crate::operation::Kind::Pairing, None, None)
+        else {
+            return;
+        };
         cx.spawn(async move |this, cx| {
             let result = cx
                 .background_executor()
                 .spawn(async move { dongle_pairing::begin(request) })
                 .await;
             let _ = this.update(cx, |this, cx| {
-                if this.pairing_generation != generation || this.page != Page::Pairing {
+                if this.pairing_generation != generation || this.navigation.page() != Page::Pairing
+                {
                     return;
                 }
-                this.busy = false;
+                if !this.operation.complete(ticket) {
+                    return;
+                }
                 this.pairing.accepted(result, Instant::now());
                 cx.notify();
             });
@@ -973,30 +986,37 @@ impl Companion {
     }
 
     fn start_firmware(&mut self, cx: &mut Context<Self>) {
-        if self.busy {
+        if self.operation.busy() {
             return;
         }
         self.navigate(Page::Firmware, cx);
         self.cancel_recovery();
-        self.message = None;
+        self.operation.clear_error();
         self.firmware = None;
-        self.firmware_view = None;
-        self.busy = true;
+
+        let Some(ticket) =
+            self.operation
+                .begin(crate::operation::Kind::PrepareFirmware, None, None)
+        else {
+            return;
+        };
         cx.spawn(async move |this, cx| {
             let result = cx
                 .background_executor()
                 .spawn(async { FirmwareRelease::bundled() })
                 .await;
             let _ = this.update(cx, |this, cx| {
-                this.busy = false;
+                if !this.operation.complete(ticket) {
+                    return;
+                }
                 match result {
                     Ok(release) => {
                         let journey = FirmwareJourney::new(release);
-                        this.firmware_view = Some(journey.view());
+
                         this.firmware = Some(journey);
                         this.advance_firmware(cx);
                     }
-                    Err(error) => this.message = Some(error),
+                    Err(error) => this.operation.fail(error),
                 }
                 cx.notify();
             });
@@ -1013,8 +1033,15 @@ impl Companion {
         let Some(mut journey) = self.firmware.take() else {
             return;
         };
-        self.busy = true;
-        self.message = None;
+        let Some(ticket) = self.operation.begin(
+            crate::operation::Kind::Firmware,
+            Some(journey.view().role),
+            Some(journey.view()),
+        ) else {
+            self.firmware = Some(journey);
+            return;
+        };
+        self.operation.clear_error();
         cx.spawn(async move |this, cx| {
             let (journey, result) = cx
                 .background_executor()
@@ -1024,10 +1051,14 @@ impl Companion {
                 })
                 .await;
             let _ = this.update(cx, |this, cx| {
-                this.busy = false;
-                this.firmware_view = Some(journey.view());
+                if !this.operation.complete(ticket) {
+                    return;
+                }
+
                 this.firmware = Some(journey);
-                this.message = result.err();
+                if let Err(error) = result {
+                    this.operation.fail(error);
+                }
                 this.advance_firmware(cx);
                 cx.notify();
             });
@@ -1037,14 +1068,14 @@ impl Companion {
     }
 
     fn advance_firmware(&mut self, cx: &mut Context<Self>) {
-        if self.page != Page::Firmware
-            || self.busy
-            || self.message.is_some()
+        if self.navigation.page() != Page::Firmware
+            || self.operation.busy()
+            || self.operation.error().is_some()
             || self.rescue_cancel.is_some()
         {
             return;
         }
-        let Some(view) = &self.firmware_view else {
+        let Some(view) = self.firmware_view() else {
             return;
         };
         if !view.complete && view.needs_recovery {
@@ -1064,7 +1095,7 @@ impl Companion {
                     tokio::select! {
                         result = &mut worker => {
                             let _ = this.update(cx, |this, cx| {
-                                if this.page != Page::Firmware || !this.rescue_cancel.as_ref().is_some_and(|c| Arc::ptr_eq(c, &cancelled)) || cancelled.load(Ordering::Relaxed) { return; }
+                                if this.navigation.page() != Page::Firmware || !this.rescue_cancel.as_ref().is_some_and(|c| Arc::ptr_eq(c, &cancelled)) || cancelled.load(Ordering::Relaxed) { return; }
                                 this.rescue_cancel = None;
                                 match result {
                                     Ok(session) => {
@@ -1074,7 +1105,7 @@ impl Companion {
                                     }
                                     Err(error) => {
                                         this.rescue.complete(attempt, role, Err(error.clone()));
-                                        this.message = Some(error);
+                                        this.operation.fail(error);
                                     }
                                 }
                                 cx.notify();
@@ -1098,10 +1129,10 @@ impl Companion {
     }
 
     fn firmware_screen(&self, cx: &mut Context<Self>) -> JourneyScreen {
-        if let Some(error) = &self.message {
+        if let Some(error) = self.operation.error() {
             return JourneyScreen {
                 body: recovery_guide(
-                    self.firmware_view.as_ref().map(|v| v.role),
+                    self.firmware_view().as_ref().map(|v| v.role),
                     "Let’s reconnect",
                     error.clone(),
                     None,
@@ -1111,9 +1142,9 @@ impl Companion {
                     self.footer(
                         Some(
                             button("check-firmware-again", "Next")
-                                .disabled(self.busy)
+                                .disabled(self.operation.busy())
                                 .on_click(cx.listener(|this, _, _, cx| {
-                                    this.message = None;
+                                    this.operation.clear_error();
                                     if this.firmware.is_none() {
                                         this.start_firmware(cx);
                                     } else {
@@ -1130,7 +1161,7 @@ impl Companion {
         if self.rescue_cancel.is_some() {
             return self.recovery_screen(cx);
         }
-        let Some(view) = &self.firmware_view else {
+        let Some(view) = self.firmware_view() else {
             return JourneyScreen {
                 body: recovery_guide(
                     None,
@@ -1145,7 +1176,7 @@ impl Companion {
         let mut body = recovery_guide(
             Some(view.role),
             view.title.clone(),
-            if self.busy {
+            if self.operation.busy() {
                 "Keep USB connected. We’ll continue automatically.".to_owned()
             } else {
                 view.error
@@ -1155,7 +1186,7 @@ impl Companion {
             None,
             cx,
         );
-        let next = if self.busy {
+        let next = if self.operation.busy() {
             body = body.child(waiting_indicator("Working…", cx));
             None
         } else if view.can_transfer {
@@ -1167,7 +1198,6 @@ impl Companion {
                 button("right-switched-on", "Next").on_click(cx.listener(|this, _, _, cx| {
                     if let Some(journey) = this.firmware.as_mut() {
                         journey.confirm_power_on();
-                        this.firmware_view = Some(journey.view());
                     }
                     cx.notify();
                 })),
@@ -1190,7 +1220,7 @@ impl Companion {
     }
 
     fn start_copies(&mut self, role: RecoveryRole, cx: &mut Context<Self>) {
-        if self.backup_state.active() || self.busy {
+        if self.backup_state.active() || self.operation.busy() {
             return;
         }
         if !self.backup_state.transition(BackupEvent::Select) {
@@ -1201,37 +1231,34 @@ impl Companion {
             && journey.component() == role
         {
             journey.resume();
-            self.view = journey.view();
-            self.backup_component = Some(journey.component());
-            self.message = None;
-            self.page = Page::Backups;
+
+            self.operation.clear_error();
+            self.navigation.navigate(Page::Backups);
             self.advance(cx);
             cx.notify();
             return;
         }
         let session = Journey::backup_part(role);
-        self.message = None;
-        self.view = session.view();
+        self.operation.clear_error();
+
         self.session = Some(session);
-        self.backup_component = Some(role);
-        self.page = Page::Backups;
+
+        self.navigation.navigate(Page::Backups);
         self.advance(cx);
         cx.notify();
     }
 
     fn advance(&mut self, cx: &mut Context<Self>) {
         if !self.backup_state.active()
-            || self.busy
+            || self.operation.busy()
             || self.backup_state.failed()
-            || (self.backup_state == BackupState::Complete)
+            || (self.backup_state.state() == BackupState::Complete)
         {
             return;
         }
         if let Some(journey) = self.session.as_ref() {
-            self.backup_component = Some(journey.component());
             self.backup_state
                 .transition(BackupEvent::Observed(journey.state()));
-            self.view = journey.view();
         }
         if self
             .session
@@ -1240,7 +1267,7 @@ impl Companion {
             && !self.backup_state.recovery()
         {
             self.cancel_recovery();
-            let Some(role) = self.backup_component else {
+            let Some(role) = self.backup_component() else {
                 return;
             };
             if let Some(attempt) = self.rescue.start(role) {
@@ -1248,16 +1275,18 @@ impl Companion {
             }
             return;
         }
-        if self.view.can_save && self.backup_state != BackupState::Complete {
+        if self.backup_view().is_some_and(|v| v.can_save)
+            && self.backup_state.state() != BackupState::Complete
+        {
             self.save(cx);
         }
     }
 
     fn retry(&mut self, cx: &mut Context<Self>) {
-        if self.busy {
+        if self.operation.busy() {
             return;
         }
-        if self.backup_state == BackupState::RecoveryFailed {
+        if self.backup_state.state() == BackupState::RecoveryFailed {
             if let Some((role, attempt)) = self.rescue.retry() {
                 self.run_recovery(role, attempt, true, cx);
             }
@@ -1266,16 +1295,16 @@ impl Companion {
         if let Some(session) = self.session.as_mut() {
             session.retry();
             self.backup_state.transition(BackupEvent::Retry);
-            self.view = session.view();
-            self.message = None;
+
+            self.operation.clear_error();
             cx.notify();
         }
     }
 
     fn save(&mut self, cx: &mut Context<Self>) {
         if !self.backup_state.active()
-            || !self.view.can_save
-            || self.busy
+            || !self.backup_view().is_some_and(|v| v.can_save)
+            || self.operation.busy()
             || self.backup_state.failed()
         {
             return;
@@ -1284,8 +1313,15 @@ impl Companion {
             return;
         };
         self.backup_state.transition(BackupEvent::SaveStarted);
-        self.busy = true;
-        self.message = None;
+        let Some(ticket) = self.operation.begin(
+            crate::operation::Kind::Backup,
+            Some(session.component()),
+            None,
+        ) else {
+            self.session = Some(session);
+            return;
+        };
+        self.operation.clear_error();
         cx.notify();
         cx.spawn(async move |this, cx| {
             let (session, result) = cx
@@ -1296,22 +1332,22 @@ impl Companion {
                 })
                 .await;
             let _ = this.update(cx, |this, cx| {
-                this.view = session.view();
-                this.backup_component = Some(session.component());
+                if !this.operation.complete(ticket) {
+                    return;
+                }
                 this.backup_state
                     .transition(BackupEvent::Observed(session.state()));
                 this.session = Some(session);
-                this.busy = false;
                 match result {
                     Ok(path) => {
                         this.copies_folder = path.parent().map(PathBuf::from);
-                        this.message = None;
+                        this.operation.clear_error();
                     }
                     Err(error) => {
                         this.backup_state
                             .transition(BackupEvent::Observed(crate::journey::State::Failed));
-                        this.message =
-                            Some(format!("Your firmware copy could not be saved. {error}"));
+                        this.operation
+                            .fail(format!("Your firmware copy could not be saved. {error}"));
                     }
                 }
                 cx.notify();
@@ -1329,7 +1365,7 @@ impl Focusable for Companion {
 
 impl Companion {
     fn navigate(&mut self, page: Page, cx: &mut Context<Self>) {
-        if self.busy {
+        if self.operation.busy() {
             return;
         }
         let leaving_backup = self.backup_state.active() && page != Page::Backups;
@@ -1339,24 +1375,25 @@ impl Companion {
             }
             self.backup_state.transition(BackupEvent::Pause);
         }
-        if (self.page == Page::Recovery && page != Page::Recovery)
+        if (self.navigation.page() == Page::Recovery && page != Page::Recovery)
             || leaving_backup
-            || (self.page == Page::Firmware && page != Page::Firmware)
+            || (self.navigation.page() == Page::Firmware && page != Page::Firmware)
         {
             self.cancel_recovery();
         }
-        if self.page == Page::Firmware
+        if self.navigation.page() == Page::Firmware
             && page != Page::Firmware
             && let Some(journey) = self.firmware.as_mut()
             && !journey.view().complete
         {
             journey.cancel();
         }
-        if self.page == Page::Pairing && page != Page::Pairing {
+        if self.navigation.page() == Page::Pairing && page != Page::Pairing {
             self.pairing.cancel();
             self.pairing_generation += 1;
         }
-        self.page = page;
+        self.operation.clear_error();
+        self.navigation.navigate(page);
         if page == Page::Pairing {
             self.start_pairing(cx);
         }
@@ -1374,8 +1411,11 @@ impl Companion {
             .mb(px(6.))
             .h(px(36.))
             .icon(icon)
-            .active(self.page == page || (page == Page::Backups && self.page == Page::Home))
-            .disable(self.busy)
+            .active(
+                self.navigation.page() == page
+                    || (page == Page::Backups && self.navigation.page() == Page::Home),
+            )
+            .disable(self.operation.busy())
             .on_click(cx.listener(move |this, _, _, cx| this.navigate(page, cx)))
     }
 }
@@ -1398,8 +1438,8 @@ impl Render for Companion {
                     .mb(px(6.))
                     .h(px(36.))
                     .icon(IconName::Download)
-                    .active(self.page == Page::Firmware)
-                    .disable(self.busy)
+                    .active(self.navigation.page() == Page::Firmware)
+                    .disable(self.operation.busy())
                     .on_click(cx.listener(|this, _, _, cx| this.start_firmware(cx))),
             );
         }
@@ -1443,37 +1483,41 @@ impl Render for Companion {
                     )),
             );
 
+        let title = if self.navigation.page() == Page::Backups
+            && self.backup_state.state() == BackupState::Returning
+        {
+            self.backup_view()
+                .map_or_else(|| "Start your keyboard".into(), |view| view.title)
+        } else {
+            (match self.navigation.page() {
+                Page::Backups if self.backup_state.state() == BackupState::Saving => {
+                    "Saving your firmware copy"
+                }
+                Page::Backups if self.backup_state.state() == BackupState::Complete => {
+                    "Your firmware copy is saved"
+                }
+                Page::Backups | Page::Home => "Backup firmware",
+                Page::Recovery => "Enter recovery mode",
+                Page::Pairing => "Check pairing",
+                Page::Firmware => "RMK firmware",
+            })
+            .to_owned()
+        };
         let mut heading = div().flex().flex_col().gap(px(24.)).w_full().child(
             div()
                 .text_size(px(23.))
                 .font_weight(FontWeight::SEMIBOLD)
-                .child(
-                    (match self.page {
-                        Page::Backups if self.backup_state == BackupState::Saving => {
-                            "Saving your firmware copy"
-                        }
-                        Page::Backups if self.backup_state == BackupState::Returning => {
-                            self.view.title.as_str()
-                        }
-                        Page::Backups if self.backup_state == BackupState::Complete => {
-                            "Your firmware copy is saved"
-                        }
-                        Page::Backups | Page::Home => "Backup firmware",
-                        Page::Recovery => "Enter recovery mode",
-                        Page::Pairing => "Check pairing",
-                        Page::Firmware => "RMK firmware",
-                    })
-                    .to_owned(),
-                ),
+                .child(title),
         );
-        match self.page {
+        match self.navigation.page() {
             Page::Backups if self.backup_state.shown() => {
-                if let Some(journey) = &self.session {
-                    heading = heading.child(flow_indicator(
-                        flow_presentation::backup(journey),
-                        "backup-steps",
-                        cx,
-                    ));
+                let progress = if self.backup_state.state() == BackupState::Saving {
+                    Some(flow_presentation::saving_backup())
+                } else {
+                    self.session.as_ref().map(flow_presentation::backup)
+                };
+                if let Some(progress) = progress {
+                    heading = heading.child(flow_indicator(progress, "backup-steps", cx));
                 }
             }
             Page::Firmware => {
@@ -1481,7 +1525,7 @@ impl Render for Companion {
                     FlowProgress {
                         labels: ["USB dongle", "Right half", "Left half"],
                         current: self
-                            .firmware_view
+                            .firmware_view()
                             .as_ref()
                             .map_or(0, |v| if v.complete { 3 } else { v.step }),
                     },
@@ -1491,7 +1535,7 @@ impl Render for Companion {
             }
             _ => {}
         }
-        let screen = match self.page {
+        let screen = match self.navigation.page() {
             Page::Backups if self.backup_state.recovery() => self.recovery_screen(cx),
             Page::Backups if self.backup_state.shown() => self.backup_screen(cx),
             Page::Backups | Page::Home => JourneyScreen {

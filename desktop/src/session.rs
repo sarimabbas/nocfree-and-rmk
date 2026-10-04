@@ -25,15 +25,7 @@ pub struct View {
     pub error: Option<String>,
     pub backup_path: Option<PathBuf>,
 }
-#[derive(Clone, Copy, Debug)]
-enum ReturnPhase {
-    Disconnect,
-    OffWait { since: Instant },
-    PowerOn,
-    StartWait { since: Instant },
-    Reconnect,
-    Complete,
-}
+use crate::return_flow::{Observation as ReturnObservation, Phase as ReturnPhase, ReturnFlow};
 #[derive(Default)]
 pub struct Session {
     role: Option<Role>,
@@ -50,7 +42,7 @@ pub struct Session {
     problem: Option<String>,
     status: String,
     backup_path: Option<PathBuf>,
-    return_phase: Option<ReturnPhase>,
+    return_flow: ReturnFlow,
     archived_location: Option<u64>,
 }
 impl Session {
@@ -134,7 +126,7 @@ impl Session {
             self.normal_present = false;
             self.connection_present = false;
             self.problem = None;
-            self.return_phase = Some(ReturnPhase::Disconnect);
+            self.return_flow.restart();
             self.status = "Checking the saved component before restarting its return steps.".into();
         } else if let Some(role) = self.role {
             self.select(role);
@@ -148,9 +140,9 @@ impl Session {
         self.observe_snapshot(observation);
         if fresh && self.problem.is_none() {
             self.advance_return(now);
-        } else if self.return_phase.is_some() {
+        } else if self.return_flow.phase().is_some() {
             // Never let time spent without a trustworthy observation satisfy a wait.
-            self.return_phase = Some(ReturnPhase::Disconnect);
+            self.return_flow.restart();
         }
     }
     fn observe_snapshot(&mut self, observation: Result<Snapshot, String>) {
@@ -260,65 +252,37 @@ impl Session {
         }
     }
     fn advance_return(&mut self, now: Instant) {
-        // Backup completion proves return to normal firmware, not a cold boot.
-        // A fresh same-port normal endpoint is stronger evidence than a timer,
-        // including when polling missed the brief physical disconnection.
-        if (self.role == Some(Role::Left) && !self.legacy_left_start
+        let fresh_return = (self.role == Some(Role::Left) && !self.legacy_left_start
             || self.role == Some(Role::Receiver))
             && self.normal_present
             && self.backup_path.is_some()
             && self.location.is_some()
-            && self.location == self.archived_location
-        {
-            self.return_phase = Some(ReturnPhase::Complete);
-            return;
-        }
-        if matches!(self.return_phase, Some(ReturnPhase::Reconnect))
+            && self.location == self.archived_location;
+        if matches!(self.return_flow.phase(), Some(ReturnPhase::Reconnect))
             && self.connection_present
             && !self.normal_present
+            && !fresh_return
         {
-            self.return_phase = Some(ReturnPhase::Disconnect);
             self.status =
                 "It stayed in recovery. Unplug the cable and try the return steps again.".into();
-            return;
         }
-        self.return_phase = self.return_phase.map(|phase| match phase {
-            ReturnPhase::Disconnect if !self.connection_present => {
-                ReturnPhase::OffWait { since: now }
-            }
-            ReturnPhase::OffWait { .. } | ReturnPhase::PowerOn | ReturnPhase::StartWait { .. }
-                if self.connection_present =>
-            {
-                ReturnPhase::Disconnect
-            }
-            ReturnPhase::OffWait { since }
-                if now.saturating_duration_since(since) >= Duration::from_secs(5) =>
-            {
-                if self.role == Some(Role::Right) || self.legacy_left_start {
-                    ReturnPhase::PowerOn
-                } else {
-                    ReturnPhase::Reconnect
-                }
-            }
-            ReturnPhase::StartWait { since }
-                if now.saturating_duration_since(since) >= Duration::from_secs(10) =>
-            {
-                ReturnPhase::Reconnect
-            }
-            ReturnPhase::Reconnect if self.normal_present => ReturnPhase::Complete,
-            ReturnPhase::Complete if !self.normal_present => ReturnPhase::Disconnect,
-            other => other,
+        self.return_flow.observe(ReturnObservation {
+            now,
+            connected: self.connection_present,
+            normal: self.normal_present,
+            fresh_return,
+            needs_power_on: self.role == Some(Role::Right) || self.legacy_left_start,
         });
     }
     pub fn confirm_power_on(&mut self) {
         self.confirm_power_on_at(Instant::now());
     }
     fn confirm_power_on_at(&mut self, now: Instant) {
-        if matches!(self.return_phase, Some(ReturnPhase::PowerOn))
+        if matches!(self.return_flow.phase(), Some(ReturnPhase::PowerOn))
             && !self.connection_present
             && self.problem.is_none()
         {
-            self.return_phase = Some(ReturnPhase::StartWait { since: now });
+            self.return_flow.confirm(now);
         }
     }
     fn return_instruction(&self, now: Instant) -> Option<(String, String)> {
@@ -333,7 +297,7 @@ impl Session {
                 .as_millis()
                 .div_ceil(1000)
         };
-        self.return_phase.map(|phase| match phase {
+        self.return_flow.phase().map(|phase| match phase {
             ReturnPhase::Disconnect if self.role == Some(Role::Receiver) => (
                 "Unplug the USB dongle".into(),
                 "Unplug it from your Mac.".into(),
@@ -450,10 +414,10 @@ impl Session {
             instruction: return_instruction
                 .map(|(_, instruction)| instruction)
                 .unwrap_or(instruction),
-            return_complete: matches!(self.return_phase, Some(ReturnPhase::Complete))
+            return_complete: matches!(self.return_flow.phase(), Some(ReturnPhase::Complete))
                 && self.normal_present
                 && self.problem.is_none(),
-            needs_power_on_ack: matches!(self.return_phase, Some(ReturnPhase::PowerOn))
+            needs_power_on_ack: matches!(self.return_flow.phase(), Some(ReturnPhase::PowerOn))
                 && !self.connection_present
                 && self.problem.is_none(),
             error: self.problem.clone(),
@@ -521,7 +485,7 @@ impl Session {
                         && u32::from_le_bytes(block[32..36].try_into().unwrap()) == 0x87eeb07c
                 });
             self.archived_location = location;
-            self.return_phase = Some(ReturnPhase::Disconnect);
+            self.return_flow.restart();
             self.status = "Private readback saved and hashed. No firmware was written.".into();
             Ok(folder)
         })();
@@ -622,16 +586,22 @@ mod tests {
                 role: Some(Role::Left),
                 rmk_left: true,
                 legacy_left_start: legacy,
-                return_phase: Some(super::ReturnPhase::OffWait { since: now }),
+                return_flow: ReturnFlow::at(super::ReturnPhase::OffWait { since: now }),
                 ..Default::default()
             };
             session.advance_return(now + std::time::Duration::from_secs(5));
             assert_eq!(
-                matches!(session.return_phase, Some(super::ReturnPhase::PowerOn)),
+                matches!(
+                    session.return_flow.phase(),
+                    Some(super::ReturnPhase::PowerOn)
+                ),
                 legacy
             );
             assert_eq!(
-                matches!(session.return_phase, Some(super::ReturnPhase::Reconnect)),
+                matches!(
+                    session.return_flow.phase(),
+                    Some(super::ReturnPhase::Reconnect)
+                ),
                 !legacy
             );
         }
@@ -684,7 +654,7 @@ mod tests {
             let mut session = identified();
             session.backup_path = Some(PathBuf::from("/saved"));
             session.archived_location = Some(7);
-            session.return_phase = Some(ReturnPhase::Disconnect);
+            session.return_flow.restart();
             session.observe_at(Ok(boot(true)), now);
             assert!(!session.view().return_complete);
             session.observe_at(Ok(Snapshot::default()), now + Duration::from_millis(100));
@@ -701,13 +671,13 @@ mod tests {
         let mut session = identified();
         session.backup_path = Some(PathBuf::from("/saved"));
         session.archived_location = Some(7);
-        session.return_phase = Some(ReturnPhase::Disconnect);
+        session.return_flow.restart();
         session.observe_at(Err("Inventory failed".into()), now);
         assert!(!session.view().return_complete);
         let mut session = identified();
         session.backup_path = Some(PathBuf::from("/saved"));
         session.archived_location = Some(7);
-        session.return_phase = Some(ReturnPhase::Disconnect);
+        session.return_flow.restart();
         session.legacy_left_start = true;
         session.observe_at(Ok(Snapshot::default()), now);
         session.observe_at(Ok(normal()), now + Duration::from_secs(4));
@@ -720,7 +690,7 @@ mod tests {
             let mut session = identified();
             session.backup_path = Some(PathBuf::from("/saved"));
             session.archived_location = Some(7);
-            session.return_phase = Some(ReturnPhase::Disconnect);
+            session.return_flow.restart();
             session
         };
         let mut session = make();
@@ -797,7 +767,7 @@ mod tests {
         assert!(session.adopt_archive_drive(boot(true)).unwrap());
         session.backup_path = Some(PathBuf::from("/saved"));
         session.archived_location = Some(7);
-        session.return_phase = Some(ReturnPhase::Disconnect);
+        session.return_flow.restart();
         let mut left = normal();
         left.devices[0].vendor = 0x4c4b;
         left.devices[0].product = 0x4643;
@@ -997,7 +967,7 @@ mod tests {
         let mut s = identified();
         s.role = Some(role);
         s.backup_path = Some(PathBuf::from("/private/test-copy"));
-        s.return_phase = Some(ReturnPhase::Disconnect);
+        s.return_flow.restart();
         s
     }
     #[test]
@@ -1086,15 +1056,27 @@ mod tests {
         assert!(!s.view().return_complete);
         s.observe_at(Ok(Snapshot::default()), now);
         s.observe_at(Ok(Snapshot::default()), now + Duration::from_secs(4));
-        assert!(matches!(s.return_phase, Some(ReturnPhase::OffWait { .. })));
+        assert!(matches!(
+            s.return_flow.phase(),
+            Some(ReturnPhase::OffWait { .. })
+        ));
         s.observe_at(Ok(normal()), now + Duration::from_secs(4));
-        assert!(matches!(s.return_phase, Some(ReturnPhase::Disconnect)));
+        assert!(matches!(
+            s.return_flow.phase(),
+            Some(ReturnPhase::Disconnect)
+        ));
         assert!(!s.view().return_complete);
         s.observe_at(Ok(Snapshot::default()), now + Duration::from_secs(5));
         s.observe_at(Ok(Snapshot::default()), now + Duration::from_secs(10));
-        assert!(matches!(s.return_phase, Some(ReturnPhase::Reconnect)));
+        assert!(matches!(
+            s.return_flow.phase(),
+            Some(ReturnPhase::Reconnect)
+        ));
         s.observe_at(Ok(boot(true)), now + Duration::from_secs(11));
-        assert!(matches!(s.return_phase, Some(ReturnPhase::Disconnect)));
+        assert!(matches!(
+            s.return_flow.phase(),
+            Some(ReturnPhase::Disconnect)
+        ));
         assert!(s.view().error.is_none());
         assert!(!s.view().can_save);
         assert!(s.view().instruction.contains("stayed in recovery"));
@@ -1117,11 +1099,14 @@ mod tests {
         s.confirm_power_on_at(now + Duration::from_secs(100));
         s.observe_at(Ok(Snapshot::default()), now + Duration::from_secs(109));
         assert!(matches!(
-            s.return_phase,
+            s.return_flow.phase(),
             Some(ReturnPhase::StartWait { .. })
         ));
         s.observe_at(Ok(Snapshot::default()), now + Duration::from_secs(110));
-        assert!(matches!(s.return_phase, Some(ReturnPhase::Reconnect)));
+        assert!(matches!(
+            s.return_flow.phase(),
+            Some(ReturnPhase::Reconnect)
+        ));
         let mut right = normal();
         right.devices[0].vendor = 0x4c4b;
         right.devices[0].product = 0x4651;
@@ -1143,12 +1128,21 @@ mod tests {
         s.observe_at(Ok(Snapshot::default()), now + Duration::from_secs(5));
         s.confirm_power_on_at(now + Duration::from_secs(5));
         s.observe_at(Ok(boot(true)), now + Duration::from_secs(6));
-        assert!(matches!(s.return_phase, Some(ReturnPhase::Disconnect)));
+        assert!(matches!(
+            s.return_flow.phase(),
+            Some(ReturnPhase::Disconnect)
+        ));
         s.confirm_power_on_at(now + Duration::from_secs(7));
-        assert!(matches!(s.return_phase, Some(ReturnPhase::Disconnect)));
+        assert!(matches!(
+            s.return_flow.phase(),
+            Some(ReturnPhase::Disconnect)
+        ));
         s.observe_at(Ok(Snapshot::default()), now + Duration::from_secs(8));
         s.observe_at(Err("USB unavailable".into()), now + Duration::from_secs(9));
-        assert!(matches!(s.return_phase, Some(ReturnPhase::Disconnect)));
+        assert!(matches!(
+            s.return_flow.phase(),
+            Some(ReturnPhase::Disconnect)
+        ));
         assert!(!s.view().return_complete);
     }
     #[test]
@@ -1170,7 +1164,7 @@ mod tests {
         // Legacy marker classification comes from saved bytes, never the USB name.
         s.legacy_left_start = true;
         s.backup_path = Some(PathBuf::from("/private/rmk-fixture"));
-        s.return_phase = Some(ReturnPhase::Disconnect);
+        s.return_flow.restart();
         s.observe_at(Ok(Snapshot::default()), now);
         s.observe_at(Ok(Snapshot::default()), now + Duration::from_secs(5));
         assert!(s.view().needs_power_on_ack);
@@ -1178,11 +1172,14 @@ mod tests {
         s.confirm_power_on_at(now + Duration::from_secs(5));
         s.observe_at(Ok(Snapshot::default()), now + Duration::from_secs(14));
         assert!(matches!(
-            s.return_phase,
+            s.return_flow.phase(),
             Some(ReturnPhase::StartWait { .. })
         ));
         s.observe_at(Ok(Snapshot::default()), now + Duration::from_secs(15));
-        assert!(matches!(s.return_phase, Some(ReturnPhase::Reconnect)));
+        assert!(matches!(
+            s.return_flow.phase(),
+            Some(ReturnPhase::Reconnect)
+        ));
         s.observe_at(Ok(rmk), now + Duration::from_secs(16));
         assert!(s.view().return_complete);
     }

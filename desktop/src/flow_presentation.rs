@@ -28,6 +28,13 @@ pub fn backup(journey: &Journey) -> FlowProgress {
     backup_view(journey.state(), journey.view().backup_path.is_some())
 }
 
+pub fn saving_backup() -> FlowProgress {
+    FlowProgress {
+        labels: ["Prepare", "Save copy", "Return"],
+        current: 1,
+    }
+}
+
 fn backup_view(state: BackupState, copy_saved: bool) -> FlowProgress {
     let current = match state {
         BackupState::Guiding => 0,
@@ -53,17 +60,17 @@ mod tests {
     #[test]
     fn recovery_progress_waits_for_actual_drive_result_and_cancel_clears_it() {
         let mut journey = RecoveryJourney::new();
-        assert_eq!(recovery(journey.state()).current, 0);
+        assert_eq!(recovery(&journey.state()).current, 0);
         let attempt = journey.start(Role::Left).unwrap();
-        assert_eq!(recovery(journey.state()).current, 1);
+        assert_eq!(recovery(&journey.state()).current, 1);
         journey.observe(attempt, Role::Left, Procedure::FactoryLeft);
-        let waiting = recovery(journey.state());
+        let waiting = recovery(&journey.state());
         assert_eq!(waiting.current, 2);
         journey.complete(attempt, Role::Left, Ok(()));
-        assert_eq!(recovery(journey.state()).current, 3);
+        assert_eq!(recovery(&journey.state()).current, 3);
         journey.cancel();
-        assert_eq!(recovery(journey.state()).current, 0);
-        assert_eq!(recovery(journey.state()).current, 0);
+        assert_eq!(recovery(&journey.state()).current, 0);
+        assert_eq!(recovery(&journey.state()).current, 0);
     }
     #[test]
     fn saved_copy_and_return_wait_cannot_show_completed_steps() {
@@ -72,5 +79,6 @@ mod tests {
         assert_eq!(backup_view(BackupState::Failed, true).current, 2);
         assert_eq!(backup_view(BackupState::Complete, true).current, 3);
         assert_eq!(backup(&Journey::backup()).current, 0);
+        assert_eq!(saving_backup().current, 1);
     }
 }

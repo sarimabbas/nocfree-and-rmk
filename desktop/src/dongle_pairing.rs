@@ -2,6 +2,10 @@
 use crate::runtime_recovery::Role;
 use hidapi::{BusType, HidApi, HidDevice};
 use nusb::{DeviceId, DeviceInfo, MaybeFuture};
+use statig::{
+    Outcome,
+    blocking::{IntoStateMachine, IntoStateMachineExt, State as StatigState, StateMachine},
+};
 use std::sync::{
     Arc,
     atomic::{AtomicU8, Ordering},
@@ -108,21 +112,164 @@ pub enum State {
     Failed(String),
     Cancelled,
 }
-pub struct Journey {
+#[derive(Default)]
+struct PairingData {
     request: Option<Arc<AtomicU8>>,
     binding: Option<Binding>,
     accepted: Option<Instant>,
-    state: State,
     deadline: Option<Instant>,
+}
+
+enum PairingEvent<'a> {
+    Observe(&'a Result<Observation, String>, Instant),
+    Begin {
+        binding: &'a Binding,
+        permit: &'a Arc<AtomicU8>,
+        now: Instant,
+    },
+    Accepted(&'a Result<(), String>, Instant),
+    Cancel,
+}
+
+impl IntoStateMachine for PairingData {
+    type Event<'a> = PairingEvent<'a>;
+    type Context<'a> = ();
+    type State = State;
+    type Superstate<'a> = ();
+    fn initial() -> State {
+        State::Connect
+    }
+}
+
+impl StatigState<PairingData> for State {
+    fn call_handler(
+        &mut self,
+        data: &mut PairingData,
+        event: &PairingEvent<'_>,
+        _: &mut (),
+    ) -> Outcome<Self> {
+        use Outcome::{Handled, Transition};
+        if let PairingEvent::Cancel = event {
+            return if *self == State::Connected {
+                Handled
+            } else {
+                data.deadline = None;
+                Transition(State::Cancelled)
+            };
+        }
+        if matches!(self, State::Failed(_) | State::Cancelled | State::Connected) {
+            return Handled;
+        }
+        match event {
+            PairingEvent::Begin {
+                binding,
+                permit,
+                now,
+            } if *self == State::Ready => {
+                data.binding = Some((*binding).clone());
+                data.request = Some((*permit).clone());
+                data.accepted = None;
+                data.deadline = Some(*now + PAIRING_TIMEOUT);
+                Transition(State::Pairing)
+            }
+            PairingEvent::Accepted(result, now) if *self == State::Pairing => {
+                if data.deadline.is_some_and(|deadline| *now >= deadline) {
+                    Transition(State::Failed("Pairing timed out. Check whether the dongle reconnects before trying again.".into()))
+                } else {
+                    match result {
+                        Err(error) => Transition(State::Failed(error.clone())),
+                        Ok(()) => {
+                            data.accepted = Some(*now);
+                            Handled
+                        }
+                    }
+                }
+            }
+            PairingEvent::Observe(observation, now) => {
+                if data.deadline.is_some_and(|deadline| *now >= deadline) {
+                    return Transition(State::Failed(
+                        "Pairing timed out. The keyboard's other Bluetooth pairings are unchanged."
+                            .into(),
+                    ));
+                }
+                let observed = match observation {
+                    Ok(value) => value,
+                    Err(error) if error == crate::battery::NATIVE_BUSY => return Handled,
+                    Err(error) => return Transition(State::Failed(error.clone())),
+                };
+                if now.saturating_duration_since(observed.seen) >= REQUEST_AGE {
+                    return Transition(State::Failed(
+                        "The keyboard check expired. Check both USB connections.".into(),
+                    ));
+                }
+                if *self == State::Pairing && data.binding != observed.binding {
+                    return Transition(State::Failed(
+                        "A USB connection changed during pairing.".into(),
+                    ));
+                }
+                if *self == State::Pairing
+                    && data
+                        .accepted
+                        .is_none_or(|accepted| observed.started < accepted)
+                {
+                    return Handled;
+                }
+                if observed.left.is_some_and(|s| s.link == Link::Failed)
+                    || observed.dongle.is_some_and(|s| s.link == Link::Failed)
+                {
+                    return Transition(State::Failed("Dongle pairing could not finish. Keep both USB cables connected and the left switch in Dongle mode.".into()));
+                }
+                if observed.complete() {
+                    data.deadline = None;
+                    return Transition(State::Connected);
+                }
+                if *self == State::Pairing {
+                    return if observed.left.is_none() || observed.dongle.is_none() {
+                        Transition(State::Failed(
+                            "A USB connection changed during pairing.".into(),
+                        ))
+                    } else if !observed.left.is_some_and(|s| s.dongle_mode) {
+                        Transition(State::Failed(
+                            "Keep the left switch in Dongle mode while pairing.".into(),
+                        ))
+                    } else {
+                        Handled
+                    };
+                }
+                let next = if observed.left.is_none() {
+                    State::Connect
+                } else if !observed
+                    .left
+                    .is_some_and(|s| s.right_link == SplitLink::Connected)
+                {
+                    State::TurnOnRight
+                } else if observed.dongle.is_none() {
+                    State::Connected
+                } else if !observed.left.is_some_and(|s| s.dongle_mode) {
+                    State::SwitchMode
+                } else if !observed.ready() {
+                    State::Failed("Install matching RMK firmware on the left half and dongle to repair their pairing.".into())
+                } else {
+                    State::Ready
+                };
+                if *self == next {
+                    Handled
+                } else {
+                    Transition(next)
+                }
+            }
+            _ => Handled,
+        }
+    }
+}
+
+pub struct Journey {
+    machine: StateMachine<PairingData>,
 }
 impl Default for Journey {
     fn default() -> Self {
         Self {
-            request: None,
-            binding: None,
-            accepted: None,
-            state: State::Connect,
-            deadline: None,
+            machine: PairingData::default().state_machine(),
         }
     }
 }
@@ -131,87 +278,15 @@ impl Journey {
         Self::default()
     }
     pub fn state(&self) -> &State {
-        &self.state
+        self.machine.state()
     }
     pub fn observe(&mut self, observation: Result<Observation, String>, now: Instant) {
-        if matches!(
-            self.state,
-            State::Failed(_) | State::Cancelled | State::Connected
-        ) {
-            return;
-        }
-        if self.deadline.is_some_and(|deadline| now >= deadline) {
-            self.state = State::Failed(
-                "Pairing timed out. The keyboard's other Bluetooth pairings are unchanged.".into(),
-            );
-            return;
-        }
-        let observed = match observation {
-            Ok(value) => value,
-            Err(error) => {
-                if error == crate::battery::NATIVE_BUSY {
-                    return;
-                }
-                self.state = State::Failed(error);
-                return;
-            }
-        };
-        if now.saturating_duration_since(observed.seen) >= REQUEST_AGE {
-            self.state =
-                State::Failed("The keyboard check expired. Check both USB connections.".into());
-            return;
-        }
-        if self.state == State::Pairing && self.binding != observed.binding {
-            self.state = State::Failed("A USB connection changed during pairing.".into());
-            return;
-        }
-        if self.state == State::Pairing
-            && self
-                .accepted
-                .is_none_or(|accepted| observed.started < accepted)
-        {
-            return;
-        }
-        if observed.left.is_some_and(|s| s.link == Link::Failed)
-            || observed.dongle.is_some_and(|s| s.link == Link::Failed)
-        {
-            self.state=State::Failed("Dongle pairing could not finish. Keep both USB cables connected and the left switch in Dongle mode.".into());
-            return;
-        }
-        if observed.complete() {
-            self.state = State::Connected;
-            self.deadline = None;
-            return;
-        }
-        if self.state == State::Pairing {
-            if observed.left.is_none() || observed.dongle.is_none() {
-                self.state = State::Failed("A USB connection changed during pairing.".into());
-            } else if !observed.left.is_some_and(|s| s.dongle_mode) {
-                self.state =
-                    State::Failed("Keep the left switch in Dongle mode while pairing.".into());
-            }
-            return;
-        }
-        self.state = if observed.left.is_none() {
-            State::Connect
-        } else if !observed
-            .left
-            .is_some_and(|s| s.right_link == SplitLink::Connected)
-        {
-            State::TurnOnRight
-        } else if observed.dongle.is_none() {
-            State::Connected
-        } else if !observed.left.is_some_and(|s| s.dongle_mode) {
-            State::SwitchMode
-        } else if !observed.ready() {
-            State::Failed("Install matching RMK firmware on the left half and dongle to repair their pairing.".into())
-        } else {
-            State::Ready
-        };
+        self.machine
+            .handle(&PairingEvent::Observe(&observation, now));
     }
-    /// Call only for the user's explicit Next action. Observation alone cannot create a mutation.
+    /// Only the explicit user action creates a native one-shot permit.
     pub fn begin(&mut self, observed: &Observation, now: Instant) -> Result<BeginRequest, String> {
-        if self.state != State::Ready
+        if self.state() != &State::Ready
             || !observed.ready()
             || now.saturating_duration_since(observed.seen) >= REQUEST_AGE
         {
@@ -221,11 +296,12 @@ impl Journey {
             .binding
             .clone()
             .ok_or("Check both USB connections before pairing.")?;
-        self.binding = Some(binding.clone());
         let permit = Arc::new(AtomicU8::new(0));
-        self.request = Some(permit.clone());
-        self.state = State::Pairing;
-        self.deadline = Some(now + PAIRING_TIMEOUT);
+        self.machine.handle(&PairingEvent::Begin {
+            binding: &binding,
+            permit: &permit,
+            now,
+        });
         Ok(BeginRequest {
             binding,
             armed: now,
@@ -233,32 +309,16 @@ impl Journey {
         })
     }
     pub fn accepted(&mut self, result: Result<(), String>, now: Instant) {
-        if self.state != State::Pairing {
-            return;
-        }
-        if self.deadline.is_some_and(|deadline| now >= deadline) {
-            self.state = State::Failed(
-                "Pairing timed out. Check whether the dongle reconnects before trying again."
-                    .into(),
-            );
-        } else {
-            match result {
-                Err(error) => self.state = State::Failed(error),
-                Ok(()) => self.accepted = Some(now),
-            }
-        }
+        self.machine.handle(&PairingEvent::Accepted(&result, now));
     }
-    /// Stops observation. An already submitted pairing request cannot be undone.
     pub fn cancel(&mut self) {
-        if let Some(request) = &self.request {
+        if let Some(request) = &self.machine.inner().request {
             let _ = request.compare_exchange(0, 2, Ordering::AcqRel, Ordering::Acquire);
         }
-        if self.state != State::Connected {
-            self.state = State::Cancelled;
-            self.deadline = None;
-        }
+        self.machine.handle(&PairingEvent::Cancel);
     }
 }
+
 pub struct BeginRequest {
     binding: Binding,
     armed: Instant,
@@ -696,9 +756,13 @@ mod tests {
     fn fresh_in_age_pre_submission_reply_and_busy_cannot_complete() {
         let now = Instant::now();
         let mut journey = Journey::new();
-        journey.state = State::Pairing;
-        journey.deadline = Some(now + PAIRING_TIMEOUT);
-        journey.accepted = Some(now + Duration::from_secs(1));
+        unsafe {
+            *journey.machine.state_mut() = State::Pairing;
+            journey.machine.inner_mut().deadline = Some(now + PAIRING_TIMEOUT);
+        }
+        unsafe {
+            journey.machine.inner_mut().accepted = Some(now + Duration::from_secs(1));
+        }
         let old = observation(
             Some(snapshot(Link::Encrypted, true)),
             Some(snapshot(Link::Encrypted, false)),
@@ -743,7 +807,9 @@ mod tests {
         assert!(matches!(journey.state(), State::Failed(_)));
         let mut journey = Journey::new();
         let token = Arc::new(AtomicU8::new(0));
-        journey.request = Some(token.clone());
+        unsafe {
+            journey.machine.inner_mut().request = Some(token.clone());
+        }
         journey.cancel();
         assert_eq!(token.load(Ordering::Acquire), 2);
         journey.observe(
@@ -757,11 +823,26 @@ mod tests {
         assert_eq!(journey.state(), &State::Cancelled);
     }
     #[test]
+    fn acceptance_events_cannot_start_or_revive_a_pairing_attempt() {
+        let now = Instant::now();
+        let mut journey = Journey::new();
+        journey.accepted(Ok(()), now);
+        assert_eq!(journey.state(), &State::Connect);
+        assert!(journey.machine.inner().accepted.is_none());
+        journey.cancel();
+        journey.accepted(Ok(()), now);
+        journey.accepted(Err("late command result".into()), now);
+        assert_eq!(journey.state(), &State::Cancelled);
+        assert!(journey.machine.inner().accepted.is_none());
+    }
+    #[test]
     fn accepted_command_is_not_proof_and_timeout_never_retries() {
         let now = Instant::now();
         let mut journey = Journey::new();
-        journey.state = State::Pairing;
-        journey.deadline = Some(now + PAIRING_TIMEOUT);
+        unsafe {
+            *journey.machine.state_mut() = State::Pairing;
+            journey.machine.inner_mut().deadline = Some(now + PAIRING_TIMEOUT);
+        }
         journey.accepted(Ok(()), now);
         assert_eq!(journey.state(), &State::Pairing);
         journey.observe(
