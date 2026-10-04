@@ -974,12 +974,9 @@ impl FirmwareJourney {
                 return Err("Recovery connection changed after the operation was saved. Check its readback before continuing.".into());
             }
             let mut destination = fs::OpenOptions::new().write(true).create_new(true).open(baseline.mount.path.join("COMPANION.UF2")).map_err(|_| "The transfer could not start. Check the recovery drive; don’t repeat the copy.")?;
-            destination
-                .write_all(image.uf2())
-                .and_then(|_| destination.sync_all())
-                .map_err(|_| {
-                    "The transfer result is uncertain. Open recovery to check it.".to_owned()
-                })
+            let written = destination.write_all(image.uf2());
+            let flushed = written.as_ref().ok().map(|_| destination.sync_all());
+            record_transfer_outcome(&baseline.folder, written, flushed)
         })();
         self.machine.handle(&FirmwareEvent::TransferResult(&result));
         result
@@ -1070,6 +1067,75 @@ impl FirmwareJourney {
     }
     pub fn cancel(&mut self) {
         self.machine.handle(&FirmwareEvent::Cancel);
+    }
+}
+
+fn record_transfer_outcome(
+    folder: &Path,
+    written: std::io::Result<()>,
+    flushed: Option<std::io::Result<()>>,
+) -> Result<(), String> {
+    let error = |result: &std::io::Result<()>| {
+        result.as_ref().err().map(|error| {
+        serde_json::json!({"kind":format!("{:?}", error.kind()),"os_code":error.raw_os_error(),"message":error.to_string()})
+    })
+    };
+    let report = serde_json::json!({
+        "schema":1,
+        "write_complete":written.is_ok(),
+        "write_error":error(&written),
+        "flush_error":flushed.as_ref().and_then(error),
+        "status":"readback verification required; not installation success",
+    });
+    durable(
+        folder,
+        "transfer-outcome.json",
+        &serde_json::to_vec_pretty(&report).map_err(
+            |_| "Could not record the transfer result. Verify its readback before continuing.",
+        )?,
+    )?;
+    written.map_err(|_| "The firmware write was interrupted. Click Next to check its readback before continuing.".to_owned())
+    // A UF2 target can reset before fsync acknowledges. Even a successful
+    // flush cannot prove installation: both outcomes remain in Reconcile and
+    // require exact readback. Never retry the copy here.
+}
+
+#[cfg(test)]
+mod transfer_outcome_tests {
+    use super::*;
+    #[test]
+    fn flush_failure_proceeds_only_to_readback_but_write_failure_stops() {
+        let root =
+            std::env::temp_dir().join(format!("nocfree-transfer-outcome-{}", std::process::id()));
+        fs::create_dir_all(&root).unwrap();
+        assert!(
+            record_transfer_outcome(
+                &root,
+                Ok(()),
+                Some(Err(std::io::Error::from_raw_os_error(22)))
+            )
+            .is_ok()
+        );
+        let report: serde_json::Value =
+            serde_json::from_slice(&fs::read(root.join("transfer-outcome.json")).unwrap()).unwrap();
+        assert_eq!(report["write_complete"], true);
+        assert_eq!(report["flush_error"]["os_code"], 22);
+        let failed = root.join("failed-write");
+        fs::create_dir(&failed).unwrap();
+        assert!(
+            record_transfer_outcome(
+                &failed,
+                Err(std::io::Error::from(std::io::ErrorKind::WriteZero)),
+                None
+            )
+            .is_err()
+        );
+        let report: serde_json::Value =
+            serde_json::from_slice(&fs::read(failed.join("transfer-outcome.json")).unwrap())
+                .unwrap();
+        assert_eq!(report["write_complete"], false);
+        assert!(report["flush_error"].is_null());
+        fs::remove_dir_all(root).unwrap();
     }
 }
 

@@ -16,4 +16,6 @@ Navigation, scope selection, explicit Next, cancellation, failures, operation pe
 
 A verified image observed running normally on its bound USB port can satisfy return without another physical power cycle. Restart instructions are conditional on its recovery drive remaining open. USB presence alone still cannot satisfy the left's Wired-mode requirement. Satisfied instructions display a green check derived from the machine's readiness or completed state.
 
+Transfer records distinguish writing from flushing the recovery volume. A completed write proceeds to readback reconciliation even when flushing fails; a write error pauses for explicit verification. `transfer-outcome.json` retains the stage and OS error locally. Neither outcome establishes installation success or permits repeating the copy. Exact readback remains mandatory.
+
 Regression tests use synthetic observations and time. They cover wrong/unknown switch mode, readiness loss, stale evidence, changed identity, cancelled work and late callbacks. Host tests and a successful desktop build are not hardware acceptance. Repeat the owner's adversarial Wired-to-Dongle test in the rebuilt app before accepting the live journey.
