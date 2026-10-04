@@ -34,6 +34,9 @@ fn segment(
     cx: &App,
 ) -> Button {
     let mut tooltip = label.to_owned();
+    if label == "Left" {
+        tooltip.push_str(". Mode unavailable");
+    }
     let mut content = div()
         .flex()
         .items_center()
@@ -42,7 +45,7 @@ fn segment(
         .font_weight(FontWeight::NORMAL)
         .child(div().text_color(cx.theme().muted_foreground).child(label));
     if let Some((icon, color, description)) = connection {
-        tooltip.push_str(&format!(" · {description}"));
+        tooltip.push_str(&format!(". {description}"));
         content = content.child(Icon::new(icon).size(px(14.)).text_color(color));
     }
     if let Some(state) = battery {
@@ -51,13 +54,13 @@ fn segment(
             .map(|v| format!("{v}%"))
             .unwrap_or_else(|| "—".into());
         if state.usb_connected && connection.is_none() {
-            tooltip.push_str(" · USB connected");
+            tooltip.push_str(". USB connected");
         }
         tooltip.push_str(
             &state
                 .level
-                .map(|v| format!(" · Battery {v}%"))
-                .unwrap_or_else(|| " · Battery unavailable".into()),
+                .map(|v| format!(". Battery {v}%"))
+                .unwrap_or_else(|| ". Battery unavailable".into()),
         );
         content = content
             .child(
@@ -72,7 +75,7 @@ fn segment(
             .child(div().text_color(cx.theme().foreground).child(level));
     }
     if recovery {
-        tooltip.push_str(" · Recovery mode");
+        tooltip.push_str(". Recovery mode");
         content = content.child(Icon::new(IconName::HeartPulse).size(px(14.)).text_color(
             gpui::rgb(if cx.theme().is_dark() {
                 0x5eead4
