@@ -1,5 +1,31 @@
 # Battery reporting
 
+## Raw ADC investigation, 2026-10-03
+
+The normal left firmware now exposes its producer-owned raw sample through the
+read-only Vial `NCAD` getter. With middle WIRED selected, actual configuration
+registers were resolution `2` (12 bits), oversample `0`, channel configuration
+`0x20000` (internal reference, gain 1/6, 10 us acquisition), and positive input
+`3` (AIN2 / P0.04). Fresh backlight-off samples were 3188 and 3192, nominally
+3.6425 and 3.6471 V under the published 130/100 divider conversion. This verifies
+the configured ADC and current raw readings, not their calibration.
+
+A prior owner meter reading was 4.17 V while firmware reported 12%. That older
+observation has no simultaneous raw ADC sample; it cannot justify a permanent
+scale correction. The present candidates are insufficient acquisition time for
+the divider's unknown source resistance, inaccurate divider/reference scaling,
+and genuinely low current cell voltage or charging behavior. Changing the
+percentage curve or adding smoothing would not discriminate these causes.
+
+The next comparison changes only acquisition time from 10 us to 40 us through
+the HAL's channel configuration. Nordic's [SAADC acquisition documentation](https://docs.nordicsemi.com/r/bundle/ps_nrf52832/page/saadc.html)
+specifies increasing acquisition time with source resistance. The divider
+resistance is unmeasured, so this is a diagnostic comparison, not a confirmed
+fix. Gain, reference, 10 ms divider settling, 30-second sample interval,
+oversampling, RMK percentage processing, charging GPIOs and storage schema stay
+unchanged. Compare fresh raw counts under the same load before deciding whether
+to retain it. Meter calibration and battery-capacity validation remain pending.
+
 Audited 2026-10-02 local time against installed RMK fork `b41bd7caa7de67a47f6e7380519b730630f16152` and Embassy nRF fork `1b5fc397aa65026925d9641d88073a7e91993647`. Existing firmware already measures both batteries; a firmware update is unnecessary to expose their current status in Companion.
 
 ## Live observation

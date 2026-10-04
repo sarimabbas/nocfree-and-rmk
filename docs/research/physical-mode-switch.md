@@ -47,3 +47,16 @@ The fork at `acd4689a1284f27decd4d0755a1e316fddcbb8ff` adds strict output select
 A read-only Vial `NCAD` getter reports the signed ADC sample, its age, actual ADC configuration registers and observed switch input levels. It neither changes sampling nor adjusts the percentage. All functionality remains enabled without a CDC logging interface. Eighteen focused RMK host tests cover routing, old-host release and both Vial getters, and the scanner harness covers the selector truth table. These are source/host results; physical switch behavior, reconnection, simultaneous input and latency still need acceptance.
 
 The new fork revision changes the existing RMK storage hash, so first startup can reset bonds and settings. This update does not promise schema-compatible pairing retention. Right OFF with USB connected remains a hardware-sense limitation; do not claim that the left position inputs solve it.
+
+## Owner acceptance, 2026-10-03
+
+The installed left image matched its prepared bytes, padding and protected gap.
+Normal USB startup in middle WIRED enumerated successfully; a fresh ADC snapshot
+recorded both sense inputs high. The owner typed `qwert HJKL`, with Shift on the
+left and letters on the right. In top dongle position, typing worked with left
+USB connected, stopped when only the dongle was removed, and returned when it
+was reconnected. In bottom Bluetooth position, the owner paired again and
+confirmed typing with both halves' USB and the dongle unplugged. These establish
+basic physical route selection and shared modifiers; they do not establish
+measured wake latency, all release/disconnect edge cases, electrical OFF, or
+right switch sensing.
