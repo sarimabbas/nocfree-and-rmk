@@ -41,6 +41,12 @@ The normal LEFT Vial/runtime-recovery/watchdog build at checkpoint `558164f` was
 
 After reconnecting USB in middle WIRED without holding keys, LEFT returned to normal RMK instead of entering recovery. Battery querying also resumed. Typing and split input acceptance for this integrated build remain pending. The earlier deliberately hung LEFT diagnostic proved the watchdog escape separately; it does not establish induced-hang acceptance for this integrated image. RIGHT and receiver runtime recovery and watchdog hardware acceptance remain pending. The role/feature inventory above is the historical research snapshot, superseded by the current implementation.
 
+## RIGHT hardware acceptance update, 2026-10-03
+
+The previous RIGHT startup-only recovery interface stopped appearing during owner-operated switch/USB sequences, including the known working LEFT data cable. Normal RIGHT split typing still worked. The cause of the missed startup interface remains unresolved; repeated cycles did not establish a firmware defect or a broken board.
+
+The owner subsequently reported physical recovery entry. Root verified the original RIGHT serial, product, physical USB port and factory bootloader metadata, saved a fresh exact working application/settings backup, and installed the guarded normal runtime-recovery/watchdog build once. RIGHT enumerated as `NocFree RMK Right`. Companion then opened its factory UF2 drive from normal runtime without a restart or key chord. Installed application/padding and untouched application gap matched exactly; runtime settings reset was recorded separately. The factory bootloader was unchanged. The owner confirmed both halves working after return to normal operation. Integrated deliberate-hang and measured latency acceptance remain pending.
+
 ## Primary sources
 
 - [RMK Rynk documentation](https://rmk.rs/main/docs/features/rynk)

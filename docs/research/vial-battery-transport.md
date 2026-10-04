@@ -45,3 +45,5 @@ Companion selects a unique directly connected left first, otherwise a unique rec
 ### LEFT hardware observation, 2026-10-03
 
 The normal LEFT build at repository checkpoint `558164f` returned a successful native Vial query before and after a normal USB restart. Both reads reported 13%, unknown charging state and a disconnected right with an unavailable battery entry. The rebuilt Companion visibly displayed a left estimate (11% at its later poll) and “Right: Not connected.” This establishes direct LEFT USB transport and UI display, not calibrated battery capacity, current sample freshness, or right-half battery acceptance. Receiver relay, direct BLE comparison and raw ADC/cell-voltage calibration remain pending.
+
+After the matching RIGHT update and owner confirmation of both halves typing, the same native read returned LEFT 13%, RIGHT 11%, right-link connected, and unknown charging state for both. This establishes both-half cached reporting through LEFT USB. It does not validate the low estimates or establish charging state. Receiver relay and ADC calibration remain pending.
