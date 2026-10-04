@@ -194,6 +194,13 @@ mod tests {
         left_only.observe(Ok(normal()));
         left_only.observe(Ok(with_right.clone()));
         assert!(!left_only.include_right);
+        let mut factory_right = with_right.clone();
+        factory_right.devices[1].vendor = 0x239a;
+        factory_right.devices[1].product = 0x80d8;
+        factory_right.devices[1].name = "NocFree nRF52833 Right".into();
+        let mut factory = Journey::backup();
+        factory.observe(Ok(factory_right));
+        assert!(factory.include_right);
         with_right.devices[1].product = 0x4643;
         with_right.devices[1].name = "NocFree RMK Right".into();
         let mut unknown = Journey::backup();
