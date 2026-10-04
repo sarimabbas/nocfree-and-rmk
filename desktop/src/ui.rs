@@ -732,7 +732,7 @@ impl Companion {
     fn recovery_screen(&self, cx: &mut Context<Self>) -> JourneyScreen {
         let (body, next) = match self.rescue.state() {
             RecoveryState::Choose => (
-                self.peripheral_picker("Choose the part you want to recover", cx),
+                self.peripheral_picker("Choose the part you want to put into recovery mode", cx),
                 None,
             ),
             RecoveryState::Identify(role) => (
