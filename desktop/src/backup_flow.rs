@@ -5,7 +5,7 @@ use crate::journey;
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum State {
     #[default]
-    Intro,
+    Choose,
     Guiding,
     Recovering,
     RecoveryFailed,
@@ -17,7 +17,7 @@ pub enum State {
 }
 #[derive(Clone, Copy, Debug)]
 pub enum Event {
-    Start,
+    Select,
     RecoveryStarted,
     RecoveryFinished(bool),
     SaveStarted,
@@ -28,7 +28,7 @@ pub enum Event {
 }
 impl State {
     pub fn active(self) -> bool {
-        !matches!(self, Self::Intro | Self::Paused | Self::Complete)
+        !matches!(self, Self::Choose | Self::Paused | Self::Complete)
     }
     pub fn recovery(self) -> bool {
         matches!(self, Self::Recovering | Self::RecoveryFailed)
@@ -43,7 +43,7 @@ impl State {
     pub fn transition(&mut self, event: Event) -> bool {
         use Event::*;
         let next = match (*self, event) {
-            (Self::Intro | Self::Paused, Start) => Self::Guiding,
+            (Self::Choose | Self::Paused | Self::Complete, Select) => Self::Guiding,
             (Self::Guiding, RecoveryStarted) => Self::Recovering,
             (Self::Recovering, RecoveryFinished(true)) => Self::Guiding,
             (Self::Recovering, RecoveryFinished(false)) => Self::RecoveryFailed,
@@ -65,7 +65,7 @@ impl State {
             ) => Self::Paused,
             (Self::Failed, Retry) => Self::Guiding,
             (Self::RecoveryFailed, Retry) => Self::Recovering,
-            (Self::Complete, Finish) => Self::Intro,
+            (Self::Complete, Finish) => Self::Choose,
             _ => return false,
         };
         *self = next;
@@ -77,13 +77,13 @@ mod tests {
     use super::*;
     #[test]
     fn cancel_recovery_then_ignore_late_result_and_start_fresh() {
-        let mut state = State::Intro;
-        assert!(state.transition(Event::Start));
+        let mut state = State::Choose;
+        assert!(state.transition(Event::Select));
         assert!(state.transition(Event::RecoveryStarted));
         assert!(state.transition(Event::Pause));
         assert!(!state.transition(Event::RecoveryFinished(true)));
         assert_eq!(state, State::Paused);
-        assert!(state.transition(Event::Start));
+        assert!(state.transition(Event::Select));
         assert!(state.transition(Event::RecoveryStarted));
         assert!(state.transition(Event::RecoveryFinished(true)));
         assert!(state.transition(Event::SaveStarted));
@@ -91,7 +91,7 @@ mod tests {
         assert!(state.transition(Event::Observed(journey::State::Returning)));
         assert!(state.transition(Event::Observed(journey::State::Complete)));
         assert!(state.transition(Event::Finish));
-        assert_eq!(state, State::Intro);
+        assert_eq!(state, State::Choose);
     }
     #[test]
     fn recovery_and_save_errors_have_distinct_retry_paths() {
@@ -106,5 +106,23 @@ mod tests {
         assert!(!state.recovery());
         assert!(state.transition(Event::Retry));
         assert_eq!(state, State::Guiding);
+    }
+}
+
+#[cfg(test)]
+mod selection_tests {
+    use super::*;
+    #[test]
+    fn choose_again_after_completion_but_not_while_saving_or_recovering() {
+        for source in [State::Choose, State::Paused, State::Complete] {
+            let mut state = source;
+            assert!(state.transition(Event::Select));
+            assert_eq!(state, State::Guiding);
+        }
+        for source in [State::Saving, State::Recovering, State::Returning] {
+            let mut state = source;
+            assert!(!state.transition(Event::Select));
+            assert_eq!(state, source);
+        }
     }
 }

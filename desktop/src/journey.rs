@@ -1,7 +1,8 @@
 //! Guided journeys reuse Session's identification, archive and return checks.
 //! Firmware transfer remains unavailable until a reviewed installer is connected.
 use crate::{
-    device::{Role, Snapshot},
+    device::Snapshot,
+    runtime_recovery::Role,
     session::{Session, View},
 };
 use std::path::PathBuf;
@@ -22,43 +23,46 @@ pub struct Journey {
     state: State,
     archives: Vec<PathBuf>,
     error: Option<String>,
-    include_right: bool,
-    plan_known: bool,
 }
 
 impl Journey {
     pub fn backup() -> Self {
+        Self::backup_part(Role::Left)
+    }
+    pub fn backup_part(role: Role) -> Self {
         let mut session = Session::new();
-        session.select(Role::Left);
+        session.select_recovery_role(role);
         Self {
             session,
-            role: Role::Left,
+            role,
             state: State::Guiding,
             archives: vec![],
             error: None,
-            include_right: false,
-            plan_known: false,
         }
     }
     #[cfg(test)]
-    pub(crate) fn from_saved_test_session(session: Session, include_right: bool) -> Self {
+    pub(crate) fn from_saved_test_session(session: Session) -> Self {
+        let role = session
+            .selected_component()
+            .expect("test selected component");
         let archives = vec![session.view().backup_path.clone().unwrap()];
         Self {
             session,
-            role: Role::Left,
+            role,
             state: State::Returning,
             archives,
             error: None,
-            include_right,
-            plan_known: true,
         }
+    }
+    pub fn component(&self) -> Role {
+        self.role
     }
     /// Compose the shared recovery worker with this journey. An asynchronous result
     /// may be adopted only while this component is still waiting for recovery.
     /// Saving then performs fresh discovery before and after reading the archive.
     pub fn accept_recovery(&mut self, session: Session) -> bool {
         if self.state != State::Guiding
-            || session.selected_role() != Some(self.role)
+            || session.selected_component() != Some(self.role)
             || !session.view().can_save
             || session.view().backup_path.is_some()
             || self.session.view().backup_path.is_some()
@@ -67,7 +71,6 @@ impl Journey {
         }
         self.session = session;
         // A local recovery endpoint proves only this selected component, not an unseen partner.
-        self.plan_known = true;
         self.advance();
         true
     }
@@ -98,19 +101,7 @@ impl Journey {
         if matches!(self.state, State::Paused | State::Failed | State::Complete) {
             return;
         }
-        let supported_right = observation.as_ref().is_ok_and(|snapshot| {
-            snapshot
-                .devices
-                .iter()
-                .filter(|d| d.role() == Some(Role::Right))
-                .count()
-                == 1
-        });
         self.session.observe(observation);
-        if !self.plan_known && self.role == Role::Left && self.session.identified_normal() {
-            self.include_right = supported_right;
-            self.plan_known = true;
-        }
         self.advance();
     }
     fn advance(&mut self) {
@@ -119,13 +110,7 @@ impl Journey {
             self.error = Some(error);
             self.state = State::Failed;
         } else if view.backup_path.is_some() && view.return_complete {
-            if self.role == Role::Left && self.include_right {
-                self.role = Role::Right;
-                self.session.select(Role::Right);
-                self.state = State::Guiding;
-            } else {
-                self.state = State::Complete;
-            }
+            self.state = State::Complete;
         } else if view.backup_path.is_some() {
             self.state = State::Returning;
         } else if view.can_save {
@@ -197,33 +182,54 @@ mod tests {
         }
     }
     #[test]
-    fn only_supported_right_observed_at_initial_identification_joins_plan() {
-        let mut with_right = normal();
-        with_right.devices.push(Device {
+    fn every_backup_is_one_explicitly_selected_part() {
+        let mut snapshot = normal();
+        snapshot.devices.push(Device {
             location: 8,
             vendor: 0x4c4b,
-            product: 0x4651,
-            name: "NocFree Input Probe Right Mac".into(),
+            product: 0x4671,
+            name: "NocFree RMK Right".into(),
         });
-        let mut both = Journey::backup();
-        both.observe(Ok(with_right.clone()));
-        assert!(both.include_right);
-        let mut left_only = Journey::backup();
-        left_only.observe(Ok(normal()));
-        left_only.observe(Ok(with_right.clone()));
-        assert!(!left_only.include_right);
-        let mut factory_right = with_right.clone();
-        factory_right.devices[1].vendor = 0x239a;
-        factory_right.devices[1].product = 0x80d8;
-        factory_right.devices[1].name = "NocFree nRF52833 Right".into();
-        let mut factory = Journey::backup();
-        factory.observe(Ok(factory_right));
-        assert!(factory.include_right);
-        with_right.devices[1].product = 0x4643;
-        with_right.devices[1].name = "NocFree RMK Right".into();
-        let mut unknown = Journey::backup();
-        unknown.observe(Ok(with_right));
-        assert!(!unknown.include_right);
+        for role in [Role::Left, Role::Right, Role::Receiver] {
+            let mut journey = Journey::backup_part(role);
+            journey.observe(Ok(snapshot.clone()));
+            assert_eq!(journey.component(), role);
+            assert!(journey.archives().is_empty());
+        }
+    }
+    #[test]
+    fn adopted_backup_must_match_the_explicit_component() {
+        let mounted = || Snapshot {
+            devices: vec![Device {
+                location: 7,
+                vendor: 0x239a,
+                product: 0x29,
+                name: "NocFree &".into(),
+            }],
+            mounts: vec![crate::device::BootMount {
+                path: "/fixture".into(),
+                info: "UF2 Bootloader 0.9.2-39-g0147d71\nModel: NocFree &\nBoard-ID: NocFree &"
+                    .into(),
+            }],
+        };
+        for selected in [Role::Left, Role::Right, Role::Receiver] {
+            for recovered in [Role::Left, Role::Right, Role::Receiver] {
+                let mut journey = Journey::backup_part(selected);
+                let mut session = Session::new();
+                session.select_recovery_role(recovered);
+                assert!(session.adopt_archive_drive(mounted()).unwrap());
+                assert_eq!(journey.accept_recovery(session), selected == recovered);
+                assert_eq!(journey.component(), selected);
+                assert_eq!(
+                    journey.state(),
+                    if selected == recovered {
+                        State::ReadyToSave
+                    } else {
+                        State::Guiding
+                    }
+                );
+            }
+        }
     }
     #[test]
     fn pause_ignores_observations_and_resume_requires_fresh_identification() {

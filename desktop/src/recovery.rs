@@ -24,9 +24,6 @@ pub(crate) fn run_backup(
     cancelled: Arc<AtomicBool>,
     progress: std::sync::mpsc::Sender<Procedure>,
 ) -> Result<Session, String> {
-    if role == Role::Receiver {
-        return Err("This backup journey supports the left and right halves.".into());
-    }
     run_with(role, cancelled, progress, true)
 }
 fn run_with(
@@ -89,8 +86,7 @@ fn run_with(
             if archive_only && requested_location.is_none() && snapshot.devices.iter().any(|d|d.bootloader()) {
                 mounting_at.get_or_insert_with(Instant::now);
                 let known=crate::status_cache::recovery_locations();
-                let selected=match role {Role::Left=>0,Role::Right=>1,Role::Receiver=>2};
-                if known.iter().enumerate().any(|(index,location)| index!=selected && location.is_some_and(|location|snapshot.devices.iter().any(|d|d.bootloader() && d.location==location))) {
+                if recovery_part_conflicts(role,&known,&snapshot) {
                     return Err("The recovery drive belongs to another part. Select that part to back it up.".into());
                 }
                 if session.adopt_archive_drive(snapshot.clone())? {
@@ -129,6 +125,27 @@ fn run_with(
         crate::status_cache::confirm(role, location);
     }
     result
+}
+
+fn recovery_part_conflicts(
+    role: Role,
+    known: &[Option<u64>; 3],
+    snapshot: &device::Snapshot,
+) -> bool {
+    let selected = match role {
+        Role::Left => 0,
+        Role::Right => 1,
+        Role::Receiver => 2,
+    };
+    known.iter().enumerate().any(|(index, location)| {
+        index != selected
+            && location.is_some_and(|location| {
+                snapshot
+                    .devices
+                    .iter()
+                    .any(|d| d.bootloader() && d.location == location)
+            })
+    })
 }
 
 // Only one read-only inventory runs at a time. Slow ioreg must not block
@@ -252,6 +269,28 @@ mod tests {
                     .into(),
             }],
         }
+    }
+    #[test]
+    fn backup_does_not_relabel_a_known_other_component() {
+        let snapshot = factory_boot(10);
+        for (index, role) in [Role::Left, Role::Right, Role::Receiver]
+            .into_iter()
+            .enumerate()
+        {
+            let mut known = [None; 3];
+            known[index] = Some(10);
+            assert!(!recovery_part_conflicts(role, &known, &snapshot));
+            for selected in [Role::Left, Role::Right, Role::Receiver] {
+                if selected != role {
+                    assert!(recovery_part_conflicts(selected, &known, &snapshot));
+                }
+            }
+        }
+        assert!(!recovery_part_conflicts(
+            Role::Receiver,
+            &[None; 3],
+            &snapshot
+        ));
     }
     #[test]
     fn factory_flow_requires_disconnect_identification_and_same_port_drive() {

@@ -7,8 +7,8 @@ request generations) is separate from navigation and never inferred from the scr
 
 | Flow | Authoritative model | Transitions |
 | --- | --- | --- |
-| Backup orchestration | `backup_flow::State` and `Event` | Intro → Guiding → Recovering → Guiding → Saving → Returning → Complete. RecoveryFailed and Failed have explicit retry paths; navigation pauses a cancellable flow. |
-| Backup evidence | `journey::Journey`, `session::Session` | Guiding → ReadyToSave → Returning → Complete; role advances only after the previous part returns. Paused/Failed retain saved archives. The current backup plan covers halves, not the dongle. |
+| Backup orchestration | `backup_flow::State` and `Event` | Choose → Guiding → Recovering → Guiding → Saving → Returning → Complete. RecoveryFailed and Failed have explicit retry paths; navigation pauses a cancellable flow. |
+| Backup evidence | `journey::Journey`, `session::Session` | Guiding → ReadyToSave → Returning → Complete; selection binds exactly one left half, right half or dongle. Paused/Failed retain saved archives; no other part is added automatically. |
 | Recovery prerequisite and utility | `recovery_journey::RecoveryJourney` | Choose → Identify → Guiding → Ready or Failed. Attempt generations reject late, wrong-role and cancelled callbacks. |
 | RMK install/update | `firmware_journey::FirmwareJourney` | Recovery → Approval → Reconcile → physical return states → next role/Complete. One-shot transfer and durable intent/readback records prevent replay after restart. Discovery failure enters Failed; successful read-only observation resumes without another transfer. |
 | Check pairing | `dongle_pairing::Journey` | Connect/TurnOnRight/SwitchMode → Ready → Pairing → Connected or Failed. Existing valid links complete without mutation. Explicit repair binds both selected USB peers and their radio identities. |
@@ -75,3 +75,12 @@ reset permission will display a prompt under every existing privacy configuratio
 
 Primary sources: [permission prompt purpose key](https://developer.apple.com/documentation/bundleresources/information-property-list/nsremovablevolumesusagedescription),
 [resetting protected-resource access](https://developer.apple.com/documentation/xcode/resetting-access-to-protected-resources-in-macos).
+
+## Explicit backup selection
+
+Backup and Recovery share the same illustrated peripheral picker. Selection starts a
+single-part journey; Left half, Right half and USB dongle are explicit model values.
+Returning to Backup shows the picker. Choosing the same paused component resumes its
+remaining state; choosing another starts a fresh journey while existing archives remain
+on disk. A dongle archive and its unplug/reconnect guide use the dongle role throughout,
+never a fallback left-half label.

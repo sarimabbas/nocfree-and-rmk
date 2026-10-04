@@ -1,5 +1,14 @@
 //! Read-only archives keep normal-device correlation separate from unverified mounted-drive adoption.
-use crate::device::{self, BootMount, Role, Snapshot};
+use crate::device::{self, BootMount, Role as KeyboardRole, Snapshot};
+use crate::runtime_recovery::Role;
+impl From<KeyboardRole> for Role {
+    fn from(role: KeyboardRole) -> Self {
+        match role {
+            KeyboardRole::Left => Self::Left,
+            KeyboardRole::Right => Self::Right,
+        }
+    }
+}
 use std::{
     fs,
     io::Write,
@@ -34,6 +43,7 @@ pub struct Session {
     ready: Option<BootMount>,
     normal_present: bool,
     rmk_left: bool,
+    rmk_receiver: bool,
     legacy_left_start: bool,
     factory_right: bool,
     connection_present: bool,
@@ -52,26 +62,21 @@ impl Session {
     pub fn bind_recovery(&mut self, location: u64) {
         self.location = Some(location);
         self.rmk_left = self.role == Some(Role::Left);
+        self.rmk_receiver = self.role == Some(Role::Receiver);
         self.factory_right = false;
     }
-    pub(crate) fn selected_role(&self) -> Option<Role> {
+    pub(crate) fn selected_component(&self) -> Option<Role> {
         self.role
     }
-    pub fn select(&mut self, role: Role) {
+    pub fn select(&mut self, role: impl Into<Role>) {
         *self = Self {
-            role: Some(role),
+            role: Some(role.into()),
             status: "Waiting for normal-mode identification.".into(),
             ..Self::default()
         };
     }
-    /// Explicit role selected by the recovery worker; shared factory USB identities
-    /// cannot establish whether the physically selected component is a dongle.
-    pub fn select_recovery_role(&mut self, role: crate::runtime_recovery::Role) {
-        self.select(if role == crate::runtime_recovery::Role::Right {
-            Role::Right
-        } else {
-            Role::Left
-        });
+    pub fn select_recovery_role(&mut self, role: Role) {
+        self.select(role);
         self.recovery_role = Some(role);
     }
     pub(crate) fn recovery_binding(
@@ -177,11 +182,12 @@ impl Session {
             let normal: Vec<_> = snapshot
                 .devices
                 .iter()
-                .filter(|d| d.role() == Some(role))
+                .filter(|d| normal_matches(d, role))
                 .collect();
             if normal.len() == 1 && bootloaders.is_empty() && snapshot.mounts.is_empty() {
                 self.location = Some(normal[0].location);
                 self.rmk_left = normal[0].rmk_left();
+                self.rmk_receiver = normal[0].rmk_receiver();
                 self.factory_right = normal[0].factory_right();
                 self.normal_present = true;
                 self.connection_present = true;
@@ -229,11 +235,14 @@ impl Session {
             self.ready = Some(mount.clone());
             self.status =
                 "One correlated recovery drive observed. Ready to save a private readback.".into();
-        } else if snapshot
+        } else if let Some(normal) = snapshot
             .devices
             .iter()
-            .any(|d| d.location == location && d.role() == Some(role))
+            .find(|d| d.location == location && normal_matches(d, role))
         {
+            self.rmk_left = normal.rmk_left();
+            self.rmk_receiver = normal.rmk_receiver();
+            self.factory_right = normal.factory_right();
             self.normal_present = true;
             self.problem = None;
             self.status =
@@ -254,8 +263,8 @@ impl Session {
         // Backup completion proves return to normal firmware, not a cold boot.
         // A fresh same-port normal endpoint is stronger evidence than a timer,
         // including when polling missed the brief physical disconnection.
-        if self.role == Some(Role::Left)
-            && !self.legacy_left_start
+        if (self.role == Some(Role::Left) && !self.legacy_left_start
+            || self.role == Some(Role::Receiver))
             && self.normal_present
             && self.backup_path.is_some()
             && self.location.is_some()
@@ -325,6 +334,10 @@ impl Session {
                 .div_ceil(1000)
         };
         self.return_phase.map(|phase| match phase {
+            ReturnPhase::Disconnect if self.role == Some(Role::Receiver) => (
+                "Unplug the USB dongle".into(),
+                "Unplug it from your Mac.".into(),
+            ),
             ReturnPhase::Disconnect if self.role == Some(Role::Right) => (
                 "Turn the right half OFF".into(),
                 if self.status.starts_with("It stayed in recovery") {
@@ -364,6 +377,10 @@ impl Session {
                     remaining(since, 10)
                 ),
             ),
+            ReturnPhase::Reconnect if self.role == Some(Role::Receiver) => (
+                "Reconnect the USB dongle".into(),
+                "Plug it back into your Mac.".into(),
+            ),
             ReturnPhase::Reconnect => (
                 format!("Reconnect the {side} half"),
                 "Plug its USB cable back into your Mac.".into(),
@@ -375,13 +392,14 @@ impl Session {
         })
     }
     /// Factory identity for the selected role; shared left/receiver identity still relies on physical selection.
-    pub fn factory_role(&self) -> Option<Role> {
+    pub fn factory_role(&self) -> Option<KeyboardRole> {
         if !self.identified_normal() {
             return None;
         }
         match self.role {
-            Some(Role::Left) if !self.rmk_left => Some(Role::Left),
-            Some(Role::Right) if self.factory_right => Some(Role::Right),
+            Some(Role::Left) if !self.rmk_left => Some(KeyboardRole::Left),
+            Some(Role::Right) if self.factory_right => Some(KeyboardRole::Right),
+            Some(Role::Receiver) if !self.rmk_receiver => Some(KeyboardRole::Left),
             _ => None,
         }
     }
@@ -395,12 +413,14 @@ impl Session {
             None => "Connect your keyboard with a USB cable.".into(),
             Some(Role::Left) if !identified => "Connect the left half by USB. Leave the dongle disconnected.".into(),
             Some(Role::Right) if !identified => "Plug in the right half.".into(),
+            Some(Role::Receiver) if !identified => "Plug in the USB dongle. Leave the keyboard halves disconnected from USB.".into(),
             _ if waiting_drive => "Keep the cable connected.".into(),
             _ if !self.connection_present => "Reconnect using the same USB port.".into(),
             Some(Role::Left) if self.rmk_left => "Use the recovery procedure for your installed firmware, keeping the same USB port.".into(),
             Some(Role::Left) => "Leave USB connected and the switch in WIRED. Hold Fn + 5 for five seconds, then release.".into(),
             Some(Role::Right) if self.factory_right => "Leave USB connected. Hold Fn + 0 for five seconds, then release.".into(),
             Some(Role::Right) => "Leave USB connected. Hold Fn, tap the main-row 0 key, then release Fn.".into(),
+            Some(Role::Receiver)=>"Keep the dongle connected. Companion will guide you into recovery.".into(),
         };
         let return_instruction = self.return_instruction(Instant::now());
         View {
@@ -416,6 +436,7 @@ impl Session {
                     Some(Role::Left) => "Hold Fn + 5".into(),
                     Some(Role::Right) if self.factory_right => "Hold Fn + 0".into(),
                     Some(Role::Right) => "Hold Fn and tap 0".into(),
+                    Some(Role::Receiver) => "Open recovery on the dongle".into(),
                     None => "Connect your keyboard".into(),
                 }
             } else {
@@ -423,6 +444,7 @@ impl Session {
                     None => "Connect your keyboard".into(),
                     Some(Role::Left) => "Connect the left half".into(),
                     Some(Role::Right) => "Connect the right half".into(),
+                    Some(Role::Receiver) => "Connect the USB dongle".into(),
                 }
             },
             instruction: return_instruction
@@ -485,7 +507,7 @@ impl Session {
             create_private_directory(&folder)?;
             atomic_file(&folder, "CURRENT.UF2", &data)?;
             atomic_file(&folder, "INFO_UF2.TXT", original.info.as_bytes())?;
-            let journal = serde_json::json!({"schema":1,"planned_role":self.role,"role_verified":false,"saved_at_unix_ns":timestamp.to_string(),"readback_sha256":hash,"coverage_start":4096,"coverage_end_exclusive":446464,"blocks":1728,"status":"readback archived; restore eligibility unproven","restart":"fresh normal-mode identification required"});
+            let journal = serde_json::json!({"schema":1,"planned_role":self.role.map(|role|match role {Role::Left=>"Left",Role::Right=>"Right",Role::Receiver=>"Receiver"}),"role_verified":false,"saved_at_unix_ns":timestamp.to_string(),"readback_sha256":hash,"coverage_start":4096,"coverage_end_exclusive":446464,"blocks":1728,"status":"readback archived; restore eligibility unproven","restart":"fresh normal-mode identification required"});
             atomic_file(
                 &folder,
                 "session.json",
@@ -582,6 +604,14 @@ fn atomic_file(folder: &Path, name: &str, bytes: &[u8]) -> Result<(), String> {
     Ok(())
 }
 
+fn normal_matches(device: &device::Device, role: Role) -> bool {
+    match role {
+        Role::Left => device.role() == Some(KeyboardRole::Left),
+        Role::Right => device.role() == Some(KeyboardRole::Right),
+        Role::Receiver => device.rmk_receiver() || device.factory_left(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #[test]
@@ -589,7 +619,7 @@ mod tests {
         let now = std::time::Instant::now();
         for legacy in [false, true] {
             let mut session = super::Session {
-                role: Some(crate::device::Role::Left),
+                role: Some(Role::Left),
                 rmk_left: true,
                 legacy_left_start: legacy,
                 return_phase: Some(super::ReturnPhase::OffWait { since: now }),
@@ -711,6 +741,70 @@ mod tests {
         let mut session = make();
         session.observe_at(Ok(boot(true)), now);
         assert!(!session.view().return_complete);
+    }
+    #[test]
+    fn receiver_runtime_binding_and_normal_observation_keep_firmware_identity() {
+        let mut session = Session::new();
+        session.select_recovery_role(Role::Receiver);
+        session.bind_recovery(7);
+        assert!(session.rmk_receiver);
+        assert!(!session.rmk_left);
+        let mut receiver = normal();
+        receiver.devices[0].vendor = 0x4c4b;
+        receiver.devices[0].product = 0x4644;
+        receiver.devices[0].name = "NocFree RMK Receiver".into();
+        session.observe(Ok(receiver));
+        assert_eq!(session.factory_role(), None);
+        session.observe(Ok(normal()));
+        assert_eq!(session.factory_role(), Some(KeyboardRole::Left));
+    }
+    #[test]
+    fn receiver_backup_preserves_component_label_and_returns_without_keyboard_steps() {
+        let root = std::env::temp_dir().join(format!(
+            "nocfree-dongle-backup-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let mut session = Session::new();
+        session.select_recovery_role(Role::Receiver);
+        assert!(session.adopt_archive_drive(boot(true)).unwrap());
+        assert_eq!(session.selected_component(), Some(Role::Receiver));
+        assert!(session.recovery_binding().is_err());
+        let folder = session
+            .save_with(&root, || Ok(boot(true)), |_| Ok(device::tests::archive()))
+            .unwrap();
+        let journal: serde_json::Value =
+            serde_json::from_slice(&fs::read(folder.join("session.json")).unwrap()).unwrap();
+        assert_eq!(journal["planned_role"], "Receiver");
+        assert_eq!(journal["role_verified"], false);
+        assert_eq!(session.view().title, "Unplug the USB dongle");
+        assert!(!session.view().needs_power_on_ack);
+        let mut receiver = normal();
+        receiver.devices[0].vendor = 0x4c4b;
+        receiver.devices[0].product = 0x4644;
+        receiver.devices[0].name = "NocFree RMK Receiver".into();
+        session.observe(Ok(receiver));
+        assert!(session.view().return_complete);
+        assert!(session.recovery_binding().is_err());
+        fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn receiver_return_rejects_a_normal_left_on_the_saved_port() {
+        let mut session = Session::new();
+        session.select_recovery_role(Role::Receiver);
+        assert!(session.adopt_archive_drive(boot(true)).unwrap());
+        session.backup_path = Some(PathBuf::from("/saved"));
+        session.archived_location = Some(7);
+        session.return_phase = Some(ReturnPhase::Disconnect);
+        let mut left = normal();
+        left.devices[0].vendor = 0x4c4b;
+        left.devices[0].product = 0x4643;
+        left.devices[0].name = "NocFree RMK".into();
+        session.observe(Ok(left));
+        assert!(!session.view().return_complete);
+        assert!(session.view().error.is_some());
     }
     #[test]
     fn already_mounted_backup_is_read_only_and_never_installation_evidence() {
@@ -951,28 +1045,25 @@ mod tests {
         let mut session = Session::new();
         session.select(Role::Right);
         session.observe(Ok(snapshot));
-        assert_eq!(session.factory_role(), Some(Role::Right));
+        assert_eq!(session.factory_role(), Some(KeyboardRole::Right));
         assert!(session.view().instruction.contains("five seconds"));
         assert!(!session.view().can_save);
     }
     #[test]
-    fn journey_advances_only_after_return_and_keeps_saved_copy_on_pause() {
+    fn selected_backup_completes_without_automatically_visiting_another_half() {
         let now = Instant::now();
         let mut session = saved_session(Role::Left);
         session.observe_at(Ok(Snapshot::default()), now);
         session.observe_at(Ok(Snapshot::default()), now + Duration::from_secs(5));
         session.observe_at(Ok(normal()), now + Duration::from_secs(6));
-        assert!(session.view().return_complete);
-        let mut journey = crate::journey::Journey::from_saved_test_session(session, true);
+        let mut journey = crate::journey::Journey::from_saved_test_session(session);
         journey.observe(Ok(normal()));
-        assert_eq!(journey.role(), Role::Right);
-        assert_eq!(journey.state(), crate::journey::State::Guiding);
+        assert_eq!(journey.component(), Role::Left);
+        assert!(journey.is_complete());
         journey.pause();
         journey.resume();
-        assert_eq!(journey.role(), Role::Right);
+        assert!(journey.is_complete());
         assert_eq!(journey.archives(), &[PathBuf::from("/private/test-copy")]);
-        assert!(!journey.is_complete());
-        assert!(!journey.view().can_save);
     }
     #[test]
     fn left_only_journey_completes_after_observed_normal_return() {
@@ -981,7 +1072,7 @@ mod tests {
         session.observe_at(Ok(Snapshot::default()), now);
         session.observe_at(Ok(Snapshot::default()), now + Duration::from_secs(5));
         session.observe_at(Ok(normal()), now + Duration::from_secs(6));
-        let mut journey = crate::journey::Journey::from_saved_test_session(session, false);
+        let mut journey = crate::journey::Journey::from_saved_test_session(session);
         journey.observe(Ok(normal()));
         assert!(journey.is_complete());
         assert_eq!(journey.role(), Role::Left);

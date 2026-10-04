@@ -32,6 +32,9 @@ impl Device {
     pub(crate) fn rmk_left(&self) -> bool {
         (self.vendor, self.product, self.name.as_str()) == (0x4c4b, 0x4643, "NocFree RMK")
     }
+    pub(crate) fn rmk_receiver(&self) -> bool {
+        (self.vendor, self.product, self.name.as_str()) == (0x4c4b, 0x4644, "NocFree RMK Receiver")
+    }
     /// Exact factory identity recorded before and after the original right restore.
     pub(crate) fn factory_right(&self) -> bool {
         (self.vendor, self.product, self.name.as_str())

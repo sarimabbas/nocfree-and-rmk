@@ -25,7 +25,7 @@ use gpui_kit::assets::IconName;
 
 use crate::{
     battery,
-    device::{self, Role},
+    device::{self},
     home::{Home, UpdateAssessment},
     journey::Journey,
     recovery,
@@ -71,7 +71,7 @@ pub struct Companion {
     backup_state: BackupState,
     session: Option<Journey>,
     view: View,
-    role: Option<Role>,
+    backup_component: Option<RecoveryRole>,
     busy: bool,
     copies_folder: Option<PathBuf>,
     message: Option<String>,
@@ -390,10 +390,10 @@ impl Companion {
             pairing_generation: 0,
             rescue: RecoveryJourney::new(),
             rescue_cancel: None,
-            backup_state: BackupState::Intro,
+            backup_state: BackupState::Choose,
             session: Some(session),
             view,
-            role: None,
+            backup_component: None,
             busy: false,
             copies_folder: None,
             message: None,
@@ -612,19 +612,7 @@ impl Companion {
         } else {
             self.view.instruction.clone()
         };
-        let mut screen = recovery_guide(
-            self.role.map(|r| {
-                if r == Role::Left {
-                    RecoveryRole::Left
-                } else {
-                    RecoveryRole::Right
-                }
-            }),
-            title,
-            instruction,
-            None,
-            cx,
-        );
+        let mut screen = recovery_guide(self.backup_component, title, instruction, None, cx);
         let next = if self.backup_state == BackupState::Complete {
             Some(
                 button("backup-done", "Next").on_click(cx.listener(|this, _, _, cx| {
@@ -666,7 +654,7 @@ impl Companion {
         }
     }
 
-    fn recovery_card(
+    fn peripheral_card(
         &self,
         role: RecoveryRole,
         label: &'static str,
@@ -687,9 +675,9 @@ impl Companion {
                 .into_any_element(),
         };
         Button::new(match role {
-            RecoveryRole::Left => "recover-left",
-            RecoveryRole::Right => "recover-right",
-            RecoveryRole::Receiver => "recover-receiver",
+            RecoveryRole::Left => "choose-left",
+            RecoveryRole::Right => "choose-right",
+            RecoveryRole::Receiver => "choose-dongle",
         })
         .secondary()
         .outline()
@@ -705,33 +693,43 @@ impl Companion {
                 .child(artwork)
                 .child(div().font_weight(FontWeight::MEDIUM).child(label)),
         )
-        .on_click(cx.listener(move |this, _, _, cx| this.start_recovery(role, cx)))
+        .on_click(cx.listener(move |this, _, _, cx| {
+            if matches!(this.page, Page::Backups | Page::Home) {
+                this.start_copies(role, cx);
+            } else {
+                this.start_recovery(role, cx);
+            }
+        }))
+    }
+
+    fn peripheral_picker(&self, instruction: &'static str, cx: &mut Context<Self>) -> gpui::Div {
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(24.))
+            .child(
+                div()
+                    .w_full()
+                    .text_center()
+                    .text_size(px(14.))
+                    .line_height(px(22.))
+                    .text_color(cx.theme().muted_foreground)
+                    .child(instruction),
+            )
+            .child(
+                div()
+                    .flex()
+                    .gap(px(12.))
+                    .child(self.peripheral_card(RecoveryRole::Left, "Left half", cx))
+                    .child(self.peripheral_card(RecoveryRole::Right, "Right half", cx))
+                    .child(self.peripheral_card(RecoveryRole::Receiver, "USB dongle", cx)),
+            )
     }
 
     fn recovery_screen(&self, cx: &mut Context<Self>) -> JourneyScreen {
         let (body, next) = match self.rescue.state() {
             RecoveryState::Choose => (
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap(px(24.))
-                    .child(
-                        div()
-                            .w_full()
-                            .text_center()
-                            .text_size(px(14.))
-                            .line_height(px(22.))
-                            .text_color(cx.theme().muted_foreground)
-                            .child("Choose the part you want to recover"),
-                    )
-                    .child(
-                        div()
-                            .flex()
-                            .gap(px(12.))
-                            .child(self.recovery_card(RecoveryRole::Left, "Left half", cx))
-                            .child(self.recovery_card(RecoveryRole::Right, "Right half", cx))
-                            .child(self.recovery_card(RecoveryRole::Receiver, "USB dongle", cx)),
-                    ),
+                self.peripheral_picker("Choose the part you want to recover", cx),
                 None,
             ),
             RecoveryState::Identify(role) => (
@@ -1191,29 +1189,31 @@ impl Companion {
         }
     }
 
-    fn start_copies(&mut self, cx: &mut Context<Self>) {
+    fn start_copies(&mut self, role: RecoveryRole, cx: &mut Context<Self>) {
         if self.backup_state.active() || self.busy {
+            return;
+        }
+        if !self.backup_state.transition(BackupEvent::Select) {
             return;
         }
         if let Some(journey) = self.session.as_mut()
             && journey.state() == crate::journey::State::Paused
+            && journey.component() == role
         {
             journey.resume();
             self.view = journey.view();
-            self.role = Some(journey.role());
-            self.backup_state.transition(BackupEvent::Start);
+            self.backup_component = Some(journey.component());
             self.message = None;
             self.page = Page::Backups;
             self.advance(cx);
             cx.notify();
             return;
         }
-        let session = Journey::backup();
+        let session = Journey::backup_part(role);
         self.message = None;
         self.view = session.view();
         self.session = Some(session);
-        self.role = Some(Role::Left);
-        self.backup_state.transition(BackupEvent::Start);
+        self.backup_component = Some(role);
         self.page = Page::Backups;
         self.advance(cx);
         cx.notify();
@@ -1228,7 +1228,7 @@ impl Companion {
             return;
         }
         if let Some(journey) = self.session.as_ref() {
-            self.role = Some(journey.role());
+            self.backup_component = Some(journey.component());
             self.backup_state
                 .transition(BackupEvent::Observed(journey.state()));
             self.view = journey.view();
@@ -1240,10 +1240,8 @@ impl Companion {
             && !self.backup_state.recovery()
         {
             self.cancel_recovery();
-            let role = if self.role == Some(Role::Right) {
-                RecoveryRole::Right
-            } else {
-                RecoveryRole::Left
+            let Some(role) = self.backup_component else {
+                return;
             };
             if let Some(attempt) = self.rescue.start(role) {
                 self.run_recovery(role, attempt, true, cx);
@@ -1299,7 +1297,7 @@ impl Companion {
                 .await;
             let _ = this.update(cx, |this, cx| {
                 this.view = session.view();
-                this.role = Some(session.role());
+                this.backup_component = Some(session.component());
                 this.backup_state
                     .transition(BackupEvent::Observed(session.state()));
                 this.session = Some(session);
@@ -1361,14 +1359,6 @@ impl Companion {
         self.page = page;
         if page == Page::Pairing {
             self.start_pairing(cx);
-        }
-        if page == Page::Backups
-            && self
-                .session
-                .as_ref()
-                .is_some_and(|j| j.state() == crate::journey::State::Paused)
-        {
-            self.start_copies(cx);
         }
         cx.notify();
     }
@@ -1505,22 +1495,8 @@ impl Render for Companion {
             Page::Backups if self.backup_state.recovery() => self.recovery_screen(cx),
             Page::Backups if self.backup_state.shown() => self.backup_screen(cx),
             Page::Backups | Page::Home => JourneyScreen {
-                body: recovery_guide(
-                    None,
-                    "Backup firmware",
-                    "Save a copy of the connected keyboard’s firmware locally.",
-                    None,
-                    cx,
-                ),
-                actions: Some(
-                    self.footer(
-                        Some(
-                            button("start-backup", "Next")
-                                .on_click(cx.listener(|this, _, _, cx| this.start_copies(cx))),
-                        ),
-                        cx,
-                    ),
-                ),
+                body: self.peripheral_picker("Choose the part you want to back up", cx),
+                actions: None,
             },
             Page::Recovery => self.recovery_screen(cx),
             Page::Pairing => self.pairing_screen(cx),

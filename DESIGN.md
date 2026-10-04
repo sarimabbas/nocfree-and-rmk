@@ -27,3 +27,5 @@ Factory key-chord entry and compatible RMK app entry converge on the same recove
 ## Flow feedback
 
 Use the linked GPUI Kit library exclusively for the app’s component system. Long, multi-component firmware and backup journeys have a read-only Stepper derived from their state machine. Short recovery and pairing utilities omit the Stepper. Never let visual navigation bypass recovery or verification. Avoid duplicate component counters and progress bars beneath the Stepper. Reserve Progress for measurable long transfers; show Spinner while discovery, USB negotiation, readback or saving has no measurable progress. Do not fabricate byte percentages or completion from elapsed time. StatusBar carries observed firmware, per-half battery availability and receiver connection without duplicating a status page.
+
+Backup and recovery reuse one illustrated peripheral picker (left half, right half, USB dongle). Backup saves only the chosen part; do not infer a multi-part plan from attached devices. Cancelling or returning to Backup presents the chooser, and choosing an already paused part continues its remaining steps.
