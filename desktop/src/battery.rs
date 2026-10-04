@@ -16,6 +16,54 @@ pub(crate) struct Readings {
     pub(crate) right_connected: bool,
 }
 
+/// Last valid percentages survive transport changes; visibility follows connection.
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct Levels {
+    pub left: Option<u8>,
+    pub right: Option<u8>,
+}
+impl Levels {
+    pub(crate) fn observe(&mut self, readings: Readings) {
+        let level = |status| match status {
+            BatteryStatus::Available {
+                level: Some(value), ..
+            } if value <= 100 => Some(value),
+            _ => None,
+        };
+        if let Some(value) = level(readings.left) {
+            self.left = Some(value);
+        }
+        if let Some(value) = level(readings.right) {
+            self.right = Some(value);
+        }
+    }
+    pub(crate) fn visible(self, left_connected: bool, right_connected: bool) -> Self {
+        Self {
+            left: self.left.filter(|_| left_connected),
+            right: self.right.filter(|_| right_connected),
+        }
+    }
+}
+
+impl Readings {
+    pub(crate) fn retain_for_usb_change(
+        mut self,
+        before: &crate::device_status::UsbKey,
+        after: &crate::device_status::UsbKey,
+    ) -> Option<Self> {
+        if crate::device_status::battery_source(before)
+            != crate::device_status::battery_source(after)
+        {
+            return None;
+        }
+        if crate::device_status::right_usb(before) != crate::device_status::right_usb(after) {
+            self.right_connected = false;
+            self.right = BatteryStatus::Unavailable;
+        }
+        Some(self)
+    }
+}
+
 static QUERY_IN_FLIGHT: AtomicBool = AtomicBool::new(false);
 struct QueryGuard;
 impl Drop for QueryGuard {
@@ -200,6 +248,42 @@ mod tests {
         }
     }
 
+    #[test]
+    fn last_valid_percentages_survive_mode_change_and_hide_only_when_disconnected() {
+        let mut levels = Levels::default();
+        levels.observe(convert(available(Some(100)), available(Some(75)), true).unwrap());
+        levels.observe(Readings {
+            left: BatteryStatus::Unavailable,
+            right: BatteryStatus::Unavailable,
+            right_connected: false,
+        });
+        assert_eq!(levels.visible(true, true).left, Some(100));
+        assert_eq!(levels.visible(true, true).right, Some(75));
+        assert_eq!(levels.visible(false, false).left, None);
+        assert_eq!(levels.visible(false, false).right, None);
+        assert_eq!(levels.visible(true, true).right, Some(75));
+        levels.observe(convert(available(Some(99)), available(None), true).unwrap());
+        assert_eq!(levels.visible(true, true).left, Some(99));
+        assert_eq!(levels.visible(true, true).right, Some(75));
+    }
+    #[test]
+    fn right_recovery_preserves_fresh_left_reading_but_not_right() {
+        let normal = vec![
+            (1, 0x4c4b, 0x4643, "NocFree RMK".into()),
+            (2, 0x4c4b, 0x4671, "NocFree RMK Right".into()),
+        ];
+        let recovery = vec![normal[0].clone(), (2, 0x239a, 0x0029, "NocFree &".into())];
+        let readings = convert(available(Some(100)), available(Some(75)), true).unwrap();
+        let retained = readings.retain_for_usb_change(&normal, &recovery).unwrap();
+        assert_eq!(retained.left, available(Some(100)));
+        assert_eq!(retained.right, BatteryStatus::Unavailable);
+        assert!(!retained.right_connected);
+        assert!(
+            readings
+                .retain_for_usb_change(&normal, &recovery[1..].to_vec())
+                .is_none()
+        );
+    }
     #[test]
     fn successive_short_lived_callers_share_one_living_native_worker() {
         let worker = start_worker().unwrap();

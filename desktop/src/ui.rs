@@ -68,11 +68,13 @@ pub struct Companion {
     completed: bool,
     stopped: bool,
     message: Option<String>,
-    battery_readings: Option<battery::Readings>,
-    battery_observed: Option<Instant>,
+    battery_levels: battery::Levels,
+    right_link_connected: bool,
+    dongle_link_connected: bool,
     battery_error: Option<String>,
     device_key: Vec<(u64, u64, u64, String)>,
     device_generation: u64,
+    battery_generation: u64,
     firmware_versions: Vec<crate::firmware_version::Observation>,
     home: Home,
     firmware: Option<FirmwareJourney>,
@@ -99,7 +101,11 @@ impl Companion {
             let mut battery_checked = None;
             let mut version_checked: Option<Instant> = None;
             let mut bluetooth_checked: Option<Instant> = None;
-            type BatteryConnection = (u64, Home, Vec<(u64, u64, u64, String)>);
+            type BatteryConnection = (
+                u64,
+                crate::device_status::UsbKey,
+                crate::device_status::UsbKey,
+            );
             type BatteryQuery = (
                 Instant,
                 BatteryConnection,
@@ -139,14 +145,9 @@ impl Companion {
                                     })
                                     .unwrap_or_default();
                                 key.sort();
-                                if key != this.device_key {
-                                    this.battery_readings = None;
-                                    this.battery_observed = None;
-                                    this.battery_error = None;
-                                    this.firmware_versions.clear();
+                                if this.observe_device_key(key) {
+                                    battery_checked = None;
                                     version_checked = None;
-                                    this.device_key = key;
-                                    this.device_generation = this.device_generation.wrapping_add(1);
                                 }
                                 this.dongle_connected =
                                     observation.as_ref().is_ok_and(|snapshot| {
@@ -166,10 +167,6 @@ impl Companion {
                                     this.firmware_view = Some(journey.view());
                                 }
                                 let next = Home::observe(observation, UpdateAssessment::Unknown);
-                                if next != this.home {
-                                    this.battery_readings = None;
-                                    this.battery_observed = None;
-                                }
                                 this.home = next;
                                 this.advance_firmware(cx);
                                 cx.notify();
@@ -192,30 +189,33 @@ impl Companion {
                     if let Some(result) =
                         battery::observation_result(*started, Instant::now(), result)
                     {
-                        let (started, key, _) =
-                            battery_query.take().expect("pending battery query");
+                        let (_, key, _) = battery_query.take().expect("pending battery query");
                         if this
                             .update(cx, |this, cx| {
                                 if this.started && !this.completed {
                                     return;
                                 }
-                                if key
-                                    != (this.device_generation, this.home, this.device_key.clone())
+                                if key.0 != this.battery_generation
+                                    || key.1
+                                        != crate::device_status::battery_source(&this.device_key)
                                 {
-                                    this.battery_readings = None;
-                                    this.battery_observed = None;
-                                    cx.notify();
                                     return;
                                 }
                                 match result {
                                     Ok(readings) => {
-                                        this.battery_readings = Some(readings);
-                                        this.battery_observed = Some(started);
+                                        let readings = readings
+                                            .retain_for_usb_change(&key.2, &this.device_key)
+                                            .expect("same battery producer");
+                                        this.battery_levels.observe(readings);
+                                        this.right_link_connected = readings.right_connected;
+                                        this.dongle_link_connected = key
+                                            .1
+                                            .iter()
+                                            .any(|(_, _, product, _)| *product == 0x4644)
+                                            && !matches!(readings.left, BatteryStatus::Unavailable);
                                         this.battery_error = None;
                                     }
                                     Err(error) => {
-                                        this.battery_readings = None;
-                                        this.battery_observed = None;
                                         this.battery_error = Some(error);
                                     }
                                 }
@@ -272,10 +272,9 @@ impl Companion {
                 let battery_idle = this.update(cx, |this, _| {
                     (!this.started || this.completed)
                         && this.page != Page::Firmware
-                        && (matches!(this.home, Home::Rmk(_)) || this.dongle_connected)
-                        && !matches!(
+                        && crate::device_status::battery_available(
+                            &this.device_key,
                             this.rescue.state(),
-                            RecoveryState::Identify(_) | RecoveryState::Guiding(_, _)
                         )
                 });
                 if matches!(battery_idle, Ok(true))
@@ -283,7 +282,11 @@ impl Companion {
                     && battery_checked
                         .is_none_or(|last: Instant| last.elapsed() >= Duration::from_secs(30))
                     && let Ok(key) = this.update(cx, |this, _| {
-                        (this.device_generation, this.home, this.device_key.clone())
+                        (
+                            this.battery_generation,
+                            crate::device_status::battery_source(&this.device_key),
+                            this.device_key.clone(),
+                        )
                     })
                 {
                     let started = Instant::now();
@@ -323,13 +326,9 @@ impl Companion {
                         })
                         .unwrap_or_default();
                     key.sort();
-                    if key != this.device_key {
-                        this.firmware_versions.clear();
+                    if this.observe_device_key(key) {
+                        battery_checked = None;
                         version_checked = None;
-                        this.device_key = key;
-                        this.device_generation = this.device_generation.wrapping_add(1);
-                        this.battery_readings = None;
-                        this.battery_observed = None;
                     }
                     if !this.backup_recovery
                         && let Some(session) = this.session.as_mut()
@@ -369,11 +368,13 @@ impl Companion {
             completed: false,
             stopped: false,
             message: None,
-            battery_readings: None,
-            battery_observed: None,
+            battery_levels: battery::Levels::default(),
+            right_link_connected: false,
+            dongle_link_connected: false,
             battery_error: None,
             device_key: Vec::new(),
             device_generation: 0,
+            battery_generation: 0,
             firmware_versions: Vec::new(),
             home: Home::default(),
             firmware: None,
@@ -382,6 +383,42 @@ impl Companion {
             focus_handle: cx.focus_handle(),
             _poll: poll,
         }
+    }
+
+    fn observe_device_key(&mut self, key: crate::device_status::UsbKey) -> bool {
+        if key == self.device_key {
+            return false;
+        }
+        let replaced = crate::device_status::battery_source(&key)
+            != crate::device_status::battery_source(&self.device_key);
+        if replaced {
+            self.dongle_link_connected = false;
+            self.battery_error = None;
+            self.battery_generation = self.battery_generation.wrapping_add(1);
+        }
+        if crate::device_status::factory_left(&key) {
+            self.right_link_connected = false;
+        }
+        self.firmware_versions.retain(|v| {
+            key.iter().any(|(location, vendor, product, name)| {
+                *location == v.location
+                    && if v.factory {
+                        crate::device_status::factory_left(&vec![(
+                            *location,
+                            *vendor,
+                            *product,
+                            name.clone(),
+                        )])
+                    } else {
+                        *vendor == 0x4c4b
+                            && *product == u64::from(v.role.product())
+                            && name == v.role.name()
+                    }
+            })
+        });
+        self.device_key = key;
+        self.device_generation = self.device_generation.wrapping_add(1);
+        true
     }
 
     fn start_recovery(&mut self, role: RecoveryRole, cx: &mut Context<Self>) {
@@ -1251,21 +1288,12 @@ impl Render for Companion {
             Page::Recovery => canvas.child(self.recovery_screen(cx)),
             Page::Firmware => canvas.child(self.firmware_screen(cx)),
         };
-        let firmware = match self.home {
-            Home::Factory => crate::firmware_version::label(true, &self.firmware_versions),
-            Home::Rmk(_) => crate::firmware_version::label(false, &self.firmware_versions),
-            _ if self.dongle_connected => {
-                crate::firmware_version::label(false, &self.firmware_versions)
-            }
-            _ => "Firmware not detected".to_owned(),
-        };
-        let current = self
-            .battery_observed
-            .is_some_and(|t| t.elapsed() < Duration::from_secs(45));
-        let readings = self.battery_readings.filter(|_| current);
-        let level = |status| match status {
-            BatteryStatus::Available { level, .. } => level,
-            _ => None,
+        let firmware = if crate::device_status::factory_left(&self.device_key) {
+            crate::firmware_version::label(true, &self.firmware_versions)
+        } else if !crate::device_status::battery_source(&self.device_key).is_empty() {
+            crate::firmware_version::label(false, &self.firmware_versions)
+        } else {
+            "Firmware not detected".to_owned()
         };
         let usb = |product| {
             self.device_key
@@ -1279,35 +1307,39 @@ impl Render for Companion {
                     .any(|(l, v, p, _)| *l == location && *v == 0x239a && *p == 0x0029)
             })
         };
-        let left_usb =
-            usb(0x4643) && matches!(self.home, Home::Rmk(_)) || self.home == Home::Factory;
+        let left_usb = crate::device_status::left_usb(&self.device_key);
         let connection = if left_usb {
             crate::status_strip::Connection::Usb
         } else if self.bluetooth_connected {
             crate::status_strip::Connection::Bluetooth
-        } else if self.dongle_connected && readings.is_some() {
+        } else if self.dongle_connected && self.dongle_link_connected {
             crate::status_strip::Connection::Dongle
         } else {
             crate::status_strip::Connection::Disconnected
         };
+        let left_connected = connection != crate::status_strip::Connection::Disconnected;
+        let left_usb_connected = left_usb || recovering(RecoveryRole::Left);
+        let right_usb_connected = usb(0x4671)
+            || recovering(RecoveryRole::Right)
+            || self
+                .device_key
+                .iter()
+                .any(|(_, v, p, _)| *v == 0x239a && *p == 0x80d8);
+        let levels = self.battery_levels.visible(
+            left_connected || left_usb_connected,
+            right_usb_connected || left_connected && self.right_link_connected,
+        );
         let status = crate::status_strip::render(
             firmware,
             connection,
             crate::status_strip::Peripheral {
-                level: readings.and_then(|r| level(r.left)),
-                usb_connected: left_usb || recovering(RecoveryRole::Left),
+                level: levels.left,
+                usb_connected: left_usb_connected,
                 recovery: recovering(RecoveryRole::Left),
             },
             crate::status_strip::Peripheral {
-                level: readings
-                    .filter(|r| r.right_connected)
-                    .and_then(|r| level(r.right)),
-                usb_connected: usb(0x4671)
-                    || recovering(RecoveryRole::Right)
-                    || self
-                        .device_key
-                        .iter()
-                        .any(|(_, v, p, _)| *v == 0x239a && *p == 0x80d8),
+                level: levels.right,
+                usb_connected: right_usb_connected,
                 recovery: recovering(RecoveryRole::Right),
             },
             self.dongle_connected,
