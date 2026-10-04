@@ -249,7 +249,12 @@ async fn main(spawner: Spawner) {
             embassy_nrf::gpio::Input::new(p.P0_15, embassy_nrf::gpio::Pull::Up),
             embassy_nrf::gpio::Input::new(p.P0_17, embassy_nrf::gpio::Pull::Up),
         );
-        // Factory conversion uses 130/100; capacity remains a voltage estimate.
+        // Provisional left calibration from the owner's 4.17 V observation;
+        // this is an effective scale, not a measured resistor ratio or capacity.
+        #[cfg(feature = "left")]
+        let mut battery = BatteryProcessor::new(100, 150);
+        // Right remains on the published factory scale pending its own calibration.
+        #[cfg(feature = "right")]
         let mut battery = BatteryProcessor::new(100, 130);
         let mut twim_buffer = [0u8; 8];
         let bus = twim::Twim::new(

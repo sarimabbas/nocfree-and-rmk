@@ -37,6 +37,29 @@ establish the correct divider ratio or present cell voltage. Without a current
 independent voltage measurement, scaling error and real cell/charger behavior
 remain indistinguishable; no percentage calibration was applied.
 
+## Provisional owner calibration
+
+The owner approved using the saved 4.17 V observation without another connector
+measurement. LEFT now supplies `BatteryProcessor::new(100, 150)` to RMK; RIGHT
+retains `new(100, 130)`. With raw counts 3188–3192, the left's corrected nominal
+voltage is 4.203–4.208 V and RMK's existing percentage calculation yields about
+100%. These are predictions until the installed image is queried.
+
+The downloaded v2.4.5 factory release also normalizes its intermediate voltage
+to a 4.2 V full reference; at its default reference this corresponds to an
+effective scale near 1.517. After that finding and the owner's 1.5 suggestion,
+the provisional scale was rounded to 1.5 rather than retaining the prepared
+1.49 image. The 1.49 candidate was never installed. See
+[battery-factory-forensics.md](battery-factory-forensics.md).
+
+This is an owner-specific, one-point effective correction. The missing
+simultaneous raw timestamp, divider resistance, potential offset, discharge
+curve, and calibration at lower cell voltage remain unverified. It must not be
+advertised as a universal measured NocFree divider ratio. Charging stays Unknown;
+the ADC configuration, sample timing, radio behavior and storage schema are
+unchanged. The raw `NCAD` getter remains a count/register diagnostic and does not
+encode this board-specific voltage multiplier.
+
 Audited 2026-10-02 local time against installed RMK fork `b41bd7caa7de67a47f6e7380519b730630f16152` and Embassy nRF fork `1b5fc397aa65026925d9641d88073a7e91993647`. Existing firmware already measures both batteries; a firmware update is unnecessary to expose their current status in Companion.
 
 ## Live observation
