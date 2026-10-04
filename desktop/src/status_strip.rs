@@ -129,6 +129,12 @@ pub fn render(
         Connection::Dongle => (IconName::SatelliteDish, green, "Connected through dongle"),
         Connection::Disconnected => (IconName::Unplug, plain, "Not connected"),
     };
+    let (icon, color) = match left.mode {
+        Some(crate::device_status::Mode::Wired) => (IconName::Plug, plain),
+        Some(crate::device_status::Mode::Bluetooth) => (IconName::Bluetooth, blue),
+        Some(crate::device_status::Mode::Dongle) => (IconName::SatelliteDish, green),
+        None => (icon, color),
+    };
     let left_segment = segment(
         "left-status",
         "Left",
