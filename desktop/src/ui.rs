@@ -37,7 +37,7 @@ use gpui::{
     Task, Window, div, img, prelude::FluentBuilder, px,
 };
 use gpui_kit::component::{
-    ActiveTheme, Disableable, Sizable, Theme,
+    ActiveTheme, Disableable, Icon, Sizable, Theme,
     button::{Button, ButtonVariants},
     checkbox::Checkbox,
     sidebar::{Sidebar, SidebarGroup, SidebarMenuItem},
@@ -1226,7 +1226,19 @@ impl Companion {
             self.backup_view()
                 .map_or_else(|| "Keep USB connected.".into(), |v| v.instruction)
         };
-        let mut screen = recovery_guide(self.backup_component(), title, instruction, None, cx);
+        let mut screen = recovery_guide_status(
+            self.backup_component(),
+            title,
+            instruction,
+            None,
+            complete
+                || self
+                    .session
+                    .as_ref()
+                    .and_then(Journey::completion_remaining)
+                    .is_some(),
+            cx,
+        );
         let next = if complete {
             let rendered_ticket = self.peripherals.as_ref().map(|batch| batch.ticket());
             Some(
@@ -1462,11 +1474,12 @@ impl Companion {
                 None,
             ),
             RecoveryState::Ready(role) => (
-                recovery_guide(
+                recovery_guide_status(
                     Some(role),
                     "Recovery drive is ready",
                     "The recovery drive is open. Your firmware hasn’t been changed.",
                     None,
+                    true,
                     cx,
                 ),
                 Some({
@@ -1693,7 +1706,7 @@ impl Companion {
             InstallStage::Setup(mode) | InstallStage::Typing(mode) => {
                 let typing = matches!(stage, InstallStage::Typing(_));
                 let ticket = self.install.as_ref().expect("active install").ticket();
-                let mut body = recovery_guide(
+                let mut body = recovery_guide_status(
                     None,
                     mode.label(),
                     self.install
@@ -1702,6 +1715,7 @@ impl Companion {
                         .target()
                         .instruction(mode),
                     None,
+                    typing || self.install.as_ref().is_some_and(InstallMachine::can_next),
                     cx,
                 );
                 if mode == crate::device_status::Mode::Bluetooth && !typing {
@@ -1748,7 +1762,7 @@ impl Companion {
                     if input.read(cx).value().as_ref() != expected {
                         input.update(cx, |state, cx| state.set_value(expected, window, cx));
                     }
-                    body = body.child(div().text_center().text_color(cx.theme().muted_foreground).child("Type qwert on the left, a space, hold left Shift for right HJKL, release Shift, then a space and right h."))
+                    body = body.child(instruction_line("Type qwert on the left, a space, hold left Shift for right HJKL, release Shift, then a space and right h.", self.install.as_ref().is_some_and(InstallMachine::can_next), cx))
                         .child(Input::new(input));
                 } else {
                     // A lost route invalidates the old confirmation and its widget together.
@@ -2015,15 +2029,14 @@ impl Companion {
             .gap(px(28.))
             .w_full()
             .child(artwork)
-            .child(
-                div()
-                    .w_full()
-                    .text_center()
-                    .text_size(px(15.))
-                    .line_height(px(23.))
-                    .text_color(cx.theme().muted_foreground)
-                    .child(instruction.to_owned()),
-            );
+            .child(instruction_line(
+                instruction.to_owned(),
+                matches!(
+                    self.pairing.state(),
+                    PairingState::Ready | PairingState::Connected
+                ) || self.pairing.completion_remaining().is_some(),
+                cx,
+            ));
         if let Some(label) = waiting {
             body = body.child(waiting_indicator(label, cx));
         }
@@ -2325,7 +2338,7 @@ impl Companion {
                 actions: None,
             };
         };
-        let mut body = recovery_guide(
+        let mut body = recovery_guide_status(
             Some(view.role),
             view.title.clone(),
             if self.operation.busy() {
@@ -2350,6 +2363,12 @@ impl Companion {
                     })
             },
             None,
+            view.complete
+                || self
+                    .firmware
+                    .as_ref()
+                    .and_then(FirmwareJourney::completion_remaining)
+                    .is_some(),
             cx,
         );
         body = div()
@@ -2940,9 +2959,48 @@ fn role_index(role: RecoveryRole) -> usize {
 // the backup journey. Callers supply instructions from their verified model.
 fn recovery_guide(
     role: Option<RecoveryRole>,
+    title: impl Into<gpui::SharedString>,
+    instruction: impl Into<gpui::SharedString>,
+    controls: Option<gpui::AnyElement>,
+    cx: &App,
+) -> gpui::Div {
+    recovery_guide_status(role, title, instruction, controls, false, cx)
+}
+
+fn instruction_line(
+    instruction: impl Into<gpui::SharedString>,
+    satisfied: bool,
+    cx: &App,
+) -> gpui::Div {
+    div()
+        .flex()
+        .items_center()
+        .justify_center()
+        .gap(px(8.))
+        .w_full()
+        .when(satisfied, |row| {
+            row.child(
+                Icon::new(IconName::Check)
+                    .size(px(18.))
+                    .text_color(gpui::rgb(0x22c55e)),
+            )
+        })
+        .child(
+            div()
+                .text_center()
+                .text_size(px(15.))
+                .line_height(px(23.))
+                .text_color(cx.theme().muted_foreground)
+                .child(instruction.into()),
+        )
+}
+
+fn recovery_guide_status(
+    role: Option<RecoveryRole>,
     _title: impl Into<gpui::SharedString>,
     instruction: impl Into<gpui::SharedString>,
     controls: Option<gpui::AnyElement>,
+    satisfied: bool,
     cx: &App,
 ) -> gpui::Div {
     let picture = match role {
@@ -2984,15 +3042,7 @@ fn recovery_guide(
         .w_full()
         .gap(px(24.))
         .child(picture)
-        .child(
-            div()
-                .w_full()
-                .text_center()
-                .text_size(px(15.))
-                .line_height(px(23.))
-                .text_color(cx.theme().muted_foreground)
-                .child(instruction.into()),
-        )
+        .child(instruction_line(instruction, satisfied, cx))
         .when_some(controls, |guide, controls| guide.child(controls))
 }
 
