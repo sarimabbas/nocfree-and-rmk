@@ -7,7 +7,8 @@ morse_profile_max_num = 1
 macro_max_num = 0
 macro_space_size = 32
 split_peripherals_num = 1
-split_central_sleep_timeout_seconds = 0
+# Battery idle sleep; local USB power overrides this through RMK usb_power_awake.
+split_central_sleep_timeout_seconds = 1800
 ble_profiles_num = 5
 [split]
 connection = "ble"

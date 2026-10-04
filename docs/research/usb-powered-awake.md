@@ -4,7 +4,9 @@ Each half uses its own USB VBUS presence to override RMK sleep. Mode selection,
 USB report routing, and USB suspend do not determine whether a half is powered.
 A USB-powered half remains awake and retries advertising after a timeout. On
 battery, the right follows the latest parent sleep request; unplugging restores
-that request. The left idle timeout remains disabled in `keyboard.toml`.
+that request. The left battery idle timeout is 1,800 seconds in `keyboard.toml`. This uses
+RMK sleep coordination; it does not power off the board or stop the existing
+scanner. USB power on either half overrides that half's sleep independently.
 
 ## Source evidence
 
@@ -36,3 +38,11 @@ Software checkpoint (2026-10-04): RMK `c1480a3026735b01387ed8ff8e40e11d7faf6c1a`
 293 host tests with the policy enabled and 282 with it disabled passed under
 nextest. The board input harness and 78 Python safety tests passed. All three
 roles cross-built and passed their image guards. Hardware acceptance is pending.
+
+Battery idle candidate (2026-10-04): enable the existing RMK manager after
+30 minutes without input, matching the factory manual's keyboard sleep timing
+([manual](https://www.nocfree.com/pages/nocfree-and-manual)). Both halves have
+the reviewed local USB-power override. The right requires no additional update:
+it already follows parent sleep messages. The wake key remains on RMK's normal
+input path; first-key delivery and wake latency still require hardware acceptance
+for each half. No separate five-minute backlight timer is introduced.
