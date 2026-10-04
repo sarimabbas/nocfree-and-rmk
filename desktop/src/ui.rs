@@ -1079,12 +1079,6 @@ impl Render for Companion {
                     cx.notify();
                 }));
         }
-        let page_title = match self.page {
-            Page::Home => "Backup firmware",
-            Page::Backups => "Backup firmware",
-            Page::Recovery => "Start Recovery Mode",
-            Page::Firmware => "RMK firmware",
-        };
         let mut tasks = SidebarGroup::new("Tasks");
         let firmware_action = self.home.action();
         if let Some(label) = firmware_action {
@@ -1284,22 +1278,6 @@ impl Render for Companion {
                         .flex()
                         .flex_col()
                         .overflow_hidden()
-                        .child(
-                            div()
-                                .h(px(64.))
-                                .flex_none()
-                                .px(px(32.))
-                                .flex()
-                                .items_center()
-                                .border_b_1()
-                                .border_color(cx.theme().border)
-                                .child(
-                                    div()
-                                        .text_size(px(15.))
-                                        .font_weight(FontWeight::SEMIBOLD)
-                                        .child(page_title),
-                                ),
-                        )
                         .child(
                             div()
                                 .id("journey-canvas")
