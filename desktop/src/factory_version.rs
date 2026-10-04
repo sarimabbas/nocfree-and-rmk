@@ -10,13 +10,12 @@ use std::time::Duration;
 use tokio::time::{Instant, timeout_at};
 
 fn identity(vendor: u16, product: u16, name: Option<&str>) -> bool {
-    matches!(
-        (vendor, product, name),
-        (0x2886, 0x8029, Some("NocFree & ANSI" | "NocFree _ ANSI"))
-    )
+    name.is_some_and(|name| {
+        crate::device::factory_keyboard_identity(u64::from(vendor), u64::from(product), name)
+    })
 }
 
-/// Only the recorded factory-left identity is supported by this getter.
+/// The factory keyboard product family uses this getter across layout names.
 pub fn matches(device: &DeviceInfo) -> bool {
     identity(
         device.vendor_id(),
@@ -192,7 +191,13 @@ mod tests {
 
     #[test]
     fn getter_targets_factory_left_without_dfu_or_setters() {
-        assert!(identity(0x2886, 0x8029, Some("NocFree & ANSI")));
+        for layout in ["ANSI", "ISO", "JP", "KR", "JIS"] {
+            assert!(identity(
+                0x2886,
+                0x8029,
+                Some(&format!("NocFree & {layout}"))
+            ));
+        }
         for (vendor, product, name) in [
             (0x2886, 0x8029, "NocFree_Dongle"),
             (0x239a, 0x80d8, "NocFree nRF52833 Right"),

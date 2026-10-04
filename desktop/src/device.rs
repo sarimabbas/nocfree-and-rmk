@@ -19,15 +19,28 @@ pub struct Device {
     pub(crate) product: u64,
     pub(crate) name: String,
 }
+/// Factory USB names include the layout, but do not distinguish left from dongle.
+/// Keep the observed VID/PID and product family together; layout is not role evidence.
+pub(crate) fn factory_keyboard_identity(vendor: u64, product: u64, name: &str) -> bool {
+    if (vendor, product) != (0x2886, 0x8029) {
+        return false;
+    }
+    let layout = name
+        .strip_prefix("NocFree & ")
+        .or_else(|| name.strip_prefix("NocFree _ "));
+    layout.is_some_and(|layout| {
+        !layout.is_empty()
+            && layout.len() <= 16
+            && layout.bytes().all(|byte| byte.is_ascii_uppercase())
+    })
+}
+
 impl Device {
     pub(crate) fn bootloader(&self) -> bool {
         self.vendor == 0x239a && self.product == 0x0029
     }
     pub(crate) fn factory_left(&self) -> bool {
-        matches!(
-            (self.vendor, self.product, self.name.as_str()),
-            (0x2886, 0x8029, "NocFree _ ANSI" | "NocFree & ANSI")
-        )
+        factory_keyboard_identity(self.vendor, self.product, &self.name)
     }
     pub(crate) fn rmk_left(&self) -> bool {
         (self.vendor, self.product, self.name.as_str()) == (0x4c4b, 0x4643, "NocFree RMK")
@@ -45,7 +58,6 @@ impl Device {
             return Some(Role::Right);
         }
         match (self.vendor, self.product, self.name.as_str()) {
-            (0x2886, 0x8029, "NocFree _ ANSI" | "NocFree & ANSI") => Some(Role::Left),
             (0x4c4b, 0x4643, "NocFree RMK") => Some(Role::Left),
             (0x4c4b, 0x4651, "NocFree Input Probe Right Mac") => Some(Role::Right),
             (0x4c4b, 0x4671, "NocFree RMK Right") => Some(Role::Right),
@@ -378,6 +390,32 @@ pub(crate) mod tests {
             );
         }
     }
+    #[test]
+    fn factory_layout_is_not_a_role_and_unrelated_devices_are_excluded() {
+        for prefix in ["NocFree & ", "NocFree _ "] {
+            for layout in ["ANSI", "ISO", "JP", "KR", "JIS"] {
+                let device = Device {
+                    location: 1,
+                    vendor: 0x2886,
+                    product: 0x8029,
+                    name: format!("{prefix}{layout}"),
+                };
+                assert!(device.factory_left());
+                assert_eq!(device.role(), None);
+            }
+        }
+        for (vendor, product, name) in [
+            (0x2886, 0x8029, "NocFree & "),
+            (0x2886, 0x8029, "NocFree & ANSI unrelated"),
+            (0x2886, 0x8029, "NocFree & BLE1"),
+            (0x2886, 0x8029, "Unrelated ISO"),
+            (0x2886, 0x8030, "NocFree & ISO"),
+            (0x239a, 0x8029, "NocFree & ISO"),
+        ] {
+            assert!(!factory_keyboard_identity(vendor, product, name));
+        }
+    }
+
     #[test]
     fn full_rmk_left_identity_excludes_receiver_and_near_matches() {
         let left = Device {

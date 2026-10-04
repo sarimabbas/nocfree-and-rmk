@@ -6,6 +6,7 @@ case "${1:-}" in
     echo 'Build the local NocFree RMK Companion macOS app.'
     echo 'Usage: desktop/build-macos.sh [--help | --version]'
     echo 'Requires Rust, macOS and Apple command-line tools. Creates dist/NocFree RMK Companion.app.'
+    echo 'Requires the pinned firmware package in dist/companion-firmware/; validates it before bundling.'
     exit 0 ;;
   -v|--version) echo 'NocFree RMK Companion 0.1.0'; exit 0 ;;
   '') ;;
@@ -16,6 +17,9 @@ esac
 cd "$(dirname "$0")"
 echo 'Building NocFree RMK Companion…'
 cargo build --locked
+firmware='../dist/companion-firmware'
+# A bundle without its pinned package must never look like a successful build.
+target/debug/nocfree-companion --check-firmware "$firmware"
 bundle='../dist/NocFree RMK Companion.app'
 # Preserve the existing generated bundle when adopting its visible product name.
 legacy_bundle='../dist/NocFree Companion.app'
@@ -34,10 +38,10 @@ for size in 16 32 128 256 512; do
   /usr/bin/sips -z "$double" "$double" "$icon_work/icon.png" --out "$icon_work/Companion.iconset/icon_${size}x${size}@2x.png" >/dev/null
 done
 /usr/bin/iconutil -c icns "$icon_work/Companion.iconset" -o "$bundle/Contents/Resources/Companion.icns"
-if [ -f ../dist/companion-firmware/manifest.json ]; then
-    mkdir -p "$bundle/Contents/Resources/Firmware"
-    cp ../dist/companion-firmware/* "$bundle/Contents/Resources/Firmware/"
-fi
+mkdir -p "$bundle/Contents/Resources/Firmware"
+for file in manifest.json left.uf2 left.bin right.uf2 right.bin receiver.uf2 receiver.bin; do
+    cp "$firmware/$file" "$bundle/Contents/Resources/Firmware/$file"
+done
 cp target/debug/nocfree-companion "$bundle/Contents/MacOS/nocfree-companion.new"
 mv "$bundle/Contents/MacOS/nocfree-companion.new" "$bundle/Contents/MacOS/nocfree-companion"
 cat > "$bundle/Contents/Info.plist" <<'PLIST'

@@ -8,6 +8,35 @@ use gpui_kit::{
 actions!(nocfree_companion, [Quit]);
 
 fn main() {
+    let arguments: Vec<_> = std::env::args_os().skip(1).collect();
+    if !arguments.is_empty() {
+        match arguments.as_slice() {
+            [flag, directory] if flag == "--check-firmware" => {
+                match nocfree_companion::release::FirmwareRelease::load_from(std::path::Path::new(
+                    directory,
+                )) {
+                    Ok(release) => println!("Verified firmware package: {}", release.id()),
+                    Err(error) => {
+                        eprintln!("Firmware package: {error}");
+                        std::process::exit(1);
+                    }
+                }
+            }
+            [flag] if flag == "--help" || flag == "-h" => {
+                println!(
+                    "NocFree RMK Companion\nUsage: nocfree-companion [--check-firmware DIRECTORY | --help | --version]"
+                );
+            }
+            [flag] if flag == "--version" || flag == "-v" => {
+                println!("NocFree RMK Companion {}", env!("CARGO_PKG_VERSION"));
+            }
+            _ => {
+                eprintln!("Unknown arguments. Use --help.");
+                std::process::exit(2);
+            }
+        }
+        return;
+    }
     gpui_kit::application()
         .with_assets(gpui_kit::assets::AllAssets)
         .run(|cx: &mut App| {

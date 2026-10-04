@@ -923,7 +923,14 @@ impl Companion {
             };
         }
         let body = match self.navigation.page() {
-            Page::Restore => self.factory_sources_screen(cx),
+            Page::Restore => self.factory_sources_screen(cx).when(scope != Scope::Whole, |body| {
+                body.child(
+                    div()
+                        .text_center()
+                        .text_color(cx.theme().muted_foreground)
+                        .child("Restore the selected parts. Whole-keyboard restoration also checks typing."),
+                )
+            }),
             Page::Backups | Page::Home => {
                 scope_guide(scope, "Save a copy of the selected firmware locally.", cx)
             }
@@ -944,7 +951,7 @@ impl Companion {
                 if scope == Scope::Whole {
                     "Install RMK on your dongle and both halves, then check pairing and typing. Your current firmware will be backed up automatically."
                 } else {
-                    "Install RMK on the selected parts. Their current firmware will be backed up automatically."
+                    "Install RMK on the selected parts and save their current firmware. Whole-keyboard installation also checks pairing and typing."
                 },
                 cx,
             ),
@@ -1624,16 +1631,24 @@ impl Companion {
                     };
                 }
                 if matches!(self.pairing.state(), PairingState::Failed(_)) {
+                    let generation = self.pairing_generation;
                     let mut screen = self.pairing_screen(cx);
-                    screen.actions = Some(
-                        self.footer(
-                            Some(
-                                button("retry-install-pairing", "Next")
-                                    .on_click(cx.listener(|this, _, _, cx| this.start_pairing(cx))),
-                            ),
-                            cx,
+                    screen.actions = Some(self.footer(
+                        Some(
+                            button("retry-install-pairing", "Next").on_click(cx.listener(
+                                move |this, _, _, cx| {
+                                    if this.install_pairing_active()
+                                        && this.pairing_generation == generation
+                                        && matches!(this.pairing.state(), PairingState::Failed(_))
+                                    {
+                                        this.start_pairing(cx);
+                                        cx.notify();
+                                    }
+                                },
+                            )),
                         ),
-                    );
+                        cx,
+                    ));
                     screen
                 } else {
                     self.pairing_screen(cx)
@@ -1741,8 +1756,14 @@ impl Companion {
                 body: recovery_guide(
                     None,
                     "You’re ready",
-                    if self.navigation.scope() != Some(Scope::Whole) {
+                    if self
+                        .navigation
+                        .scope()
+                        .is_some_and(|scope| scope.single().is_some())
+                    {
                         "The selected part’s firmware is verified and it has returned to normal operation."
+                    } else if self.navigation.scope() != Some(Scope::Whole) {
+                        "The selected parts’ firmware is verified and they have returned to normal operation."
                     } else if self.navigation.page() == Page::Restore {
                         "Factory firmware is restored. Wired, Bluetooth and dongle typing checks are complete."
                     } else {
@@ -1771,6 +1792,9 @@ impl Companion {
     }
 
     fn start_pairing(&mut self, cx: &mut Context<Self>) {
+        if self.operation.busy() {
+            return;
+        }
         self.pairing = PairingJourney::new();
         self.pairing_observation = None;
         self.pairing_generation += 1;
@@ -1914,9 +1938,9 @@ impl Companion {
                     .as_ref()
                     .is_some_and(|o| o.dongle.is_some())
                 {
-                    "Both halves and your dongle are connected. No pairing is needed."
+                    "Pairing check passed for both halves and your dongle."
                 } else {
-                    "Both keyboard halves are connected. No pairing is needed."
+                    "Pairing check passed for both keyboard halves."
                 },
                 None,
             ),
@@ -1969,16 +1993,51 @@ impl Companion {
         if let Some(label) = waiting {
             body = body.child(waiting_indicator(label, cx));
         }
+        let generation = self.pairing_generation;
+        let standalone = self.navigation.page() == Page::Pairing;
         let next = match self.pairing.state() {
-            PairingState::Ready => Some(
-                button("begin-dongle-pairing", "Next")
-                    .on_click(cx.listener(|this, _, _, cx| this.begin_pairing(cx))),
+            PairingState::Ready => Some(button("begin-dongle-pairing", "Next").on_click(
+                cx.listener(move |this, _, _, cx| {
+                    if this.pairing_active()
+                        && this.pairing_generation == generation
+                        && *this.pairing.state() == PairingState::Ready
+                    {
+                        this.begin_pairing(cx);
+                    }
+                }),
+            )),
+            PairingState::Failed(_) if standalone => Some(
+                button("retry-pairing", "Next").on_click(cx.listener(move |this, _, _, cx| {
+                    if this.navigation.page() == Page::Pairing
+                        && this.pairing_active()
+                        && this.pairing_generation == generation
+                        && matches!(this.pairing.state(), PairingState::Failed(_))
+                    {
+                        this.start_pairing(cx);
+                        cx.notify();
+                    }
+                })),
+            ),
+            PairingState::Connected if standalone => Some(
+                button("finish-pairing", "Done").on_click(cx.listener(move |this, _, _, cx| {
+                    if this.navigation.page() == Page::Pairing
+                        && this.pairing_active()
+                        && this.pairing_generation == generation
+                        && *this.pairing.state() == PairingState::Connected
+                    {
+                        this.pairing_generation += 1;
+                        this.pairing.cancel();
+                        this.pairing_observation = None;
+                        this.navigation.reset();
+                        cx.notify();
+                    }
+                })),
             ),
             _ => None,
         };
         JourneyScreen {
             body,
-            actions: (!matches!(self.pairing.state(), PairingState::Connected))
+            actions: (standalone || *self.pairing.state() != PairingState::Connected)
                 .then(|| self.footer(next, cx)),
         }
     }

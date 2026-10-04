@@ -4,10 +4,7 @@ use statig::prelude::*;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 fn shared(entry: &(u64, u64, u64, String)) -> bool {
-    matches!(
-        (entry.1, entry.2, entry.3.as_str()),
-        (0x2886, 0x8029, "NocFree & ANSI" | "NocFree _ ANSI")
-    )
+    crate::device::factory_keyboard_identity(entry.1, entry.2, &entry.3)
 }
 
 fn bootloader(entry: &(u64, u64, u64, String)) -> bool {
@@ -239,10 +236,7 @@ pub(crate) fn derive(
     if !fresh {
         return [Presence::Disconnected; 3];
     }
-    let factory_shared = devices.iter().any(|(_, vendor, product, name)| {
-        (*vendor, *product, name.as_str()) == (0x2886, 0x8029, "NocFree & ANSI")
-            || (*vendor, *product, name.as_str()) == (0x2886, 0x8029, "NocFree _ ANSI")
-    });
+    let factory_shared = devices.iter().any(shared);
     let unbound_recovery = devices.iter().any(|(location, vendor, product, _)| {
         (*vendor, *product) == (0x239a, 0x0029)
             && !recovery_locations.contains(&Some(*location))
@@ -360,6 +354,29 @@ mod tests {
                 Presence::Connected
             ]
         );
+    }
+
+    #[test]
+    fn every_factory_layout_requires_the_same_explicit_role_identification() {
+        for layout in ["ANSI", "ISO", "JP", "KR", "JIS"] {
+            let devices = vec![(1, 0x2886, 0x8029, format!("NocFree & {layout}"))];
+            assert_eq!(
+                super::derive(&devices, [None; 3], true, [None; 3]),
+                [
+                    Presence::Unidentified,
+                    Presence::Disconnected,
+                    Presence::Unidentified
+                ]
+            );
+            assert_eq!(
+                super::derive(&devices, [None; 3], true, [Some(1), None, None]),
+                [
+                    Presence::Connected,
+                    Presence::Disconnected,
+                    Presence::Unidentified
+                ]
+            );
+        }
     }
 
     #[test]

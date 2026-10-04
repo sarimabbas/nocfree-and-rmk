@@ -489,7 +489,7 @@ fn superseded(prior: &Path, raw_intent: &[u8], role: Role) -> Result<bool, Strin
     }
     let readback = sibling_folder(root, &proof["readback"])?;
     let actual = device::read_bounded(&readback.join("CURRENT.UF2"), ARCHIVE_LIMIT)?;
-    let image = FactoryRelease::archive_image(role, &actual)?;
+    let image = FactoryRelease::verified_archive_image(role, &actual)?;
     if proof["readback_sha256"].as_str() != Some(hash(&actual).as_str())
         || proof["target_sha256"].as_str() != Some(image.sha256.as_str())
     {
@@ -571,8 +571,8 @@ fn already_factory(role: Role, archive: &[u8], stock_origin: Option<Role>) -> Re
     if actual.is_some_and(|r| r != role) {
         return Err("The recovery drive belongs to another part. Connect the selected part before continuing.".into());
     }
-    // This is only a no-write decision. Observed stock provenance, retained
-    // through correlated recovery, does not make unknown bytes a restore source.
+    // This is only a no-write decision. Capturing an unknown factory original
+    // separately requires the correlated factory session and a complete archive.
     Ok(stock_origin == Some(role) || actual == Some(role))
 }
 // An app restart does not erase uncertainty. A pending journal for this part
@@ -810,16 +810,11 @@ impl FirmwareJourney {
         if role != self.role() {
             return Err("Recovery belongs to a different component.".into());
         }
-        let require_factory_role = session.shared_factory_recovery();
         let stock_origin = session.factory_recovery_role();
         let folder = session.save_backup()?;
         let bytes = device::read_bounded(&folder.join("CURRENT.UF2"), ARCHIVE_LIMIT)?;
         device::inspect_archive(&bytes)?;
         let stock_noop = self.is_factory() && already_factory(role, &bytes, stock_origin)?;
-        if !stock_noop && require_factory_role && FactoryRelease::archive_role(&bytes) != Some(role)
-        {
-            return Err("This stock firmware is not recognized for the selected part. Currently supported sources are the known original firmware and official ANSI 2.4.5.".into());
-        }
         if FactoryRelease::archive_role(&bytes).is_some_and(|actual| actual != role) {
             return Err("The recovery drive contains another part's factory firmware. Connect the selected part before continuing.".into());
         }
@@ -839,7 +834,12 @@ impl FirmwareJourney {
             bytes,
         };
         if !self.is_factory() {
-            FactoryRelease::discover()?.retain_original(role, &baseline.bytes)?;
+            let mut originals = FactoryRelease::discover()?;
+            if stock_origin == Some(role) {
+                originals.capture_original(role, &baseline.bytes)?;
+            } else {
+                originals.retain_original(role, &baseline.bytes)?;
+            }
         }
         let exact_target = self
             .machine

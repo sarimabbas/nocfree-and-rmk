@@ -388,8 +388,9 @@ impl Session {
     /// Proven stock shared-descriptor origin, retained through its correlated
     /// normal-to-recovery transition. An unbound archive or runtime DFU endpoint
     /// cannot manufacture this factory provenance.
-    /// Retained stock provenance permits a read-only no-op for any factory version.
-    /// It does not attest role-specific firmware or grant a write.
+    /// The explicitly isolated part and correlated recovery transition allow
+    /// its complete original to be captured without a layout/version allowlist.
+    /// Provenance alone never authorizes a firmware write.
     pub(crate) fn factory_recovery_role(&self) -> Option<Role> {
         if self.archive_only || self.recovery_binding().is_err() {
             return None;
@@ -400,6 +401,7 @@ impl Session {
             _ => None,
         }
     }
+    #[cfg(test)]
     pub(crate) fn shared_factory_recovery(&self) -> bool {
         self.shared_factory_origin && !self.archive_only && self.recovery_binding().is_ok()
     }
@@ -462,9 +464,20 @@ impl Session {
         let home = std::env::var_os("HOME")
             .ok_or("Could not locate your private application support folder.")?;
         let root = PathBuf::from(home).join("Library/Application Support/NocFree Companion");
-        self.save_with(&root, device::discover, |path| {
+        let folder = self.save_with(&root, device::discover, |path| {
             device::read_bounded(path, 1728 * 512)
-        })
+        })?;
+        if let Some(role) = self.factory_recovery_role() {
+            let archive = device::read_bounded(&folder.join("CURRENT.UF2"), 1728 * 512)?;
+            crate::factory_release::FactoryRelease::record_capture(&folder, role, &archive)?;
+            // The generic backup is already durable. A conflicting immutable
+            // original must not prevent saving it; installation separately
+            // requires a usable original before changing factory firmware.
+            if let Ok(mut originals) = crate::factory_release::FactoryRelease::discover() {
+                let _ = originals.capture_original(role, &archive);
+            }
+        }
+        Ok(folder)
     }
     fn save_with(
         &mut self,
@@ -603,7 +616,7 @@ fn atomic_file(folder: &Path, name: &str, bytes: &[u8]) -> Result<(), String> {
 
 fn normal_matches(device: &device::Device, role: Role) -> bool {
     match role {
-        Role::Left => device.role() == Some(KeyboardRole::Left),
+        Role::Left => device.role() == Some(KeyboardRole::Left) || device.factory_left(),
         Role::Right => device.role() == Some(KeyboardRole::Right),
         Role::Receiver => device.rmk_receiver() || device.factory_left(),
     }

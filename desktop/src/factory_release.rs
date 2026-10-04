@@ -54,6 +54,12 @@ fn validate(role: Role, p: &[u8]) -> Result<(), String> {
     {
         return Err("This is not a recognized complete factory backup for this part. RMK backups cannot restore factory firmware.".into());
     }
+    validate_vectors(p)
+}
+fn validate_vectors(p: &[u8]) -> Result<(), String> {
+    if p.len() != 0x6c000 {
+        return Err("Factory backup has incomplete coverage.".into());
+    }
     let sp = word(p, 0x26000);
     let pc = word(p, 0x26004);
     if !(0x20000000 < sp
@@ -161,10 +167,15 @@ pub struct FactoryImage {
     pub(crate) bytes: Vec<u8>,
     pub(crate) uf2: Vec<u8>,
     pub(crate) sha256: String,
+    captured: bool,
 }
 impl FactoryImage {
     pub(crate) fn checked(&self) -> Result<(), String> {
-        validate(self.role, &self.bytes)?;
+        if self.captured {
+            validate_vectors(&self.bytes)?;
+        } else {
+            validate(self.role, &self.bytes)?;
+        }
         if self.uf2 != encode(&self.bytes, 0x621e937a) || hash(&self.uf2) != self.sha256 {
             return Err("Factory restore image changed.".into());
         }
@@ -172,6 +183,10 @@ impl FactoryImage {
     }
     fn new(role: Role, bytes: Vec<u8>) -> Result<Self, String> {
         validate(role, &bytes)?;
+        Self::from_checked(role, bytes, false)
+    }
+    fn from_checked(role: Role, bytes: Vec<u8>, captured: bool) -> Result<Self, String> {
+        validate_vectors(&bytes)?;
         let uf2 = encode(&bytes, 0x621e937a);
         let sha256 = hash(&uf2);
         Ok(Self {
@@ -179,6 +194,7 @@ impl FactoryImage {
             bytes,
             uf2,
             sha256,
+            captured,
         })
     }
 }
@@ -188,8 +204,51 @@ pub struct FactoryRelease {
     images: Vec<FactoryImage>,
 }
 impl FactoryRelease {
-    pub(crate) fn archive_image(role: Role, archive: &[u8]) -> Result<FactoryImage, String> {
-        FactoryImage::new(role, payload(archive)?)
+    /// Used only when a durable factory-verification journal already binds the
+    /// exact readback and target hashes; this does not authorize an imported image.
+    pub(crate) fn verified_archive_image(
+        role: Role,
+        archive: &[u8],
+    ) -> Result<FactoryImage, String> {
+        FactoryImage::from_checked(role, payload(archive)?, true)
+    }
+    fn capture_record(role: Role, archive: &[u8]) -> Result<Vec<u8>, String> {
+        if Self::archive_role(archive).is_some_and(|actual| actual != role) {
+            return Err("Factory backup belongs to a different part.".into());
+        }
+        validate_vectors(&payload(archive)?)?;
+        serde_json::to_vec_pretty(&serde_json::json!({
+            "schema": 1, "role": name(role), "origin": "correlated-factory-recovery",
+            "archive_sha256": hash(archive)
+        }))
+        .map_err(|_| "Could not encode the factory backup record.".into())
+    }
+    pub(crate) fn record_capture(folder: &Path, role: Role, archive: &[u8]) -> Result<(), String> {
+        save_original(
+            folder,
+            &folder.join("factory-capture.json"),
+            &Self::capture_record(role, archive)?,
+        )
+    }
+    fn recorded_image(role: Role, archive: &[u8], proof: &Path) -> Result<FactoryImage, String> {
+        if !fs::symlink_metadata(proof)
+            .map_err(|_| "Factory backup capture record is unavailable.")?
+            .file_type()
+            .is_file()
+        {
+            return Err("Factory backup record must be a regular file.".into());
+        }
+        let metadata: serde_json::Value =
+            serde_json::from_slice(&device::read_bounded(proof, 4096)?)
+                .map_err(|_| "Factory backup record is unreadable.")?;
+        if metadata["schema"].as_u64() != Some(1)
+            || metadata["role"].as_str() != Some(name(role))
+            || metadata["origin"].as_str() != Some("correlated-factory-recovery")
+            || metadata["archive_sha256"].as_str() != Some(hash(archive).as_str())
+        {
+            return Err("Factory backup no longer matches its capture record.".into());
+        }
+        FactoryImage::from_checked(role, payload(archive)?, true)
     }
     pub(crate) fn archive_role(archive: &[u8]) -> Option<Role> {
         let p = payload(archive).ok()?;
@@ -215,12 +274,51 @@ impl FactoryRelease {
             let path = release.root.join(format!("{}.uf2", name(role)));
             if fs::symlink_metadata(&path).is_ok() {
                 let raw = local_archive(&path)?;
-                release
-                    .images
-                    .push(FactoryImage::new(role, payload(&raw)?)?);
+                release.images.push(release.load_original(role, &raw)?);
             }
         }
         Ok(release)
+    }
+    fn load_original(&self, role: Role, archive: &[u8]) -> Result<FactoryImage, String> {
+        let bytes = payload(archive)?;
+        let proof = self.root.join(format!("{}.json", name(role)));
+        if fs::symlink_metadata(&proof).is_ok() {
+            return Self::recorded_image(role, archive, &proof);
+        }
+        FactoryImage::new(role, bytes)
+    }
+    /// Only a fresh, correlated factory session may attest otherwise unknown
+    /// originals. The record binds role and bytes, not a universal board identity.
+    pub(crate) fn capture_original(&mut self, role: Role, archive: &[u8]) -> Result<(), String> {
+        let bytes = payload(archive)?;
+        validate_vectors(&bytes)?;
+        if Self::archive_role(archive).is_some_and(|actual| actual != role) {
+            return Err("Factory backup belongs to a different part.".into());
+        }
+        private_root(&self.root)?;
+        let path = self.root.join(format!("{}.uf2", name(role)));
+        let proof = self.root.join(format!("{}.json", name(role)));
+        let record = Self::capture_record(role, archive)?;
+        if fs::symlink_metadata(&path).is_ok() {
+            let existing = local_archive(&path)?;
+            // A new correlated session can finish only the exact interrupted capture.
+            if existing == archive && fs::symlink_metadata(&proof).is_err() {
+                save_original(&self.root, &proof, &record)?;
+            }
+            let original = self.load_original(role, &existing)?;
+            if original.bytes[..0x64000] != bytes[..0x64000] {
+                return Err("A different factory original is already saved for this part. Keep both backups before replacing it.".into());
+            }
+            self.images.retain(|image| image.role != role);
+            self.images.push(original);
+            return Ok(());
+        }
+        // A partial capture remains ineligible: unknown archives need both files.
+        save_original(&self.root, &path, archive)?;
+        save_original(&self.root, &proof, &record)?;
+        self.images.retain(|image| image.role != role);
+        self.images.push(self.load_original(role, archive)?);
+        Ok(())
     }
     pub fn missing(&self) -> Vec<Role> {
         [Role::Left, Role::Right, Role::Receiver]
@@ -256,8 +354,19 @@ impl FactoryRelease {
     pub fn import(&mut self, role: Role, path: &Path) -> Result<(), String> {
         let raw = device::read_bounded(path, LIMIT)?;
         if raw.len() == LIMIT {
-            self.retain_original(role, &raw)?;
-            let image = FactoryImage::new(role, payload(&raw)?)?;
+            let image = if let Ok(image) = FactoryImage::new(role, payload(&raw)?) {
+                self.retain_original(role, &raw)?;
+                image
+            } else {
+                Self::recorded_image(
+                    role,
+                    &raw,
+                    &path
+                        .parent()
+                        .ok_or("Factory backup folder is unavailable.")?
+                        .join("factory-capture.json"),
+                )?
+            };
             self.images.retain(|i| i.role != role);
             self.images.push(image);
             return Ok(());
@@ -309,7 +418,7 @@ impl FactoryRelease {
         let path = self.root.join(format!("{}.uf2", name(role)));
         if fs::symlink_metadata(&path).is_ok() {
             let original = local_archive(&path)?;
-            FactoryImage::new(role, payload(&original)?)?;
+            self.load_original(role, &original)?;
             return Ok(true);
         }
         save_original(&self.root, &path, archive)?;
@@ -339,6 +448,88 @@ mod tests {
         assert!(!r.complete());
         assert!(FactoryImage::new(Role::Left, payload(&raw).unwrap()).is_err());
         assert!(crate::firmware_journey::FirmwareJourney::factory(r).is_err());
+    }
+    fn unknown_factory() -> Vec<u8> {
+        let mut bytes = payload(&crate::device::tests::archive()).unwrap();
+        bytes[0x26000..0x26004].copy_from_slice(&0x20020000u32.to_le_bytes());
+        bytes[0x26004..0x26008].copy_from_slice(&0x27101u32.to_le_bytes());
+        encode(&bytes, 0x239a0029)
+    }
+    #[test]
+    fn captured_unknown_original_roundtrips_but_import_does_not_attest_it() {
+        let root = temporary();
+        let raw = unknown_factory();
+        assert!(FactoryRelease::archive_role(&raw).is_none());
+        let source = root.with_extension("uf2");
+        fs::write(&source, &raw).unwrap();
+        let mut release = FactoryRelease::at(root.clone()).unwrap();
+        assert!(release.import(Role::Left, &source).is_err());
+        release.capture_original(Role::Left, &raw).unwrap();
+        let restored = FactoryRelease::at(root.clone()).unwrap();
+        let image = restored.image(Role::Left).unwrap();
+        image.checked().unwrap();
+        assert_eq!(image.bytes, payload(&raw).unwrap());
+        // Role cannot be changed independently of its durable capture record.
+        fs::rename(root.join("left.uf2"), root.join("right.uf2")).unwrap();
+        fs::rename(root.join("left.json"), root.join("right.json")).unwrap();
+        assert!(FactoryRelease::at(root.clone()).is_err());
+        fs::remove_dir_all(root).unwrap();
+        fs::remove_file(source).unwrap();
+    }
+    #[test]
+    fn capture_rejects_corruption_and_different_original_preserves_first() {
+        let root = temporary();
+        let mut release = FactoryRelease::at(root.clone()).unwrap();
+        let raw = unknown_factory();
+        release.capture_original(Role::Right, &raw).unwrap();
+        let mut other = raw.clone();
+        other[32 + 100] ^= 1;
+        assert!(release.capture_original(Role::Right, &other).is_err());
+        assert_eq!(fs::read(root.join("right.uf2")).unwrap(), raw);
+        fs::write(root.join("right.uf2"), other).unwrap();
+        assert!(FactoryRelease::at(root.clone()).is_err());
+        fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn recorded_backup_can_restore_a_later_original_without_replacing_vault() {
+        let root = temporary();
+        let mut release = FactoryRelease::at(root.clone()).unwrap();
+        let first = unknown_factory();
+        release.capture_original(Role::Left, &first).unwrap();
+        let mut later = first.clone();
+        later[100] ^= 1;
+        let backup = root.join("saved-backup");
+        private_root(&backup).unwrap();
+        let path = backup.join("CURRENT.UF2");
+        fs::write(&path, &later).unwrap();
+        FactoryRelease::record_capture(&backup, Role::Left, &later).unwrap();
+        assert!(release.import(Role::Right, &path).is_err());
+        release.import(Role::Left, &path).unwrap();
+        assert_eq!(
+            release.image(Role::Left).unwrap().bytes,
+            payload(&later).unwrap()
+        );
+        assert_eq!(fs::read(root.join("left.uf2")).unwrap(), first);
+        let mut corrupted = later;
+        corrupted[101] ^= 1;
+        fs::write(&path, corrupted).unwrap();
+        assert!(release.import(Role::Left, &path).is_err());
+        fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn interrupted_capture_is_ineligible_until_same_factory_is_recaptured() {
+        let root = temporary();
+        private_root(&root).unwrap();
+        let raw = unknown_factory();
+        save_original(&root, &root.join("left.uf2"), &raw).unwrap();
+        assert!(FactoryRelease::at(root.clone()).is_err());
+        let mut release = FactoryRelease {
+            root: root.clone(),
+            images: vec![],
+        };
+        release.capture_original(Role::Left, &raw).unwrap();
+        assert!(FactoryRelease::at(root.clone()).unwrap().has(Role::Left));
+        fs::remove_dir_all(root).unwrap();
     }
     #[test]
     fn interrupted_temporary_write_does_not_publish_or_replace_original() {

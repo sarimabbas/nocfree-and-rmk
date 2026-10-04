@@ -212,18 +212,22 @@ fn factory_observation(
         return Ok((Some(Procedure::Reconnect), false));
     }
     if !*disconnected {
-        if !snapshot
-            .devices
-            .iter()
-            .any(|d| d.role() == Some(normal_role) || d.bootloader())
-            && snapshot.mounts.is_empty()
+        if !snapshot.devices.iter().any(|d| {
+            d.role() == Some(normal_role)
+                || role != Role::Right && d.factory_left()
+                || d.bootloader()
+        }) && snapshot.mounts.is_empty()
         {
             *disconnected = true;
         }
         let procedure = snapshot
             .devices
             .iter()
-            .any(|d| d.role() == Some(normal_role) || d.bootloader())
+            .any(|d| {
+                d.role() == Some(normal_role)
+                    || role != Role::Right && d.factory_left()
+                    || d.bootloader()
+            })
             .then_some(Procedure::Reconnect);
         return Ok((procedure, false));
     }
