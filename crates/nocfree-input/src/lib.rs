@@ -141,3 +141,33 @@ mod tests {
         assert!(!RIGHT_BITS.contains(&47));
     }
 }
+
+/// Vendor-published active-low position inputs. Both asserted is an invalid/transient state.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SwitchPosition {
+    Wired,
+    Bluetooth,
+    Receiver,
+}
+pub fn switch_position(bluetooth_high: bool, receiver_high: bool) -> Option<SwitchPosition> {
+    match (bluetooth_high, receiver_high) {
+        (true, true) => Some(SwitchPosition::Wired),
+        (false, true) => Some(SwitchPosition::Bluetooth),
+        (true, false) => Some(SwitchPosition::Receiver),
+        (false, false) => None,
+    }
+}
+#[cfg(test)]
+mod switch_tests {
+    use super::*;
+    #[test]
+    fn selector_truth_table_rejects_overlapping_contacts() {
+        assert_eq!(switch_position(true, true), Some(SwitchPosition::Wired));
+        assert_eq!(
+            switch_position(false, true),
+            Some(SwitchPosition::Bluetooth)
+        );
+        assert_eq!(switch_position(true, false), Some(SwitchPosition::Receiver));
+        assert_eq!(switch_position(false, false), None);
+    }
+}

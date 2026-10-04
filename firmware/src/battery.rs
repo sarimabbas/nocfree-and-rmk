@@ -32,6 +32,20 @@ impl Runnable for Battery<'_> {
             let mut sample = [0];
             self.adc.sample(&mut sample).await;
             drop(divider);
+            #[cfg(feature = "left")]
+            {
+                let adc = embassy_nrf::pac::SAADC;
+                rmk::input_device::battery::record_adc_diagnostic(
+                    sample[0],
+                    [
+                        adc.resolution().read().0,
+                        adc.oversample().read().0,
+                        adc.ch(0).config().read().0,
+                        adc.ch(0).pselp().read().0,
+                    ],
+                    crate::mode_switch::levels(),
+                );
+            }
             #[cfg(feature = "battery-adc-diagnostic")]
             {
                 sequence = sequence.wrapping_add(1);

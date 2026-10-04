@@ -1950,7 +1950,7 @@ checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 [[package]]
 name = "rmk"
 version = "0.9.0"
-source = "git+https://github.com/sarimabbas/rmk-nocfree?rev=c8e06c6edbda227114ab7deeb9234d2ecca671c6#c8e06c6edbda227114ab7deeb9234d2ecca671c6"
+source = "git+https://github.com/sarimabbas/rmk-nocfree?rev=acd4689a1284f27decd4d0755a1e316fddcbb8ff#acd4689a1284f27decd4d0755a1e316fddcbb8ff"
 dependencies = [
  "bt-hci",
  "byteorder",
@@ -1986,7 +1986,7 @@ dependencies = [
 [[package]]
 name = "rmk-config"
 version = "0.8.0"
-source = "git+https://github.com/sarimabbas/rmk-nocfree?rev=c8e06c6edbda227114ab7deeb9234d2ecca671c6#c8e06c6edbda227114ab7deeb9234d2ecca671c6"
+source = "git+https://github.com/sarimabbas/rmk-nocfree?rev=acd4689a1284f27decd4d0755a1e316fddcbb8ff#acd4689a1284f27decd4d0755a1e316fddcbb8ff"
 dependencies = [
  "config",
  "miniz_oxide",
@@ -2003,7 +2003,7 @@ dependencies = [
 [[package]]
 name = "rmk-macro"
 version = "0.8.0"
-source = "git+https://github.com/sarimabbas/rmk-nocfree?rev=c8e06c6edbda227114ab7deeb9234d2ecca671c6#c8e06c6edbda227114ab7deeb9234d2ecca671c6"
+source = "git+https://github.com/sarimabbas/rmk-nocfree?rev=acd4689a1284f27decd4d0755a1e316fddcbb8ff#acd4689a1284f27decd4d0755a1e316fddcbb8ff"
 dependencies = [
  "cargo_toml",
  "darling 0.24.1",
@@ -2019,7 +2019,7 @@ dependencies = [
 [[package]]
 name = "rmk-types"
 version = "0.4.0"
-source = "git+https://github.com/sarimabbas/rmk-nocfree?rev=c8e06c6edbda227114ab7deeb9234d2ecca671c6#c8e06c6edbda227114ab7deeb9234d2ecca671c6"
+source = "git+https://github.com/sarimabbas/rmk-nocfree?rev=acd4689a1284f27decd4d0755a1e316fddcbb8ff#acd4689a1284f27decd4d0755a1e316fddcbb8ff"
 dependencies = [
  "bitfield-struct",
  "cobs",

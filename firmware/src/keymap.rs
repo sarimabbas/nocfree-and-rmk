@@ -111,8 +111,6 @@ pub fn default_keymap() -> [[[KeyAction; 84]; 1]; 2] {
     function[11] = KeyAction::Single(Action::User(3));
     function[12] = KeyAction::Single(Action::User(4));
     function[48] = KeyAction::Single(Action::User(7)); // Clear current BLE bond (Fn+0).
-    function[31] = KeyAction::Single(Action::User(8)); // Toggle USB/BLE preference (Fn+B).
-    function[54] = KeyAction::Single(Action::User(10)); // Select/pair RMK receiver (Fn+U).
     #[cfg(feature = "mac-keymap")]
     let base = {
         let mut base = base;

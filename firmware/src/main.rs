@@ -47,6 +47,8 @@ compile_error!("Backlight output requires an explicit board polarity");
 mod battery;
 #[cfg(feature = "left")]
 mod keymap;
+#[cfg(feature = "left")]
+mod mode_switch;
 #[cfg(not(feature = "receiver"))]
 mod scanner;
 #[cfg(feature = "left")]
@@ -242,6 +244,11 @@ async fn main(spawner: Spawner) {
         );
         adc.calibrate().await;
         let mut battery_adc = battery::Battery::new(adc, battery_enable);
+        #[cfg(feature = "left")]
+        let mut mode_switch = mode_switch::ModeSwitch::new(
+            embassy_nrf::gpio::Input::new(p.P0_15, embassy_nrf::gpio::Pull::Up),
+            embassy_nrf::gpio::Input::new(p.P0_17, embassy_nrf::gpio::Pull::Up),
+        );
         // Factory conversion uses 130/100; capacity remains a voltage estimate.
         let mut battery = BatteryProcessor::new(100, 130);
         let mut twim_buffer = [0u8; 8];
@@ -328,6 +335,7 @@ async fn main(spawner: Spawner) {
             let mut ble = ble.with_host_service(&host_service);
             #[cfg(feature = "startup-watchdog")]
             let keyboard_tasks = run_all!(
+                mode_switch,
                 matrix,
                 battery_adc,
                 battery,
@@ -338,8 +346,16 @@ async fn main(spawner: Spawner) {
                 watchdog_runner
             );
             #[cfg(not(feature = "startup-watchdog"))]
-            let keyboard_tasks =
-                run_all!(matrix, battery_adc, battery, keyboard, storage, usb, ble);
+            let keyboard_tasks = run_all!(
+                mode_switch,
+                matrix,
+                battery_adc,
+                battery,
+                keyboard,
+                storage,
+                usb,
+                ble
+            );
             #[cfg(feature = "backlight")]
             rmk::futures::future::join(keyboard_tasks, rmk::backlight::run(backlight, true)).await;
             #[cfg(not(feature = "backlight"))]
