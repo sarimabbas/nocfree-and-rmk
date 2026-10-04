@@ -44,7 +44,7 @@ use gpui_kit::component::{
     stepper::{Stepper, StepperItem},
 };
 
-use crate::navigation::{Navigation, Page};
+use crate::navigation::{Navigation, Page, Start};
 
 struct JourneyScreen {
     body: gpui::Div,
@@ -165,6 +165,7 @@ impl Companion {
                                         })
                                     });
                                 if this.navigation.page() == Page::Firmware
+                                    && !this.navigation.setup()
                                     && !this.operation.busy()
                                     && let Some(journey) = this.firmware.as_mut()
                                 {
@@ -239,7 +240,8 @@ impl Companion {
                 let version_idle = this.update(cx, |this, _| {
                     (!this.backup_state.active())
                         && !this.operation.busy()
-                        && !matches!(this.navigation.page(), Page::Firmware | Page::Pairing)
+                        && (this.navigation.setup()
+                            || !matches!(this.navigation.page(), Page::Firmware | Page::Pairing))
                         && !matches!(
                             &this.rescue.state(),
                             RecoveryState::Identify(_) | RecoveryState::Guiding(_, _)
@@ -260,7 +262,11 @@ impl Companion {
                             && this.device_key == key
                             && (!this.backup_state.active())
                             && !this.operation.busy()
-                            && !matches!(this.navigation.page(), Page::Firmware | Page::Pairing)
+                            && (this.navigation.setup()
+                                || !matches!(
+                                    this.navigation.page(),
+                                    Page::Firmware | Page::Pairing
+                                ))
                             && !matches!(
                                 &this.rescue.state(),
                                 RecoveryState::Identify(_) | RecoveryState::Guiding(_, _)
@@ -280,7 +286,8 @@ impl Companion {
                 }
                 let battery_idle = this.update(cx, |this, _| {
                     (!this.backup_state.active())
-                        && !matches!(this.navigation.page(), Page::Firmware | Page::Pairing)
+                        && (this.navigation.setup()
+                            || !matches!(this.navigation.page(), Page::Firmware | Page::Pairing))
                         && crate::device_status::battery_available(
                             &this.device_key,
                             &this.rescue.state(),
@@ -457,6 +464,51 @@ impl Companion {
         true
     }
 
+    fn start_selected_journey(&mut self, cx: &mut Context<Self>) {
+        if self.operation.busy() {
+            return;
+        }
+        match self.navigation.next() {
+            Some(Start::Backup(role)) => self.start_copies(role, cx),
+            Some(Start::Recovery(role)) => self.start_recovery(role, cx),
+            Some(Start::Pairing) => self.start_pairing(cx),
+            Some(Start::Firmware) => self.start_firmware(cx),
+            None => return,
+        }
+        cx.notify();
+    }
+    fn setup_screen(&self, cx: &mut Context<Self>) -> JourneyScreen {
+        let body = match self.navigation.page() {
+            Page::Backups | Page::Home => {
+                self.peripheral_picker("Choose the part you want to back up", cx)
+            }
+            Page::Recovery => {
+                self.peripheral_picker("Choose the part you want to put into recovery mode", cx)
+            }
+            Page::Pairing => recovery_guide(
+                None,
+                "Check pairing",
+                "Check the connection between your keyboard halves and dongle.",
+                None,
+                cx,
+            ),
+            Page::Firmware => recovery_guide(
+                None,
+                "RMK firmware",
+                "Install RMK firmware. We’ll save a backup first.",
+                None,
+                cx,
+            ),
+        };
+        let next = button("start-journey", "Next")
+            .disabled(!self.navigation.can_start())
+            .on_click(cx.listener(|this, _, _, cx| this.start_selected_journey(cx)));
+        JourneyScreen {
+            body,
+            actions: Some(self.footer(Some(next), cx)),
+        }
+    }
+
     fn start_recovery(&mut self, role: RecoveryRole, cx: &mut Context<Self>) {
         if let Some(attempt) = self.rescue.start(role) {
             self.run_recovery(role, attempt, false, cx);
@@ -552,7 +604,8 @@ impl Companion {
             .child(waiting_indicator(label, cx))
     }
     fn footer(&self, next: Option<Button>, cx: &mut Context<Self>) -> gpui::Div {
-        let cancellable = !self.operation.busy()
+        let cancellable = !self.navigation.setup()
+            && !self.operation.busy()
             && match self.navigation.page() {
                 Page::Firmware => self.firmware_view().as_ref().is_none_or(|v| !v.complete),
                 Page::Backups => self.backup_state.active(),
@@ -583,6 +636,7 @@ impl Companion {
                         .on_click(cx.listener(|this, _, _, cx| {
                             if this.navigation.page() == Page::Recovery {
                                 this.cancel_recovery();
+                                this.navigation.reset();
                                 cx.notify();
                             } else {
                                 this.navigate(Page::Home, cx);
@@ -684,6 +738,9 @@ impl Companion {
         })
         .secondary()
         .outline()
+        .when(self.navigation.selected() == Some(role), |card| {
+            card.primary()
+        })
         .flex_1()
         .h(px(170.))
         .accessibility_label(label)
@@ -697,11 +754,8 @@ impl Companion {
                 .child(div().font_weight(FontWeight::MEDIUM).child(label)),
         )
         .on_click(cx.listener(move |this, _, _, cx| {
-            if matches!(this.navigation.page(), Page::Backups | Page::Home) {
-                this.start_copies(role, cx);
-            } else {
-                this.start_recovery(role, cx);
-            }
+            this.navigation.select(role);
+            cx.notify();
         }))
     }
 
@@ -808,6 +862,7 @@ impl Companion {
             loop {
                 let allowed = this.update(cx, |this, _| {
                     this.navigation.page() == Page::Pairing
+                        && !this.navigation.setup()
                         && this.pairing_generation == generation
                         && !matches!(
                             this.pairing.state(),
@@ -829,6 +884,7 @@ impl Companion {
                         .await;
                     let _ = this.update(cx, |this, cx| {
                         if this.navigation.page() != Page::Pairing
+                            || this.navigation.setup()
                             || this.pairing_generation != generation
                             || this.operation.busy()
                         {
@@ -989,7 +1045,6 @@ impl Companion {
         if self.operation.busy() {
             return;
         }
-        self.navigate(Page::Firmware, cx);
         self.cancel_recovery();
         self.operation.clear_error();
         self.firmware = None;
@@ -1069,6 +1124,7 @@ impl Companion {
 
     fn advance_firmware(&mut self, cx: &mut Context<Self>) {
         if self.navigation.page() != Page::Firmware
+            || self.navigation.setup()
             || self.operation.busy()
             || self.operation.error().is_some()
             || self.rescue_cancel.is_some()
@@ -1233,7 +1289,6 @@ impl Companion {
             journey.resume();
 
             self.operation.clear_error();
-            self.navigation.navigate(Page::Backups);
             self.advance(cx);
             cx.notify();
             return;
@@ -1243,7 +1298,6 @@ impl Companion {
 
         self.session = Some(session);
 
-        self.navigation.navigate(Page::Backups);
         self.advance(cx);
         cx.notify();
     }
@@ -1365,7 +1419,7 @@ impl Focusable for Companion {
 
 impl Companion {
     fn navigate(&mut self, page: Page, cx: &mut Context<Self>) {
-        if self.operation.busy() {
+        if self.operation.busy() || self.navigation.page() == page {
             return;
         }
         let leaving_backup = self.backup_state.active() && page != Page::Backups;
@@ -1394,9 +1448,6 @@ impl Companion {
         }
         self.operation.clear_error();
         self.navigation.navigate(page);
-        if page == Page::Pairing {
-            self.start_pairing(cx);
-        }
         cx.notify();
     }
 
@@ -1440,7 +1491,7 @@ impl Render for Companion {
                     .icon(IconName::Download)
                     .active(self.navigation.page() == Page::Firmware)
                     .disable(self.operation.busy())
-                    .on_click(cx.listener(|this, _, _, cx| this.start_firmware(cx))),
+                    .on_click(cx.listener(|this, _, _, cx| this.navigate(Page::Firmware, cx))),
             );
         }
         if self.home.can_restore() {
@@ -1484,16 +1535,23 @@ impl Render for Companion {
             );
 
         let title = if self.navigation.page() == Page::Backups
+            && !self.navigation.setup()
             && self.backup_state.state() == BackupState::Returning
         {
             self.backup_view()
                 .map_or_else(|| "Start your keyboard".into(), |view| view.title)
         } else {
             (match self.navigation.page() {
-                Page::Backups if self.backup_state.state() == BackupState::Saving => {
+                Page::Backups
+                    if !self.navigation.setup()
+                        && self.backup_state.state() == BackupState::Saving =>
+                {
                     "Saving your firmware copy"
                 }
-                Page::Backups if self.backup_state.state() == BackupState::Complete => {
+                Page::Backups
+                    if !self.navigation.setup()
+                        && self.backup_state.state() == BackupState::Complete =>
+                {
                     "Your firmware copy is saved"
                 }
                 Page::Backups | Page::Home => "Backup firmware",
@@ -1510,7 +1568,7 @@ impl Render for Companion {
                 .child(title),
         );
         match self.navigation.page() {
-            Page::Backups if self.backup_state.shown() => {
+            Page::Backups if !self.navigation.setup() && self.backup_state.shown() => {
                 let progress = if self.backup_state.state() == BackupState::Saving {
                     Some(flow_presentation::saving_backup())
                 } else {
@@ -1520,7 +1578,7 @@ impl Render for Companion {
                     heading = heading.child(flow_indicator(progress, "backup-steps", cx));
                 }
             }
-            Page::Firmware => {
+            Page::Firmware if !self.navigation.setup() => {
                 heading = heading.child(flow_indicator(
                     FlowProgress {
                         labels: ["USB dongle", "Right half", "Left half"],
@@ -1535,16 +1593,20 @@ impl Render for Companion {
             }
             _ => {}
         }
-        let screen = match self.navigation.page() {
-            Page::Backups if self.backup_state.recovery() => self.recovery_screen(cx),
-            Page::Backups if self.backup_state.shown() => self.backup_screen(cx),
-            Page::Backups | Page::Home => JourneyScreen {
-                body: self.peripheral_picker("Choose the part you want to back up", cx),
-                actions: None,
-            },
-            Page::Recovery => self.recovery_screen(cx),
-            Page::Pairing => self.pairing_screen(cx),
-            Page::Firmware => self.firmware_screen(cx),
+        let screen = if self.navigation.setup() {
+            self.setup_screen(cx)
+        } else {
+            match self.navigation.page() {
+                Page::Backups if self.backup_state.recovery() => self.recovery_screen(cx),
+                Page::Backups if self.backup_state.shown() => self.backup_screen(cx),
+                Page::Backups | Page::Home => JourneyScreen {
+                    body: self.peripheral_picker("Choose the part you want to back up", cx),
+                    actions: None,
+                },
+                Page::Recovery => self.recovery_screen(cx),
+                Page::Pairing => self.pairing_screen(cx),
+                Page::Firmware => self.firmware_screen(cx),
+            }
         };
         let canvas = div()
             .flex()

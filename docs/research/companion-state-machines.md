@@ -77,6 +77,24 @@ promise freedom from every possible stateful failure. Faulty observations or a m
 event still need tests and clear error handling. Factory restoration remains unavailable,
 and the private legacy `trial.rs` controller is outside the shipped UI.
 
+## Journey entry audit
+
+Every visible journey enters Navigation's Setup state. Sidebar navigation produces
+no journey-start effect. Backup and recovery cards update a draft selection only;
+Next consumes that selection once. Pairing and installation likewise need Next
+before their worker or release preparation can start. Duplicate Next in Active is
+ignored. Setup has no Cancel button or workflow progress stepper.
+
+Normal status discovery, battery and version polling remain independent of journey
+entry. Firmware observation/automatic advancement and pairing worker observations
+require Active, so opening their setup pages cannot adopt old results or start work.
+Leaving a cancellable journey invalidates its workers. Cancel/finish reset setup;
+clicking the already selected sidebar page is a no-op. A paused backup retains its
+archive evidence, but requires a fresh selection and Next before resuming.
+
+Factory restoration remains disabled and cannot start. This audit covers all shipped
+Companion navigation paths, including install/update, backup, recovery and pairing.
+
 ## Validation boundary
 
 Host regression tests cover mounted-drive adoption, ambiguous/mismatched evidence,
