@@ -35,6 +35,12 @@ Correction: pinned/upstream RMK lists `watchdog` among its default features. Our
 
 The deliberate-hang watchdog proof is narrower than integrated acceptance: each part still needs ordinary Companion DETACH, induced crash recovery, normal startup, settings preservation, disconnect/release recovery, simultaneous split input and wake/typing tests. The hook cannot rescue corrupted vectors, corrupted hook code, or a fault before watchdog arming. A task that remains alive and feeds despite another task failing is not automatically detected.
 
+## LEFT hardware acceptance update, 2026-10-03
+
+The normal LEFT Vial/runtime-recovery/watchdog build at checkpoint `558164f` was installed once under its reviewed application image guard. The rebuilt Companion's Recovery page opened the factory UF2 drive from normal runtime without a key chord or power cycle. Readback matched the installed application, erased padding and preserved application tail exactly. The changed storage schema reset settings as expected; storage preservation is not claimed for this upgrade. The factory bootloader was unchanged.
+
+After reconnecting USB in middle WIRED without holding keys, LEFT returned to normal RMK instead of entering recovery. Battery querying also resumed. Typing and split input acceptance for this integrated build remain pending. The earlier deliberately hung LEFT diagnostic proved the watchdog escape separately; it does not establish induced-hang acceptance for this integrated image. RIGHT and receiver runtime recovery and watchdog hardware acceptance remain pending. The role/feature inventory above is the historical research snapshot, superseded by the current implementation.
+
 ## Primary sources
 
 - [RMK Rynk documentation](https://rmk.rs/main/docs/features/rynk)
