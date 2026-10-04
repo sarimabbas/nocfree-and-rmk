@@ -855,16 +855,16 @@ impl Companion {
                 let done = matches!(identification, Identification::Complete(_));
                 let message = match identification {
                     Identification::Disconnect(_) => {
-                        "Unplug parts marked “Identify this part”. Leave recognized parts connected."
+                        identification_disconnect_instruction(role, self.scope_presence())
                     }
                     Identification::Connect(RecoveryRole::Left) => {
-                        "Connect only the LEFT half by USB in middle WIRED. Leave already identified parts connected."
+                        "Reconnect the left half’s USB cable and put its switch in middle WIRED. Leave other USB cables as they are.".into()
                     }
                     Identification::Connect(RecoveryRole::Receiver) => {
-                        "Connect only the USB dongle. Leave already identified parts connected."
+                        "Reconnect the dongle. Leave other USB cables as they are.".into()
                     }
-                    Identification::Complete(_) => "USB connection identified.",
-                    _ => "Connect the selected part by USB.",
+                    Identification::Complete(_) => "USB connection identified.".into(),
+                    _ => "Connect the selected part by USB.".into(),
                 };
                 return JourneyScreen {
                     body: recovery_guide_status(
@@ -3113,6 +3113,28 @@ fn recovery_guide(
     cx: &App,
 ) -> gpui::Div {
     recovery_guide_status(role, title, instruction, controls, false, cx)
+}
+
+fn identification_disconnect_instruction(
+    role: RecoveryRole,
+    presence: [crate::scope_presence::Presence; 3],
+) -> String {
+    let parts: Vec<_> = ["the left half", "the right half", "the dongle"]
+        .into_iter()
+        .enumerate()
+        .filter(|(index, _)| {
+            *index == role_index(role)
+                || presence[*index] == crate::scope_presence::Presence::Unidentified
+        })
+        .map(|(_, name)| name)
+        .collect();
+    let names = match parts.as_slice() {
+        [one] => (*one).to_owned(),
+        [one, two] => format!("{one} and {two}"),
+        [one, two, three] => format!("{one}, {two}, and {three}"),
+        _ => unreachable!("Identification always includes its target"),
+    };
+    format!("Unplug USB from {names}. Leave other USB cables connected.")
 }
 
 // Key annotations belong to presentation; journey instructions stay plain text.
