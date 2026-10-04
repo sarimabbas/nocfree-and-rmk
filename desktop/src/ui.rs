@@ -855,7 +855,7 @@ impl Companion {
                 let done = matches!(identification, Identification::Complete(_));
                 let message = match identification {
                     Identification::Disconnect(_) => {
-                        "Unplug the unidentified left half and dongle. Leave any parts you already identified connected."
+                        "Unplug parts marked “Identify this part”. Leave recognized parts connected."
                     }
                     Identification::Connect(RecoveryRole::Left) => {
                         "Connect only the LEFT half by USB in middle WIRED. Leave already identified parts connected."
