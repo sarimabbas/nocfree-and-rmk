@@ -1521,6 +1521,7 @@ dependencies = [
  "log",
  "nocfree-input",
  "nrf-mpsl",
+ "nrf-pac",
  "nrf-sdc",
  "panic-probe",
  "rmk",

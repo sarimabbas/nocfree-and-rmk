@@ -22,6 +22,7 @@ fn main() {
     let mut memory = std::fs::read_to_string(layout).unwrap();
     if std::env::var_os("CARGO_FEATURE_APPLICATION_RECOVERY_SHIM").is_some()
         || std::env::var_os("CARGO_FEATURE_USB_RESCUE_STARTUP").is_some()
+        || std::env::var_os("CARGO_FEATURE_WATCHDOG_RESCUE_PROBE").is_some()
     {
         assert!(
             std::env::var_os("CARGO_FEATURE_USB_RECOVERY_FIRST").is_none(),
@@ -35,7 +36,8 @@ fn main() {
         );
         memory.push_str(&std::fs::read_to_string("bootloader-recovery.x").unwrap());
     }
-    if std::env::var_os("CARGO_FEATURE_MIGRATION_RUNTIME_PROBE").is_some()
+    if std::env::var_os("CARGO_FEATURE_WATCHDOG_RESCUE_PROBE").is_some()
+        || std::env::var_os("CARGO_FEATURE_MIGRATION_RUNTIME_PROBE").is_some()
         || std::env::var_os("CARGO_FEATURE_MIGRATION_HAL_PROBE").is_some()
         || std::env::var_os("CARGO_FEATURE_MIGRATION_HAL_SERIAL_PROBE").is_some()
         || std::env::var_os("CARGO_FEATURE_MIGRATION_USB_BUILD_SERIAL_PROBE").is_some()
@@ -65,6 +67,7 @@ fn main() {
     println!("cargo:rerun-if-env-changed=CARGO_FEATURE_MIGRATION_USB_CONFIGURED_SERIAL_PROBE");
     println!("cargo:rerun-if-env-changed=CARGO_FEATURE_MIGRATION_USB_RESET_SERIAL_PROBE");
     println!("cargo:rerun-if-env-changed=CARGO_FEATURE_MIGRATION_USB_ADDRESSED_SERIAL_PROBE");
+    println!("cargo:rerun-if-env-changed=CARGO_FEATURE_WATCHDOG_RESCUE_PROBE");
     println!("cargo:rerun-if-env-changed=CARGO_FEATURE_USB_RECOVERY_FIRST");
     println!("cargo:rerun-if-env-changed=CARGO_FEATURE_RECLAIMED_SOFTDEVICE");
 }

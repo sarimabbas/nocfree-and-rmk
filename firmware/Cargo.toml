@@ -19,8 +19,15 @@ required-features = ["input-probe"]
 name = "bootloader-inspect"
 path = "src/bin/bootloader-inspect.rs"
 required-features = ["bootloader-inspect"]
+[[bin]]
+name = "watchdog-rescue-probe"
+path = "src/bin/watchdog-rescue-probe.rs"
+required-features = ["watchdog-rescue-probe"]
+
 [features]
 default = ["defmt-logging"]
+# LEFT-only raw watchdog hang proof; reserves marker-free startup entry.
+watchdog-rescue-probe = ["reclaimed-softdevice", "dep:nrf-pac"]
 # Normal builds use RMK defmt; --no-default-features callers select this explicitly.
 defmt-logging = ["rmk/defmt"]
 # Optional framework CDC logger; choose instead of defmt-logging.
@@ -70,6 +77,7 @@ left = ["rmk/split", "rmk/dongle", "rmk/adafruit_bl", "rmk/rynk"]
 right = ["rmk/split"]
 receiver = ["rmk/dongle", "rmk/adafruit_bl"]
 [dependencies]
+nrf-pac = { version = "=0.4.0", features = ["nrf52833", "rt"], optional = true }
 log = { version = "0.4", optional = true, features = ["max_level_warn", "release_max_level_warn"] }
 embassy-usb = { version = "=0.6.0", optional = true }
 rmk = { git = "https://github.com/sarimabbas/rmk-nocfree", rev = "b41bd7caa7de67a47f6e7380519b730630f16152", default-features = false, features = ["storage", "nrf52833_ble"] }
