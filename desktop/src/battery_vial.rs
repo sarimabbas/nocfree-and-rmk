@@ -72,7 +72,7 @@ fn select<T>(devices: impl IntoIterator<Item = (Role, T)>) -> Result<T, String> 
     let mut preferred = if left.is_empty() { receiver } else { left };
     if preferred.len() != 1 {
         return Err(if preferred.is_empty() {
-            "Connect the left half or receiver by USB to check both batteries."
+            "Connect the left half or dongle by USB to check both batteries."
         } else {
             "More than one battery source is connected. Check the USB connections."
         }

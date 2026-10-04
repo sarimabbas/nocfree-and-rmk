@@ -14,8 +14,8 @@ fn main() {
             gpui_kit::init(cx);
             cx.on_action(|_: &Quit, cx| cx.quit());
             cx.bind_keys([KeyBinding::new("cmd-q", Quit, None)]);
-            cx.set_menus([Menu::new("NocFree Companion")
-                .items([MenuItem::action("Quit NocFree Companion", Quit)])]);
+            cx.set_menus([Menu::new("Nocfree RMK Companion")
+                .items([MenuItem::action("Quit Nocfree RMK Companion", Quit)])]);
             gpui_kit::open_window(
                 WindowOptions {
                     window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
@@ -24,7 +24,7 @@ fn main() {
                         cx,
                     ))),
                     titlebar: Some(TitlebarOptions {
-                        title: Some("NocFree Companion".into()),
+                        title: Some("Nocfree RMK Companion".into()),
                         ..Default::default()
                     }),
                     window_min_size: Some(size(px(800.), px(560.))),
@@ -37,7 +37,7 @@ fn main() {
                     view
                 },
             )
-            .expect("could not open NocFree Companion window");
+            .expect("could not open Nocfree RMK Companion window");
             cx.activate(true);
         });
 }

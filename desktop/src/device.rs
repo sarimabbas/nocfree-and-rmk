@@ -61,6 +61,43 @@ pub struct Snapshot {
     pub(crate) mounts: Vec<BootMount>,
 }
 
+/// Host-connected Bluetooth identity only; paired-but-disconnected entries do not count.
+pub(crate) fn bluetooth_connected() -> bool {
+    let Ok(output) = Command::new("/usr/sbin/system_profiler")
+        .args(["SPBluetoothDataType", "-json", "-timeout", "3"])
+        .output()
+    else {
+        return false;
+    };
+    if !output.status.success() || output.stdout.len() > 1024 * 1024 {
+        return false;
+    }
+    serde_json::from_slice::<serde_json::Value>(&output.stdout)
+        .ok()
+        .is_some_and(|report| connected_bluetooth_report(&report))
+}
+fn connected_bluetooth_report(report: &serde_json::Value) -> bool {
+    report["SPBluetoothDataType"]
+        .as_array()
+        .is_some_and(|controllers| {
+            controllers.iter().any(|controller| {
+                controller["device_connected"]
+                    .as_array()
+                    .is_some_and(|devices| {
+                        devices
+                            .iter()
+                            .filter(|device| {
+                                device
+                                    .as_object()
+                                    .is_some_and(|names| names.contains_key("NocFree RMK"))
+                            })
+                            .count()
+                            == 1
+                    })
+            })
+        })
+}
+
 pub fn discover() -> Result<Snapshot, String> {
     if !cfg!(target_os = "macos") {
         return Err("Device discovery currently supports macOS only.".into());
@@ -284,5 +321,25 @@ pub(crate) mod tests {
             assert!(!other.rmk_left());
             assert!(!other.factory_left());
         }
+    }
+}
+
+#[cfg(test)]
+mod bluetooth_tests {
+    #[test]
+    fn pairing_alone_does_not_establish_a_connection() {
+        use serde_json::json;
+        assert!(super::connected_bluetooth_report(
+            &json!({"SPBluetoothDataType":[{"device_connected":[{"NocFree RMK":{}}]}]})
+        ));
+        assert!(!super::connected_bluetooth_report(
+            &json!({"SPBluetoothDataType":[{"device_not_connected":[{"NocFree RMK":{}}]}]})
+        ));
+        assert!(!super::connected_bluetooth_report(
+            &json!({"SPBluetoothDataType":[{"device_connected":[{"Other":{}}]}]})
+        ));
+        assert!(!super::connected_bluetooth_report(
+            &json!({"SPBluetoothDataType":[{"device_connected":[{"NocFree RMK":{}},{"NocFree RMK":{}}]}]})
+        ));
     }
 }

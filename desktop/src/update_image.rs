@@ -84,7 +84,7 @@ impl fmt::Display for ValidationError {
             Self::ResetVector => "reset vector must be Thumb code within exact BIN coverage",
             Self::RecoveryMarker => "requires recovery marker at 0x1200",
             Self::StartupReserve => "startup reserve at 0x1200 must be erased",
-            Self::ReceiverMarker => "receiver must not contain the recovery-first marker",
+            Self::ReceiverMarker => "dongle must not contain the recovery-first marker",
             Self::OldSoftDevice => "old S140 magic must be absent at 0x3004",
         })
     }

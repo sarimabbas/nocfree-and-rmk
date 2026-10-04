@@ -16,3 +16,5 @@ mod battery;
 pub mod flow_presentation;
 mod recovery;
 pub mod ui;
+
+mod status_strip;

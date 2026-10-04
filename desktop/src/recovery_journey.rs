@@ -32,22 +32,24 @@ impl Procedure {
                     "Disconnect the other parts from USB. Unplug the right USB cable, then reconnect it to the same port."
                 }
                 Role::Receiver => {
-                    "Disconnect both halves from USB. Unplug the receiver, then reconnect it to the same port."
+                    "Disconnect both halves from USB. Unplug the dongle, then reconnect it to the same port."
                 }
             },
             Self::FactoryLeft => {
-                "Keep USB connected and the switch in WIRED. Hold Fn + 5 for five seconds, then release."
+                "Factory firmware: keep USB connected and the switch in WIRED. Hold Fn + 5 for five seconds, then release."
             }
             Self::FactoryRight => {
-                "Turn the right half ON and keep USB connected. Hold Fn + the main-row 0 key for five seconds, then release."
+                "Factory firmware: turn the right half ON and keep USB connected. Hold Fn + the main-row 0 key for five seconds, then release."
             }
             Self::FactoryReceiver => {
-                "Keep only the receiver connected by USB. Using its paired factory left half in 2.4G mode, hold Fn + 6 for five seconds. This requires the factory Fn-layer 6 key mapped to DongleDFU."
+                "Factory firmware: keep only the dongle connected by USB. Using its paired factory left half in 2.4G mode, hold Fn + 6 for five seconds. This requires the factory Fn-layer 6 key mapped to DongleDFU."
             }
             Self::Manual => {
-                "Use the recovery procedure for your installed firmware, keeping the same USB port."
+                "This older RMK firmware does not expose automatic recovery. Its exact recovery procedure must be identified before continuing."
             }
-            Self::RuntimeApp => "Keep USB connected. We’re opening its recovery drive.",
+            Self::RuntimeApp => {
+                "RMK firmware: keep USB connected. We’re opening its recovery drive automatically."
+            }
         }
     }
 }
@@ -131,9 +133,9 @@ impl RecoveryJourney {
 /// Only physical connection is required; normal RMK recovery has no startup window.
 pub fn instruction(role: Role) -> &'static str {
     match role {
-        Role::Left => "Connect the left half by USB. We’ll find the steps for its firmware.",
-        Role::Right => "Connect the right half by USB. We’ll find the steps for its firmware.",
-        Role::Receiver => "Plug in the USB receiver. We’ll find the steps for its firmware.",
+        Role::Left => "Connect the left half by USB. ",
+        Role::Right => "Connect the right half by USB. ",
+        Role::Receiver => "Plug in the USB dongle. ",
     }
 }
 
