@@ -236,10 +236,12 @@ async fn main(spawner: Spawner) {
         let battery_enable = Output::new(p.P0_05, Level::Low, OutputDrive::Standard);
         #[cfg(feature = "right")]
         let battery_enable = Output::new(p.P0_31, Level::Low, OutputDrive::Standard);
-        let mut battery_channel = saadc::ChannelConfig::single_ended(p.P0_04.degrade_saadc());
-        // Allow high-impedance battery dividers to charge the sample capacitor.
-        battery_channel.time = saadc::Time::_40US;
-        let adc = saadc::Saadc::new(p.SAADC, Irqs, saadc::Config::default(), [battery_channel]);
+        let adc = saadc::Saadc::new(
+            p.SAADC,
+            Irqs,
+            saadc::Config::default(),
+            [saadc::ChannelConfig::single_ended(p.P0_04.degrade_saadc())],
+        );
         adc.calibrate().await;
         let mut battery_adc = battery::Battery::new(adc, battery_enable);
         #[cfg(feature = "left")]

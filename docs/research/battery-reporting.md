@@ -26,6 +26,17 @@ oversampling, RMK percentage processing, charging GPIOs and storage schema stay
 unchanged. Compare fresh raw counts under the same load before deciding whether
 to retain it. Meter calibration and battery-capacity validation remain pending.
 
+The left-only 40 us comparison was installed and read back exactly, with the
+protected gap and stored settings unchanged. Its fresh raw sample was 3180;
+actual channel configuration changed to `0x50000`, confirming 40 us acquisition.
+The nominal estimate was 3.6334 V, close to the earlier 10 us samples rather than
+the old 4.17 V meter result. Companion runtime recovery succeeded on the test.
+This does not support insufficient acquisition time as the main explanation;
+the experiment was reverted to the saved working switch image. It does not
+establish the correct divider ratio or present cell voltage. Without a current
+independent voltage measurement, scaling error and real cell/charger behavior
+remain indistinguishable; no percentage calibration was applied.
+
 Audited 2026-10-02 local time against installed RMK fork `b41bd7caa7de67a47f6e7380519b730630f16152` and Embassy nRF fork `1b5fc397aa65026925d9641d88073a7e91993647`. Existing firmware already measures both batteries; a firmware update is unnecessary to expose their current status in Companion.
 
 ## Live observation
