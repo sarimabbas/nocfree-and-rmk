@@ -1,4 +1,4 @@
-//! Evidence for a read-only guided session. Restart always requires fresh identification.
+//! Read-only archives keep normal-device correlation separate from unverified mounted-drive adoption.
 use crate::device::{self, BootMount, Role, Snapshot};
 use std::{
     fs,
@@ -28,6 +28,7 @@ enum ReturnPhase {
 #[derive(Default)]
 pub struct Session {
     role: Option<Role>,
+    archive_only: bool,
     recovery_role: Option<crate::runtime_recovery::Role>,
     location: Option<u64>,
     ready: Option<BootMount>,
@@ -76,6 +77,12 @@ impl Session {
     pub(crate) fn recovery_binding(
         &self,
     ) -> Result<(crate::runtime_recovery::Role, u64, BootMount), String> {
+        if self.archive_only {
+            return Err(
+                "This read-only archive does not establish firmware installation eligibility."
+                    .into(),
+            );
+        }
         if self.problem.is_some() {
             return Err("Recovery connection is unavailable.".into());
         }
@@ -85,6 +92,33 @@ impl Session {
             self.location.ok_or("Recovery connection is missing.")?,
             self.ready.clone().ok_or("Recovery drive is missing.")?,
         ))
+    }
+    /// A deliberately selected part may archive a unique, validated drive already
+    /// mounted at launch. Its role stays unverified and cannot authorize installation.
+    pub(crate) fn adopt_archive_drive(&mut self, snapshot: Snapshot) -> Result<bool, String> {
+        if self.role.is_none() || self.backup_path.is_some() || self.location.is_some() {
+            return Ok(false);
+        }
+        let bootloaders: Vec<_> = snapshot.devices.iter().filter(|d| d.bootloader()).collect();
+        if bootloaders.is_empty() && snapshot.mounts.is_empty() {
+            return Ok(false);
+        }
+        if bootloaders.len() != 1 || snapshot.mounts.len() > 1 {
+            return Err("Connect only the part you want to back up in recovery mode.".into());
+        }
+        if snapshot.mounts.is_empty() {
+            return Ok(false);
+        }
+        validate_metadata(&snapshot.mounts[0].info)
+            .map_err(|_| "This recovery drive is unfamiliar. Nothing was saved.".to_owned())?;
+        self.location = Some(bootloaders[0].location);
+        self.archive_only = true;
+        self.recovery_role = None;
+        self.observe(Ok(snapshot));
+        if let Some(error) = self.view().error {
+            return Err(error);
+        }
+        Ok(self.view().can_save)
     }
     /// Retry the physical return guide without losing a completed host archive.
     /// A retained port is correlation for this live guide, not fresh role evidence.
@@ -217,6 +251,19 @@ impl Session {
         }
     }
     fn advance_return(&mut self, now: Instant) {
+        // Backup completion proves return to normal firmware, not a cold boot.
+        // A fresh same-port normal endpoint is stronger evidence than a timer,
+        // including when polling missed the brief physical disconnection.
+        if self.role == Some(Role::Left)
+            && !self.legacy_left_start
+            && self.normal_present
+            && self.backup_path.is_some()
+            && self.location.is_some()
+            && self.location == self.archived_location
+        {
+            self.return_phase = Some(ReturnPhase::Complete);
+            return;
+        }
         if matches!(self.return_phase, Some(ReturnPhase::Reconnect))
             && self.connection_present
             && !self.normal_present
@@ -414,7 +461,7 @@ impl Session {
             }
             let location = self.location;
             let original = self.ready.clone().unwrap();
-            self.observe(discover());
+            self.observe(Ok(discover()?));
             if self.location != location || self.ready.as_ref() != Some(&original) {
                 return Err(
                     "Connection changed before backup. Identify the component again.".into(),
@@ -423,7 +470,7 @@ impl Session {
             let data = read(&original.path.join("CURRENT.UF2"))?;
             let hash = device::inspect_archive(&data)?;
             // A complete read is not sufficient: the same correlated device and mount must still be present.
-            self.observe(discover());
+            self.observe(Ok(discover()?));
             if self.location != location || self.ready.as_ref() != Some(&original) {
                 return Err(
                     "Recovery drive changed during backup. No complete backup was saved.".into(),
@@ -595,6 +642,122 @@ mod tests {
         session.select(Role::Left);
         session.observe(Ok(normal()));
         session
+    }
+    #[test]
+    fn modern_return_uses_same_port_normal_observation_not_a_polling_countdown() {
+        let now = Instant::now();
+        for elapsed in [
+            Duration::from_millis(4900),
+            Duration::from_secs(5),
+            Duration::from_secs(6),
+        ] {
+            let mut session = identified();
+            session.backup_path = Some(PathBuf::from("/saved"));
+            session.archived_location = Some(7);
+            session.return_phase = Some(ReturnPhase::Disconnect);
+            session.observe_at(Ok(boot(true)), now);
+            assert!(!session.view().return_complete);
+            session.observe_at(Ok(Snapshot::default()), now + Duration::from_millis(100));
+            session.observe_at(Ok(normal()), now + elapsed);
+            assert!(
+                session.view().return_complete,
+                "normal return at {elapsed:?} must complete"
+            );
+        }
+    }
+    #[test]
+    fn errors_are_not_normal_return_and_legacy_startup_keeps_its_guide() {
+        let now = Instant::now();
+        let mut session = identified();
+        session.backup_path = Some(PathBuf::from("/saved"));
+        session.archived_location = Some(7);
+        session.return_phase = Some(ReturnPhase::Disconnect);
+        session.observe_at(Err("Inventory failed".into()), now);
+        assert!(!session.view().return_complete);
+        let mut session = identified();
+        session.backup_path = Some(PathBuf::from("/saved"));
+        session.archived_location = Some(7);
+        session.return_phase = Some(ReturnPhase::Disconnect);
+        session.legacy_left_start = true;
+        session.observe_at(Ok(Snapshot::default()), now);
+        session.observe_at(Ok(normal()), now + Duration::from_secs(4));
+        assert!(!session.view().return_complete);
+    }
+    #[test]
+    fn already_returned_modern_left_completes_without_observed_disconnect_only_on_saved_port() {
+        let now = Instant::now();
+        let make = || {
+            let mut session = identified();
+            session.backup_path = Some(PathBuf::from("/saved"));
+            session.archived_location = Some(7);
+            session.return_phase = Some(ReturnPhase::Disconnect);
+            session
+        };
+        let mut session = make();
+        session.observe_at(Ok(normal()), now);
+        assert!(session.view().return_complete);
+        let mut session = make();
+        let mut wrong = normal();
+        wrong.devices[0].location = 8;
+        session.observe_at(Ok(wrong), now);
+        assert!(!session.view().return_complete);
+        let mut session = make();
+        let mut wrong = normal();
+        wrong.devices[0].vendor = 0x4c4b;
+        wrong.devices[0].product = 0x4671;
+        wrong.devices[0].name = "NocFree RMK Right".into();
+        session.observe_at(Ok(wrong), now);
+        assert!(!session.view().return_complete);
+        let mut session = make();
+        session.observe_at(Ok(boot(true)), now);
+        assert!(!session.view().return_complete);
+    }
+    #[test]
+    fn already_mounted_backup_is_read_only_and_never_installation_evidence() {
+        let mut session = Session::new();
+        session.select_recovery_role(crate::runtime_recovery::Role::Left);
+        assert!(session.adopt_archive_drive(boot(true)).unwrap());
+        assert!(session.view().can_save);
+        assert!(session.recovery_binding().is_err());
+        assert!(!session.identified_normal());
+        // Ordinary initial discovery remains insufficient for any write-capable recovery flow.
+        let mut ordinary = Session::new();
+        ordinary.select_recovery_role(crate::runtime_recovery::Role::Left);
+        ordinary.observe(Ok(boot(true)));
+        assert!(!ordinary.view().can_save);
+    }
+    #[test]
+    fn permission_denied_during_fresh_backup_discovery_is_not_replaced_by_connection_error() {
+        let mut session = Session::new();
+        session.select(Role::Left);
+        assert!(session.adopt_archive_drive(boot(true)).unwrap());
+        let denied = "Allow NocFree RMK Companion to access Removable Volumes".to_owned();
+        let error = session
+            .save_with(
+                Path::new("/unused-test-backup"),
+                || Err(denied.clone()),
+                |_| panic!("No read occurs after denied discovery"),
+            )
+            .unwrap_err();
+        assert_eq!(error, denied);
+        assert_eq!(session.view().error, Some(denied));
+        assert!(!session.view().can_save);
+    }
+    #[test]
+    fn mounted_backup_rejects_ambiguity_metadata_and_late_mount_has_no_fake_ready() {
+        let mut session = Session::new();
+        session.select(Role::Left);
+        assert!(!session.adopt_archive_drive(boot(false)).unwrap());
+        assert!(!session.view().can_save);
+        let mut ambiguous = boot(true);
+        ambiguous.devices.push(ambiguous.devices[0].clone());
+        assert!(session.adopt_archive_drive(ambiguous).is_err());
+        assert!(!session.view().can_save);
+        let mut unknown = boot(true);
+        unknown.mounts[0].info = "Unknown bootloader".into();
+        assert!(session.adopt_archive_drive(unknown).is_err());
+        assert!(!session.view().can_save);
+        assert!(session.adopt_archive_drive(boot(true)).unwrap());
     }
     #[test]
     fn cable_still_connected_cannot_advance_and_late_mount_can() {

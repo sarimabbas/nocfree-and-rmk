@@ -15,6 +15,26 @@ pub(crate) fn run(
     cancelled: Arc<AtomicBool>,
     progress: std::sync::mpsc::Sender<Procedure>,
 ) -> Result<Session, String> {
+    run_with(role, cancelled, progress, false)
+}
+/// Backup can archive an explicitly selected, already-mounted drive without
+/// claiming its role is proven or granting firmware-write eligibility.
+pub(crate) fn run_backup(
+    role: Role,
+    cancelled: Arc<AtomicBool>,
+    progress: std::sync::mpsc::Sender<Procedure>,
+) -> Result<Session, String> {
+    if role == Role::Receiver {
+        return Err("This backup journey supports the left and right halves.".into());
+    }
+    run_with(role, cancelled, progress, true)
+}
+fn run_with(
+    role: Role,
+    cancelled: Arc<AtomicBool>,
+    progress: std::sync::mpsc::Sender<Procedure>,
+    archive_only: bool,
+) -> Result<Session, String> {
     if !cfg!(target_os = "macos") {
         return Err("Recovery mode currently supports macOS only.".into());
     }
@@ -29,13 +49,14 @@ pub(crate) fn run(
         let mut last_procedure = None;
         let mut requested_location=None;
         let mut requested_at=None;
+        let mut mounting_at=None;
         let mut inventory = DiscoveryPoll::default();
         // Wait for the user's physical action without expiring while they read.
         // Once a matching runtime device appears, dispatch exactly once; the armed request
         // and subsequent drive observation retain their finite deadlines.
         loop {
             if cancelled.load(Ordering::Relaxed) { return Err("Recovery cancelled.".into()); }
-            if drive_deadline_passed(requested_at, Instant::now()) {
+            if drive_deadline_passed(requested_at.or(mounting_at), Instant::now()) {
                 return Err("The recovery drive didn’t appear. Check its power and USB connection, then try again.".into());
             }
             if requested_at.is_none() && !matches!(last_procedure, Some(Procedure::FactoryLeft | Procedure::FactoryRight | Procedure::FactoryReceiver)) {
@@ -52,7 +73,10 @@ pub(crate) fn run(
                     let _ = progress.send(Procedure::RuntimeApp);
                     // A successful reset may disconnect before acknowledgement.
                     // Only the subsequently correlated drive determines success.
-                    let _=request.request_detach(&cancelled).await;
+                    match request.request_detach(&cancelled).await {
+                        Err(crate::runtime_recovery::DispatchError::NotSent(message)) => return Err(message.into()),
+                        Ok(()) | Err(crate::runtime_recovery::DispatchError::OutcomeUnknown(_)) => {},
+                    }
                 }
             }
             if cancelled.load(Ordering::Relaxed) { return Err("Recovery cancelled.".into()); }
@@ -61,6 +85,19 @@ pub(crate) fn run(
                 continue;
             };
             let snapshot = snapshot?;
+            if cancelled.load(Ordering::Relaxed) { return Err("Recovery cancelled.".into()); }
+            if archive_only && requested_location.is_none() && snapshot.devices.iter().any(|d|d.bootloader()) {
+                mounting_at.get_or_insert_with(Instant::now);
+                let known=crate::status_cache::recovery_locations();
+                let selected=match role {Role::Left=>0,Role::Right=>1,Role::Receiver=>2};
+                if known.iter().enumerate().any(|(index,location)| index!=selected && location.is_some_and(|location|snapshot.devices.iter().any(|d|d.bootloader() && d.location==location))) {
+                    return Err("The recovery drive belongs to another part. Select that part to back it up.".into());
+                }
+                if session.adopt_archive_drive(snapshot.clone())? {
+                    if cancelled.load(Ordering::Relaxed) { return Err("Recovery cancelled.".into()); }
+                    return Ok(session);
+                }
+            }
             if cancelled.load(Ordering::Relaxed) { return Err("Recovery cancelled.".into()); }
             if let Some(location)=requested_location {
                 // The runtime endpoint is bound locally before requesting recovery.
@@ -154,7 +191,7 @@ fn factory_observation(
         let procedure = snapshot
             .devices
             .iter()
-            .any(|d| d.role() == Some(normal_role))
+            .any(|d| d.role() == Some(normal_role) || d.bootloader())
             .then_some(Procedure::Reconnect);
         return Ok((procedure, false));
     }
@@ -229,7 +266,7 @@ mod tests {
             assert_eq!(
                 factory_observation(&mut session, role, &mut disconnected, factory_boot(10))
                     .unwrap(),
-                (None, false)
+                (Some(Procedure::Reconnect), false)
             );
             assert_eq!(
                 factory_observation(&mut session, role, &mut disconnected, factory_normal(role))

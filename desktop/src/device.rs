@@ -116,14 +116,22 @@ pub fn discover() -> Result<Snapshot, String> {
     devices.sort_by_key(|d| (d.location, d.vendor, d.product));
     devices.dedup();
     let mut mounts = Vec::new();
-    let volumes =
-        fs::read_dir("/Volumes").map_err(|_| "Could not inspect mounted volumes.".to_string())?;
+    let volumes = fs::read_dir("/Volumes").map_err(|error| {
+        if permission_denied(&error) {
+            recovery_read_error(&error)
+        } else {
+            "Could not inspect mounted volumes.".into()
+        }
+    })?;
     for entry in volumes {
         let path = entry
             .map_err(|_| "Mounted volumes changed during discovery.".to_string())?
             .path();
         let info_path = path.join("INFO_UF2.TXT");
-        if !info_path.exists() {
+        if !metadata_readable(
+            fs::metadata(&info_path).map(|_| ()),
+            devices.iter().any(Device::bootloader),
+        )? {
             continue;
         }
         let info = String::from_utf8(read_bounded(&info_path, 8192)?).map_err(|_| {
@@ -137,17 +145,42 @@ pub fn discover() -> Result<Snapshot, String> {
 }
 
 pub(crate) fn read_bounded(path: &Path, maximum: usize) -> Result<Vec<u8>, String> {
-    let file = fs::File::open(path).map_err(|_| {
-        "Recovery files could not be read; the drive may have disconnected.".to_string()
-    })?;
+    let file = fs::File::open(path).map_err(|error| recovery_read_error(&error))?;
     let mut bytes = Vec::new();
     file.take(maximum as u64 + 1)
         .read_to_end(&mut bytes)
-        .map_err(|_| "Recovery files changed or could not be read.".to_string())?;
+        .map_err(|error| recovery_read_error(&error))?;
     if bytes.len() > maximum {
         return Err("Recovery file exceeds the expected readback size.".into());
     }
     Ok(bytes)
+}
+
+fn metadata_readable(result: std::io::Result<()>, recovery_present: bool) -> Result<bool, String> {
+    match result {
+        Ok(()) => Ok(true),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) if permission_denied(&error) => {
+            if recovery_present {
+                Err(recovery_read_error(&error))
+            } else {
+                Ok(false)
+            }
+        }
+        Err(_) => Err("Could not inspect the recovery drive. Reconnect it, then try again.".into()),
+    }
+}
+
+fn permission_denied(error: &std::io::Error) -> bool {
+    error.kind() == std::io::ErrorKind::PermissionDenied
+        || matches!(error.raw_os_error(), Some(1 | 13))
+}
+fn recovery_read_error(error: &std::io::Error) -> String {
+    if permission_denied(error) {
+        "Allow NocFree RMK Companion to access Removable Volumes in System Settings → Privacy & Security → Files and Folders, then try again.".into()
+    } else {
+        "Recovery files could not be read. Reconnect the drive, then try again.".into()
+    }
 }
 
 fn collect_devices(value: &plist::Value, result: &mut Vec<Device>) {
@@ -226,6 +259,37 @@ pub(crate) fn inspect_archive(data: &[u8]) -> Result<String, String> {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+    #[test]
+    fn missing_metadata_is_skipped_but_denied_recovery_metadata_fails() {
+        assert!(
+            !metadata_readable(
+                Err(std::io::Error::from(std::io::ErrorKind::NotFound)),
+                true
+            )
+            .unwrap()
+        );
+        let denied =
+            metadata_readable(Err(std::io::Error::from_raw_os_error(1)), true).unwrap_err();
+        assert!(denied.contains("Removable Volumes"));
+        // An unrelated protected volume cannot break ordinary keyboard discovery.
+        assert!(!metadata_readable(Err(std::io::Error::from_raw_os_error(1)), false).unwrap());
+        assert!(metadata_readable(Ok(()), true).unwrap());
+    }
+    #[test]
+    fn permission_denial_is_actionable_and_not_a_disconnection() {
+        for error in [
+            std::io::Error::from(std::io::ErrorKind::PermissionDenied),
+            std::io::Error::from_raw_os_error(1),
+            std::io::Error::from_raw_os_error(13),
+        ] {
+            assert!(recovery_read_error(&error).contains("Removable Volumes"));
+            assert!(recovery_read_error(&error).contains("Files and Folders"));
+        }
+        assert!(
+            !recovery_read_error(&std::io::Error::from(std::io::ErrorKind::NotFound))
+                .contains("Removable Volumes")
+        );
+    }
     pub(crate) fn archive() -> Vec<u8> {
         let count = (0x6d000 - 0x1000) / 256;
         let mut data = vec![0; count * 512];

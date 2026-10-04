@@ -28,6 +28,7 @@ enum Phase {
     StartWait(Instant),
     Reconnect,
     Complete,
+    Failed,
     Cancelled,
 }
 #[derive(Clone)]
@@ -56,6 +57,8 @@ pub struct FirmwareJourney {
     baseline: Option<Baseline>,
     error: Option<String>,
     attempted: bool,
+    // Discovery failure suspends a state, never erases transfer evidence.
+    retry_phase: Option<Phase>,
 }
 fn hash(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
@@ -198,6 +201,7 @@ impl FirmwareJourney {
             baseline: None,
             error: None,
             attempted: false,
+            retry_phase: None,
         }
     }
     pub fn role(&self) -> Role {
@@ -239,6 +243,10 @@ impl FirmwareJourney {
             Phase::Complete => (
                 "You’re up to date",
                 "All three parts are running the installed firmware.",
+            ),
+            Phase::Failed => (
+                "Check your connection",
+                "Check USB and recovery drive access. We’ll continue when the connection can be checked again.",
             ),
             Phase::Cancelled => (
                 "Installation paused",
@@ -376,14 +384,35 @@ impl FirmwareJourney {
         self.observe_at(observation, Instant::now());
     }
     fn observe_at(&mut self, observation: Result<Snapshot, String>, now: Instant) {
-        let Ok(snapshot) = observation else {
-            if matches!(
-                self.phase,
-                Phase::OffWait(_) | Phase::PowerOn | Phase::StartWait(_) | Phase::Reconnect
-            ) {
-                self.phase = Phase::Disconnect;
-            }
+        if matches!(self.phase, Phase::Complete | Phase::Cancelled) {
             return;
+        }
+        let snapshot = match observation {
+            Err(error) => {
+                if self.phase != Phase::Failed {
+                    self.retry_phase = Some(match self.phase {
+                        // A discovery outage cannot count as a physical power-off
+                        // interval or establish that the board restarted normally.
+                        Phase::OffWait(_)
+                        | Phase::PowerOn
+                        | Phase::StartWait(_)
+                        | Phase::Reconnect => Phase::Disconnect,
+                        phase => phase,
+                    });
+                }
+                self.phase = Phase::Failed;
+                self.error = Some(format!("Could not check the keyboard: {error}"));
+                return;
+            }
+            Ok(snapshot) => {
+                if self.phase == Phase::Failed {
+                    // A successful read-only discovery retries only observation.
+                    // The original baseline, journal and one-shot attempt survive.
+                    self.phase = self.retry_phase.take().unwrap_or(Phase::Recovery);
+                    self.error = None;
+                }
+                snapshot
+            }
         };
         let Some(baseline) = &self.baseline else {
             return;
@@ -442,6 +471,7 @@ impl FirmwareJourney {
         };
     }
     pub fn cancel(&mut self) {
+        self.retry_phase = None;
         self.phase = Phase::Cancelled;
     }
 }
@@ -575,7 +605,16 @@ mod tests {
         let now = Instant::now();
         journey.observe_at(Ok(Snapshot::default()), now);
         journey.observe_at(Err("unavailable".into()), now + Duration::from_secs(5));
-        assert_eq!(journey.phase, Phase::Disconnect);
+        assert_eq!(journey.phase, Phase::Failed);
+        assert_eq!(journey.retry_phase, Some(Phase::Disconnect));
+        assert!(
+            journey
+                .view()
+                .error
+                .as_deref()
+                .unwrap()
+                .contains("unavailable")
+        );
         journey.observe_at(Ok(Snapshot::default()), now + Duration::from_secs(20));
         assert!(matches!(journey.phase, Phase::OffWait(_)));
     }
@@ -626,5 +665,64 @@ mod tests {
         assert!(reconcile_prior(&current, Role::Left, 10, &actual, image).is_err());
         assert!(durable(&prior, "install-intent.json", b"retry").is_err());
         fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn discovery_failure_is_visible_during_recovery_and_verification_without_retrying_copy() {
+        let mut journey = FirmwareJourney::new(crate::release::fixture());
+        journey.observe(Err("Recovery drive access was denied.".into()));
+        assert_eq!(journey.phase, Phase::Failed);
+        assert!(journey.view().error.unwrap().contains("denied"));
+        assert!(!journey.view().can_transfer);
+        journey.observe(Ok(Snapshot::default()));
+        assert_eq!(journey.phase, Phase::Recovery);
+        assert!(journey.view().needs_recovery);
+
+        let mut journey = model(Role::Left);
+        journey.phase = Phase::Reconcile;
+        journey.attempted = true;
+        let original_bytes = journey.baseline.as_ref().unwrap().bytes.clone();
+        let original_mount = journey.baseline.as_ref().unwrap().mount.clone();
+        let original_folder = journey.baseline.as_ref().unwrap().folder.clone();
+        journey.observe(Err("USB inventory unavailable.".into()));
+        assert_eq!(journey.phase, Phase::Failed);
+        assert_eq!(journey.retry_phase, Some(Phase::Reconcile));
+        assert!(journey.transfer().is_err());
+        journey.observe(Err("Recovery drive access was denied.".into()));
+        assert_eq!(journey.retry_phase, Some(Phase::Reconcile));
+        journey.observe(Ok(normal(Role::Left, 10)));
+        assert_eq!(journey.phase, Phase::Reconcile);
+        assert!(journey.attempted);
+        assert!(journey.transfer().is_err());
+        assert!(journey.view().verification);
+        assert_eq!(journey.baseline.as_ref().unwrap().bytes, original_bytes);
+        assert_eq!(journey.baseline.as_ref().unwrap().mount, original_mount);
+        assert_eq!(journey.baseline.as_ref().unwrap().folder, original_folder);
+    }
+
+    #[test]
+    fn returning_discovery_failure_requires_new_verified_off_interval() {
+        let now = Instant::now();
+        for phase in [
+            Phase::Disconnect,
+            Phase::OffWait(now),
+            Phase::PowerOn,
+            Phase::StartWait(now),
+            Phase::Reconnect,
+        ] {
+            let mut journey = model(Role::Right);
+            journey.attempted = true;
+            journey.phase = phase;
+            journey.observe_at(Err("USB inventory unavailable.".into()), now);
+            assert_eq!(journey.phase, Phase::Failed);
+            assert_eq!(journey.retry_phase, Some(Phase::Disconnect));
+            // An already attached board cannot bypass the restart dance.
+            journey.observe_at(Ok(normal(Role::Right, 10)), now + Duration::from_secs(60));
+            assert_eq!(journey.phase, Phase::Disconnect);
+            assert_eq!(journey.role(), Role::Right);
+            assert!(journey.attempted);
+            journey.observe_at(Ok(Snapshot::default()), now + Duration::from_secs(61));
+            assert_eq!(journey.phase, Phase::OffWait(now + Duration::from_secs(61)));
+            assert!(journey.transfer().is_err());
+        }
     }
 }

@@ -26,9 +26,20 @@ keyboard backlight, F7–F9 media, and F10–F12 audio. Fn exposes ordinary func
 keys. Hold F5/F6 to repeat backlight adjustments; brightness is saved and shared
 between halves.
 
+## Check pairing
+
+Open **Check pairing** under Additional utilities. Connect LEFT by USB and turn
+RIGHT on; the utility observes their automatic split link. Plug in the dongle
+to check it too and select the top Dongle position on LEFT. Healthy saved links
+finish automatically without clearing anything. If the dongle needs re-pairing,
+Next explicitly pairs those two devices and preserves ordinary Bluetooth hosts.
+Keep both USB connections in place while it works. The utility verifies the
+selected peers and encrypted link before reporting success. Cancel stops the
+check; an accepted pairing change cannot be undone by cancellation.
+
 ## Recovery and updates
 
-Open **Start Recovery Mode** in Companion and choose LEFT, RIGHT, or dongle.
+Open **Enter recovery mode** in Companion and choose LEFT, RIGHT, or dongle.
 Follow its steps for the detected firmware. Normal RMK runtime recovery works
 through the connected component's USB maintenance interface. Recovery entry
 alone does not erase settings or install firmware.

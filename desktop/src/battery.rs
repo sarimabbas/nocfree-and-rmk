@@ -1,6 +1,6 @@
 //! Read producer-owned snapshots through Vial custom GET or legacy Rynk getters.
 #[path = "battery_vial.rs"]
-mod vial;
+pub(crate) mod vial;
 use rynk::RynkDevice;
 use rynk::rmk_types::battery::BatteryStatus;
 use rynk_usb::UsbDevice;
@@ -114,7 +114,7 @@ pub(crate) fn read() -> Result<Readings, String> {
 type BatteryTask = Box<dyn FnOnce() + Send>;
 
 fn start_worker() -> Result<mpsc::SyncSender<BatteryTask>, String> {
-    let (send, receive) = mpsc::sync_channel::<BatteryTask>(0);
+    let (send, receive) = mpsc::sync_channel::<BatteryTask>(1);
     std::thread::Builder::new()
         .name("nocfree-battery".into())
         .spawn(move || {
@@ -136,6 +136,29 @@ fn battery_worker() -> Result<&'static mpsc::SyncSender<BatteryTask>, String> {
         .get_or_init(start_worker)
         .as_ref()
         .map_err(Clone::clone)
+}
+
+pub(crate) const NATIVE_BUSY: &str = "The keyboard connection is busy.";
+
+/// All native HID users share the permanent owner thread and bounded host deadline.
+pub(crate) fn native_task<T: Send + 'static>(
+    task: impl FnOnce(Instant) -> Result<T, String> + Send + 'static,
+) -> Result<T, String> {
+    let started = Instant::now();
+    let (send, receive) = mpsc::sync_channel(1);
+    battery_worker()?
+        .try_send(Box::new(move || {
+            let _ = send.send(task(started));
+        }))
+        .map_err(|error| match error {
+            mpsc::TrySendError::Full(_) => NATIVE_BUSY.to_owned(),
+            mpsc::TrySendError::Disconnected(_) => {
+                "The keyboard connection worker stopped.".to_owned()
+            }
+        })?;
+    receive.recv_timeout(Duration::from_secs(5)).map_err(|_| {
+        "The keyboard request timed out. Check its state before continuing.".to_owned()
+    })?
 }
 
 fn read_on_worker(started: Instant) -> Result<Readings, String> {

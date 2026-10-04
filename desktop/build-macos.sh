@@ -47,6 +47,7 @@ cat > "$bundle/Contents/Info.plist" <<'PLIST'
 <key>CFBundleExecutable</key><string>nocfree-companion</string>
 <key>CFBundleIdentifier</key><string>io.github.sarimabbas.nocfree-companion</string>
 <key>CFBundleName</key><string>NocFree RMK Companion</string>
+<key>NSRemovableVolumesUsageDescription</key><string>Save a backup and install firmware on your keyboard’s recovery drive.</string>
 <key>CFBundleDisplayName</key><string>NocFree RMK Companion</string>
 <key>CFBundleIconFile</key><string>Companion.icns</string>
 <key>CFBundlePackageType</key><string>APPL</string>

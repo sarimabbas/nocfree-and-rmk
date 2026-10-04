@@ -5,6 +5,7 @@ pub mod runtime_recovery;
 pub mod update;
 pub mod update_image;
 
+mod backup_flow;
 pub mod device;
 pub mod home;
 pub mod journey;
@@ -25,3 +26,5 @@ pub mod firmware_version;
 mod device_status;
 
 mod status_cache;
+
+pub mod dongle_pairing;

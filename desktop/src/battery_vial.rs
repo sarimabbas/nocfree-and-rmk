@@ -210,7 +210,7 @@ pub(super) fn read(started: Instant) -> Result<Readings, String> {
 
 // Validate only the fixed report shape, not a general HID decoder. Usage and
 // collection identity come from the native HID enumeration above.
-fn report_layout_valid(descriptor: &[u8]) -> bool {
+pub(crate) fn report_layout_valid(descriptor: &[u8]) -> bool {
     let (mut size, mut count, mut input, mut output) = (0_u32, 0_u32, 0_u32, 0_u32);
     let mut bytes = descriptor;
     while let Some((&tag, rest)) = bytes.split_first() {

@@ -114,6 +114,26 @@ fn request_allowed(cancelled: &AtomicBool, armed_at: Instant) -> Result<(), &'st
     Ok(())
 }
 
+/// Only submitted uncertainty may be reconciled by watching for the recovery drive.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DispatchError {
+    NotSent(&'static str),
+    OutcomeUnknown(&'static str),
+}
+impl DispatchError {
+    pub fn message(self) -> &'static str {
+        match self {
+            Self::NotSent(message) | Self::OutcomeUnknown(message) => message,
+        }
+    }
+}
+fn dispatch_error(submitted: bool, message: &'static str) -> DispatchError {
+    if submitted {
+        DispatchError::OutcomeUnknown(message)
+    } else {
+        DispatchError::NotSent(message)
+    }
+}
 /// Consumed by one request. A static role serial is not physical-device identity;
 /// selection is bound to the exact currently enumerated USB connection instead.
 pub struct ArmedRequest {
@@ -142,11 +162,15 @@ impl ArmedRequest {
 
     /// Send only DFU_DETACH, once. Success means request completion, not a mounted
     /// recovery drive. A disconnect/error may follow a reset; never auto-retry.
-    pub async fn request_detach(self, cancelled: &AtomicBool) -> Result<(), &'static str> {
+    pub async fn request_detach(self, cancelled: &AtomicBool) -> Result<(), DispatchError> {
         if self.armed_at.elapsed() >= ARM_WINDOW {
-            return Err("Recovery selection expired. Select the connected device again.");
+            return Err(DispatchError::NotSent(
+                "Recovery selection expired. Select the connected device again.",
+            ));
         }
-        tokio::time::timeout(OPERATION_TIMEOUT, async move {
+        let submitted = AtomicBool::new(false);
+        let attempted = &submitted;
+        let result=tokio::time::timeout(OPERATION_TIMEOUT, async move {
             if cancelled.load(Ordering::Relaxed) { return Err("Recovery cancelled."); }
             let devices = nusb::list_devices().await.map_err(|_| "Could not inspect the USB connection.")?;
             let mut selected = devices.filter(|d| matches(self.role, d));
@@ -170,9 +194,11 @@ impl ArmedRequest {
             #[cfg(target_os = "macos")]
             if current.location_id() != self.location { return Err("The USB port changed."); }
             request_allowed(cancelled, self.armed_at)?;
+            attempted.store(true,Ordering::Release);
             interface.control_out(detach_request(self.interface), Duration::from_secs(2)).await
                 .map_err(|_| "Recovery request did not complete. Check the device state before trying again.")
-        }).await.map_err(|_| "Recovery request timed out. Check the device state before trying again.")?
+        }).await.unwrap_or(Err("Recovery request timed out. Check the device state before trying again."));
+        result.map_err(|message| dispatch_error(submitted.load(Ordering::Acquire), message))
     }
 }
 
@@ -190,6 +216,25 @@ fn detach_request(number: u8) -> ControlOut<'static> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn dispatch_errors_distinguish_unsent_failure_from_possible_reset() {
+        assert_eq!(
+            dispatch_error(false, "Could not open the selected recovery interface."),
+            DispatchError::NotSent("Could not open the selected recovery interface.")
+        );
+        assert_eq!(
+            dispatch_error(true, "Disconnected during detach"),
+            DispatchError::OutcomeUnknown("Disconnected during detach")
+        );
+        assert_eq!(
+            dispatch_error(false, "Timeout"),
+            DispatchError::NotSent("Timeout")
+        );
+        assert_eq!(
+            dispatch_error(true, "Timeout"),
+            DispatchError::OutcomeUnknown("Timeout")
+        );
+    }
     #[test]
     fn local_role_is_distinct_from_forwarded_vial_and_legacy_startup() {
         for role in [Role::Left, Role::Right, Role::Receiver] {
