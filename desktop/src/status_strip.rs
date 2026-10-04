@@ -93,7 +93,7 @@ fn tooltip(
     } else if recovery {
         facts.push("USB connected".into());
     }
-    facts.join(". ")
+    facts.join(" · ")
 }
 fn segment(
     id: &'static str,
@@ -279,8 +279,8 @@ mod tests {
                             assert_eq!(
                                 text,
                                 format!(
-                                    "Left. Recovery mode{}{}. Battery 100%",
-                                    if usb { ". USB power connected" } else { "" },
+                                    "Left · Recovery mode{}{} · Battery 100%",
+                                    if usb { " · USB power connected" } else { "" },
                                     ""
                                 )
                             );
@@ -308,15 +308,15 @@ mod tests {
         };
         assert_eq!(
             tooltip("Right", None, Some(right), false),
-            "Right. Not connected"
+            "Right · Not connected"
         );
         assert_eq!(
             tooltip("Right", None, Some(Peripheral::default()), false),
-            "Right. Connection unavailable"
+            "Right · Connection unavailable"
         );
         assert_eq!(
             tooltip("Dongle", Some(Connection::Disconnected), None, true),
-            "Dongle. Recovery mode. USB connected"
+            "Dongle · Recovery mode · USB connected"
         );
         assert_eq!(
             tooltip(
@@ -325,7 +325,7 @@ mod tests {
                 Some(half(Some(Mode::Bluetooth), true, false)),
                 false
             ),
-            "Left. Bluetooth connected. USB power connected. Battery 100%"
+            "Left · Bluetooth connected · USB power connected · Battery 100%"
         );
     }
 }
