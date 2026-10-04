@@ -2,6 +2,7 @@
 pub const RESETREAS: usize = 0x40000400;
 pub const GPREGRET: usize = 0x4000051c;
 pub const DOG: u32 = 1 << 1;
+pub const RESETPIN: u32 = 1;
 const WDT: usize = 0x40010000;
 
 pub trait Registers {
@@ -21,6 +22,9 @@ pub fn request_after_watchdog(registers: &mut impl Registers) -> bool {
 /// No feeds: this proof deliberately lets a startup hang expire.
 /// Never attempt to reconfigure a watchdog inherited from an earlier stage.
 pub fn arm_probe(registers: &mut impl Registers) {
+    // This factory bootloader's SystemInit clears other reset reasons when
+    // RESETPIN remains latched. Clear only that stale pin flag before a DOG reset.
+    registers.write(RESETREAS, RESETPIN);
     if registers.read(WDT + 0x400) != 0 {
         return;
     }
@@ -70,7 +74,7 @@ mod tests {
     #[test]
     fn proof_never_feeds_or_reconfigures_a_running_watchdog() {
         let mut registers = Fake {
-            reason: 0,
+            reason: 0x10005,
             running: 0,
             writes: vec![],
         };
@@ -79,6 +83,7 @@ mod tests {
         assert_eq!(
             registers.writes,
             [
+                (RESETREAS, RESETPIN),
                 (WDT + 0x308, 1),
                 (WDT + 0x504, 65_536),
                 (WDT + 0x508, 1),
@@ -86,9 +91,10 @@ mod tests {
                 (WDT, 1)
             ]
         );
+        assert_eq!(registers.reason, 0x10004);
         registers.running = 1;
         registers.writes.clear();
         arm_probe(&mut registers);
-        assert!(registers.writes.is_empty());
+        assert_eq!(registers.writes, [(RESETREAS, RESETPIN)]);
     }
 }
