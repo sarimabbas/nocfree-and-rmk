@@ -32,6 +32,7 @@ fn main() {
                 },
                 cx,
                 |window, cx| {
+                    set_window_max_size(window);
                     let view = cx.new(ui::Companion::new);
                     window.focus(&view.focus_handle(cx), cx);
                     view
@@ -41,3 +42,26 @@ fn main() {
             cx.activate(true);
         });
 }
+
+#[cfg(target_os = "macos")]
+fn set_window_max_size(window: &gpui_kit::Window) {
+    use objc2_app_kit::NSView;
+    use objc2_foundation::NSSize;
+    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+
+    let handle = HasWindowHandle::window_handle(window).expect("native window handle");
+    let RawWindowHandle::AppKit(handle) = handle.as_raw() else {
+        unreachable!("macOS window must expose an AppKit view");
+    };
+    // GPUI owns this NSView; its handle stays valid for this call on the UI thread.
+    // AppKit enforces the content limit during interactive resize and zoom.
+    unsafe {
+        let view = &*handle.ns_view.as_ptr().cast::<NSView>();
+        view.window()
+            .expect("GPUI view must be attached to its window")
+            .setContentMaxSize(NSSize::new(1200., 800.));
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn set_window_max_size(_window: &gpui_kit::Window) {}
