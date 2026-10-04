@@ -1,5 +1,5 @@
 //! Compact, per-part status presentation. Callers supply observed device state.
-use gpui::{App, Hsla, ParentElement, Styled, div, px};
+use gpui::{App, FontWeight, Hsla, ParentElement, Styled, div, px};
 use gpui_kit as gpui;
 use gpui_kit::assets::IconName;
 use gpui_kit::component::{
@@ -12,8 +12,6 @@ use gpui_kit::component::{
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Connection {
     Usb,
-    // The USB-only discovery backend cannot observe direct Bluetooth yet.
-    #[allow(dead_code)]
     Bluetooth,
     Dongle,
     #[default]
@@ -27,50 +25,69 @@ pub struct Peripheral {
     pub recovery: bool,
 }
 
-fn indicator(id: &'static str, icon: IconName, color: Hsla, tooltip: String) -> Button {
+fn segment(
+    id: &'static str,
+    label: &'static str,
+    connection: Option<(IconName, Hsla, &'static str)>,
+    battery: Option<Peripheral>,
+    recovery: bool,
+    cx: &App,
+) -> Button {
+    let mut tooltip = label.to_owned();
+    let mut content = div()
+        .flex()
+        .items_center()
+        .gap(px(7.))
+        .text_size(px(12.))
+        .font_weight(FontWeight::NORMAL)
+        .child(div().text_color(cx.theme().muted_foreground).child(label));
+    if let Some((icon, color, description)) = connection {
+        tooltip.push_str(&format!(" · {description}"));
+        content = content.child(Icon::new(icon).size(px(14.)).text_color(color));
+    }
+    if let Some(state) = battery {
+        let level = state
+            .level
+            .map(|v| format!("{v}%"))
+            .unwrap_or_else(|| "—".into());
+        if state.usb_connected && connection.is_none() {
+            tooltip.push_str(" · USB connected");
+        }
+        tooltip.push_str(
+            &state
+                .level
+                .map(|v| format!(" · Battery {v}%"))
+                .unwrap_or_else(|| " · Battery unavailable".into()),
+        );
+        content = content
+            .child(
+                Icon::new(if state.usb_connected {
+                    IconName::BatteryCharging
+                } else {
+                    IconName::Battery
+                })
+                .size(px(14.))
+                .text_color(cx.theme().foreground),
+            )
+            .child(div().text_color(cx.theme().foreground).child(level));
+    }
+    if recovery {
+        tooltip.push_str(" · Recovery mode");
+        content = content.child(Icon::new(IconName::HeartPulse).size(px(14.)).text_color(
+            gpui::rgb(if cx.theme().is_dark() {
+                0x5eead4
+            } else {
+                0x0f766e
+            }),
+        ));
+    }
     Button::new(id)
-        .icon(Icon::new(icon).text_color(color))
         .ghost()
         .small()
         .compact()
+        .accessibility_label(tooltip.clone())
         .tooltip(tooltip)
-}
-
-fn battery(id: &'static str, part: &'static str, state: Peripheral, cx: &App) -> Button {
-    let level = state.level.map(|v| format!("{v}%"));
-    let tooltip = match &level {
-        Some(level) => format!("{part} battery: {level}"),
-        None => format!("{part} battery is unavailable"),
-    };
-    indicator(
-        id,
-        if state.usb_connected {
-            IconName::BatteryCharging
-        } else {
-            IconName::Battery
-        },
-        cx.theme().foreground,
-        if state.usb_connected {
-            format!("{tooltip} · USB connected")
-        } else {
-            tooltip
-        },
-    )
-    .label(level.unwrap_or_else(|| "—".into()))
-}
-
-fn recovery(id: &'static str, part: &'static str, cx: &App) -> Button {
-    indicator(
-        id,
-        IconName::HeartPulse,
-        gpui::rgb(if cx.theme().is_dark() {
-            0x5eead4
-        } else {
-            0x0f766e
-        })
-        .into(),
-        format!("{part} is in recovery mode"),
-    )
+        .child(content)
 }
 
 /// Recovery belongs to the individual peripheral, never the firmware label.
@@ -97,45 +114,31 @@ pub fn render(
     })
     .into();
     let (icon, color, connection) = match left_connection {
-        Connection::Usb => (IconName::Plug, plain, "Left half connected by USB"),
-        Connection::Bluetooth => (
-            IconName::Bluetooth,
-            blue,
-            "Left half connected by Bluetooth",
-        ),
-        Connection::Dongle => (
-            IconName::SatelliteDish,
-            green,
-            "Left half connected through the dongle",
-        ),
-        Connection::Disconnected => (IconName::Unplug, plain, "Left half is not connected"),
+        Connection::Usb => (IconName::Plug, plain, "USB connected"),
+        Connection::Bluetooth => (IconName::Bluetooth, blue, "Bluetooth connected"),
+        Connection::Dongle => (IconName::SatelliteDish, green, "Connected through dongle"),
+        Connection::Disconnected => (IconName::Unplug, plain, "Not connected"),
     };
-    let mut left_segment = div()
-        .flex()
-        .items_center()
-        .gap(px(3.))
-        .child("Left")
-        .child(indicator("left-connection", icon, color, connection.into()))
-        .child(battery("left-battery", "Left half", left, cx));
-    if left.recovery {
-        left_segment = left_segment.child(recovery("left-recovery", "Left half", cx));
-    }
-    let mut right_segment = div()
-        .flex()
-        .items_center()
-        .gap(px(3.))
-        .child("Right")
-        .child(battery("right-battery", "Right half", right, cx));
-    if right.recovery {
-        right_segment = right_segment.child(recovery("right-recovery", "Right half", cx));
-    }
-    let mut dongle_segment = div()
-        .flex()
-        .items_center()
-        .gap(px(3.))
-        .child("Dongle")
-        .child(indicator(
-            "dongle-connection",
+    let left_segment = segment(
+        "left-status",
+        "Left",
+        Some((icon, color, connection)),
+        Some(left),
+        left.recovery,
+        cx,
+    );
+    let right_segment = segment(
+        "right-status",
+        "Right",
+        None,
+        Some(right),
+        right.recovery,
+        cx,
+    );
+    let dongle_segment = segment(
+        "dongle-status",
+        "Dongle",
+        Some((
             if dongle_connected {
                 IconName::Plug
             } else {
@@ -143,15 +146,15 @@ pub fn render(
             },
             if dongle_connected { green } else { plain },
             if dongle_connected {
-                "Dongle connected by USB"
+                "USB connected"
             } else {
-                "Dongle is not connected"
-            }
-            .into(),
-        ));
-    if dongle_recovery {
-        dongle_segment = dongle_segment.child(recovery("dongle-recovery", "Dongle", cx));
-    }
+                "Not connected"
+            },
+        )),
+        None,
+        dongle_recovery,
+        cx,
+    );
     StatusBar::new()
         .h(px(36.))
         .px(px(16.))
