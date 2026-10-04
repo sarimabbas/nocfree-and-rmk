@@ -13,3 +13,11 @@ embassy-time = { version = "=0.5.1", features = ["std"] }
 [[test]]
 name = "framework_dfu"
 path = "framework_dfu.rs"
+
+[[test]]
+name = "stage_trace"
+path = "stage_trace.rs"
+
+# The imported production trace has a right-role USB-descriptor exclusion.
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(feature, values("right"))'] }

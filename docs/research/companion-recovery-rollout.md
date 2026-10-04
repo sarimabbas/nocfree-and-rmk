@@ -1,12 +1,12 @@
 # Companion recovery rollout
 
-The right half has owner-observed Companion recovery without a key chord and normal battery-start split typing. The left and receiver still need that same device acceptance. Preserve the factory bootloaders; the prepared change adds an application startup USB stage before RMK starts.
+The right half has owner-observed Companion recovery without a key chord and normal battery-start split typing. The left startup-stage candidate is installed and its exact readback is verified, but Companion startup recovery has not passed. The receiver still needs that device acceptance. Preserve the factory bootloaders; the application startup USB stage runs before RMK starts.
 
 ## Confirmed and pending
 
 | Part | Last observed working baseline | Prepared change | Remaining device evidence |
 | --- | --- | --- | --- |
-| Left | Application recovery shim; normal wired startup and Fn+Escape recovery observed | No-chord USB startup stage, then existing RMK | Fresh baseline, exact installed readback, Companion recovery, normal USB/BLE/split/dongle operation |
+| Left | No-chord startup candidate; exact application, padding and untouched readable regions verified through runtime DFU recovery | Temporary startup exit diagnostics | Companion startup recovery, normal USB/BLE/split/dongle operation |
 | Right | No-chord startup stage; exact readback, automatic Companion recovery and battery-start cross-half modifiers observed | None needed for this rollout | Broader release, simultaneous-input and latency acceptance remain separate |
 | Receiver | Working RMK receiver; exact readback and unplug/replug typing isolation observed | No-chord USB startup stage, then receiver RMK | Fresh baseline, exact installed readback, Companion recovery, pairing and isolated dongle typing |
 
@@ -14,7 +14,11 @@ The receiver's existing recovery depends on its running application. Its previou
 
 ## Left first
 
-The next physical step is to connect the working left half by USB, hold its Fn key, tap and release Escape, then release Fn. This opens the existing recovery drive. Leave the right and receiver unchanged.
+The installed left candidate removes Fn+Escape. Do not give that shortcut as its recovery procedure. Two captured WIRED USB reconnects showed the normal RMK interface without an observed startup-stage interface. This does not establish which startup branch ran or prove a cold MCU reset.
+
+A separately reviewed, exact-left standard runtime DFU request opened the factory recovery drive after a fresh USB disappearance and reappearance. Exact candidate readback, page padding and all untouched readable bytes then matched the saved baseline. This application-dependent route is diagnostic access, not proof that recovery survives an RMK crash.
+
+The next diagnostic will retain the existing startup timing and record whether USB-power detection, clock acquisition or USB enumeration prevented entry. It will expose the result through the ordinary USB manufacturer string, without storage writes or a new host protocol. Leave the right and receiver unchanged.
 
 Before transfer, bind a fresh CURRENT.UF2 and INFO_UF2.TXT to that left's previously observed identity and USB location. Require the application prefix to match the last installed, verified left shim, and save the fresh untouched gap and settings. Construct a rollback covering every page the new candidate will touch from this fresh baseline, rather than only the shorter old binary.
 
@@ -37,6 +41,14 @@ The receiver candidate changes RMK revision and therefore changes its storage sc
 The stage runs after HAL initialization and before RMK/MPSL. It presents a role-specific DFU endpoint for two seconds only when USB power is present at startup. Companion must already be watching. A cable reconnection may not restart a battery-powered half; guide the proven power-switch procedure instead of treating USB disappearance as proof of reset. The stage requests the existing factory bootloader through the observed retained-register entry mechanism, without replacing it.
 
 This protects against many failures after the stage, but not damage to the stage or a failure before it. Software guards and successful builds are not proof of recovery, lossless typing, charging correctness or measured latency.
+
+## Temporary exit diagnostic
+
+The opt-in `usb-rescue-diagnostic` feature publishes a 27-character manufacturer string: `rescue:E i=03 a=03 c=1f e=0`. It does not change the normal product name, startup gates, two-second window, clock ownership, USB cleanup or RMK feature selection. The trace lives in RAM only.
+
+The reason is `V` for absent VBUS, `C` for clock-acquisition timeout, or `E` after the USB stage returns. `I` is the initialized state. The hexadecimal samples are before HAL (`i`), after HAL (`a`), and after clock acquisition returns (`c`). The last sample includes timeout cleanup if acquisition fails. Sample bits 0/1 are VBUS/USB-output-ready, bit 2 is the outstanding high-frequency clock request, bit 3 is clock-running, and bit 4 is crystal source. `e` latches USB reset/configuration events in bits 0/1. A zero clock sample on a VBUS exit is unsampled, not evidence of a clock failure.
+
+The diagnostic identifies a branch; it does not establish crash-safe recovery. Hardware acceptance must still show the startup stage opening recovery when the later RMK application cannot run.
 
 ## Current offline check
 

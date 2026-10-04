@@ -4,6 +4,13 @@
 mod startup_recovery;
 #[cfg(feature = "usb-rescue-startup")]
 mod usb_rescue;
+#[cfg(feature = "usb-rescue-diagnostic")]
+mod usb_rescue_trace;
+#[cfg(all(
+    feature = "usb-rescue-diagnostic",
+    feature = "startup-recovery-diagnostic"
+))]
+compile_error!("Select only one startup manufacturer diagnostic");
 #[cfg(not(any(feature = "left", feature = "right", feature = "receiver")))]
 compile_error!("Select exactly one role: left, right, receiver");
 #[cfg(any(
@@ -62,6 +69,8 @@ fn ble_addr() -> [u8; 6] {
 }
 #[embassy_executor::main]
 async fn main(spawner: Spawner) {
+    #[cfg(feature = "usb-rescue-diagnostic")]
+    usb_rescue_trace::initialize(usb_rescue::diagnostic_snapshot());
     #[allow(unused_mut)]
     let mut p = embassy_nrf::init(embassy_nrf::config::Config::default());
     #[cfg(feature = "usb-rescue-startup")]
@@ -141,11 +150,21 @@ async fn main(spawner: Spawner) {
     #[cfg(not(feature = "right"))]
     let device_config = rmk::config::DeviceConfig {
         manufacturer: {
-            #[cfg(feature = "startup-recovery-diagnostic")]
+            #[cfg(feature = "usb-rescue-diagnostic")]
+            {
+                usb_rescue_trace::manufacturer()
+            }
+            #[cfg(all(
+                feature = "startup-recovery-diagnostic",
+                not(feature = "usb-rescue-diagnostic")
+            ))]
             {
                 startup_recovery::diagnostic_manufacturer()
             }
-            #[cfg(not(feature = "startup-recovery-diagnostic"))]
+            #[cfg(not(any(
+                feature = "startup-recovery-diagnostic",
+                feature = "usb-rescue-diagnostic"
+            )))]
             {
                 "NocFree RMK community"
             }

@@ -9,6 +9,28 @@ use embassy_usb::{Builder, Config, msos};
 mod scope;
 use scope::RequestScope;
 
+#[cfg(feature = "usb-rescue-diagnostic")]
+pub fn diagnostic_snapshot() -> crate::usb_rescue_trace::Snapshot {
+    crate::usb_rescue_trace::Snapshot {
+        usb: pac::POWER.usbregstatus().read().0,
+        run: pac::CLOCK.hfclkrun().read().0,
+        stat: pac::CLOCK.hfclkstat().read().0,
+    }
+}
+#[cfg(feature = "usb-rescue-diagnostic")]
+struct TraceEvents;
+#[cfg(feature = "usb-rescue-diagnostic")]
+impl embassy_usb::Handler for TraceEvents {
+    fn reset(&mut self) {
+        crate::usb_rescue_trace::reset_seen();
+    }
+    fn configured(&mut self, configured: bool) {
+        if configured {
+            crate::usb_rescue_trace::configured_seen();
+        }
+    }
+}
+
 // MPSL has not started yet. Preserve any preceding stage's outstanding request;
 // release only the HFXO request made by this stage, including timeout paths.
 struct StageClock(bool);
@@ -72,10 +94,25 @@ pub async fn run(
     irq: impl interrupt::typelevel::Binding<interrupt::typelevel::USBD, usb::InterruptHandler<USBD>>
     + 'static,
 ) {
+    #[cfg(feature = "usb-rescue-diagnostic")]
+    crate::usb_rescue_trace::record(
+        crate::usb_rescue_trace::Phase::PostHal,
+        diagnostic_snapshot(),
+    );
     if !pac::POWER.usbregstatus().read().vbusdetect() {
+        #[cfg(feature = "usb-rescue-diagnostic")]
+        crate::usb_rescue_trace::outcome(crate::usb_rescue_trace::Outcome::VbusAbsent);
         return;
     }
-    let Some(clock) = StageClock::acquire().await else {
+    let clock = StageClock::acquire().await;
+    #[cfg(feature = "usb-rescue-diagnostic")]
+    crate::usb_rescue_trace::record(
+        crate::usb_rescue_trace::Phase::PostClock,
+        diagnostic_snapshot(),
+    );
+    let Some(clock) = clock else {
+        #[cfg(feature = "usb-rescue-diagnostic")]
+        crate::usb_rescue_trace::outcome(crate::usb_rescue_trace::Outcome::ClockTimeout);
         return;
     };
     let driver = usb::Driver::new(peripheral, irq, PollingVbus);
@@ -100,6 +137,8 @@ pub async fn run(
         Duration::from_millis(1000),
     );
     let mut request_scope = RequestScope;
+    #[cfg(feature = "usb-rescue-diagnostic")]
+    let mut trace_events = TraceEvents;
     let mut builder = Builder::new(
         driver,
         config,
@@ -109,12 +148,16 @@ pub async fn run(
         &mut control,
     );
     builder.handler(&mut request_scope);
+    #[cfg(feature = "usb-rescue-diagnostic")]
+    builder.handler(&mut trace_events);
     builder.msos_descriptor(msos::windows_version::WIN8_1, 0x20);
     usb_dfu(&mut builder, &mut state, |function| {
         function.msos_feature(msos::CompatibleIdFeatureDescriptor::new("WINUSB", ""));
     });
     let mut device = builder.build();
     let _ = rmk::embassy_futures::select::select(device.run(), Timer::after_secs(2)).await;
+    #[cfg(feature = "usb-rescue-diagnostic")]
+    crate::usb_rescue_trace::outcome(crate::usb_rescue_trace::Outcome::StageElapsed);
     // nRF USB driver DMA functions synchronously wait for END before yielding;
     // after cancellation no transfer future owns an in-flight stack buffer.
     device.disable().await;
