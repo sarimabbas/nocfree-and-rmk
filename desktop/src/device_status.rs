@@ -140,7 +140,12 @@ impl Observation<'_> {
             connection,
             left: Peripheral {
                 level: levels.left,
-                mode: self.left_mode,
+                mode: self.left_mode.or(match connection {
+                    Connection::Dongle => Some(Mode::Dongle),
+                    Connection::Bluetooth => Some(Mode::Bluetooth),
+                    // USB can power a half in any switch position.
+                    Connection::Usb | Connection::Disconnected => None,
+                }),
                 usb_connected: left_usb,
                 recovery: recovery[0],
             },
@@ -162,6 +167,27 @@ mod tests {
         device::Snapshot,
         home::{Home, UpdateAssessment},
     };
+    #[test]
+    fn confirmed_dongle_link_supplies_missing_mode() {
+        let devices = vec![];
+        let status = Observation {
+            devices: &devices,
+            recovery_locations: [None; 3],
+            levels: crate::battery::Levels {
+                left: Some(100),
+                right: Some(99),
+            },
+            left_mode: None,
+            bluetooth_connected: false,
+            dongle_connected: true,
+            dongle_link_connected: true,
+            right_link_connected: true,
+        }
+        .derive();
+        assert_eq!(status.connection, crate::status_strip::Connection::Dongle);
+        assert_eq!(status.left.mode, Some(Mode::Dongle));
+        assert_eq!(status.left.level, Some(100));
+    }
     fn right_recovery() -> (Home, UsbKey) {
         let devices = vec![
             Device {

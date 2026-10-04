@@ -43,6 +43,8 @@ compile_error!("Select only one backlight polarity");
     not(any(feature = "backlight-active-low", feature = "backlight-active-high"))
 ))]
 compile_error!("Backlight output requires an explicit board polarity");
+#[cfg(all(feature = "status-led", not(feature = "left")))]
+compile_error!("Status LED pin mapping is documented only for LEFT");
 #[cfg(not(feature = "receiver"))]
 mod battery;
 #[cfg(feature = "left")]
@@ -51,6 +53,8 @@ mod keymap;
 mod mode_switch;
 #[cfg(not(feature = "receiver"))]
 mod scanner;
+#[cfg(feature = "status-led-mixing")]
+mod status_indicator;
 #[cfg(feature = "left")]
 mod vial;
 use defmt::unwrap;
@@ -244,6 +248,18 @@ async fn main(spawner: Spawner) {
         );
         adc.calibrate().await;
         let mut battery_adc = battery::Battery::new(adc, battery_enable);
+        #[cfg(all(feature = "status-led", not(feature = "status-led-mixing")))]
+        let mut status_led = rmk::status_led::StatusLed::new(
+            // Published LEFT blue LED: active low. Start inactive.
+            Output::new(p.P0_10, Level::High, OutputDrive::Standard),
+            true,
+        );
+        #[cfg(feature = "status-led-mixing")]
+        let mut status_led = rmk::status_led::StatusLed::new_mixed(
+            Output::new(p.P0_10, Level::High, OutputDrive::Standard),
+            status_indicator::RedIndicator::new(p.P0_09),
+            true,
+        );
         #[cfg(feature = "left")]
         let mut mode_switch = mode_switch::ModeSwitch::new(
             embassy_nrf::gpio::Input::new(p.P0_15, embassy_nrf::gpio::Pull::Up),
@@ -266,10 +282,22 @@ async fn main(spawner: Spawner) {
             twim::Config::default(),
             &mut twim_buffer,
         );
-        #[cfg(feature = "left")]
+        #[cfg(all(feature = "left", not(feature = "async-scanner")))]
         let mut matrix = scanner::Scanner::new(bus, &nocfree_input::LEFT_BITS);
-        #[cfg(feature = "right")]
+        #[cfg(all(feature = "right", not(feature = "async-scanner")))]
         let mut matrix = scanner::Scanner::new(bus, &nocfree_input::RIGHT_BITS);
+        #[cfg(all(feature = "left", feature = "async-scanner"))]
+        let mut matrix = scanner::Scanner::new_with_interrupt(
+            bus,
+            &nocfree_input::LEFT_BITS,
+            embassy_nrf::gpio::Input::new(p.P0_31, embassy_nrf::gpio::Pull::Up),
+        );
+        #[cfg(all(feature = "right", feature = "async-scanner"))]
+        let mut matrix = scanner::Scanner::new_with_interrupt(
+            bus,
+            &nocfree_input::RIGHT_BITS,
+            embassy_nrf::gpio::Input::new(p.P0_05, embassy_nrf::gpio::Pull::Up),
+        );
         #[cfg(feature = "right")]
         {
             let mut storage = rmk::storage::new_storage_without_keymap(flash, storage_config).await;
@@ -361,6 +389,11 @@ async fn main(spawner: Spawner) {
                 storage,
                 usb,
                 ble
+            );
+            #[cfg(feature = "status-led")]
+            let keyboard_tasks = rmk::futures::future::join(
+                keyboard_tasks,
+                rmk::core_traits::Runnable::run(&mut status_led),
             );
             #[cfg(feature = "backlight")]
             rmk::futures::future::join(keyboard_tasks, rmk::backlight::run(backlight, true)).await;

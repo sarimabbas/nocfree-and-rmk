@@ -1,117 +1,68 @@
 # Keyboard controls
 
-This guide separates installed development firmware from the intended release.
-The proposed controls and held-key startup recovery are not installed or hardware
-validated. Do not try the proposed startup gestures on the current firmware.
+## Current RMK firmware
 
-## Intended release
+Choose the connection with the LEFT switch:
 
-Choose the connection with the left switch:
-
-| Position | Connection | USB cable attached |
+| Position | Typing connection | USB cable attached |
 | --- | --- | --- |
-| Top | RMK receiver | Charging/maintenance; typing stays on the receiver |
-| Middle | USB | Typing over USB; without USB, no typing |
-| Bottom | Bluetooth | Charging/maintenance; typing stays on Bluetooth |
+| Top | RMK dongle | USB supplies power; typing stays on the dongle |
+| Middle | USB | Typing over USB; unplugged in this position, left is off |
+| Bottom | Bluetooth | USB supplies power; typing stays on Bluetooth |
 
-The right half sends its keys to the left wirelessly in all three modes. It does
-not become a separate USB keyboard. Right OFF must prevent typing, including
-while charging, if hardware makes the switch state observable. Full electrical
-power isolation cannot be promised from firmware.
+RIGHT sends keys to LEFT wirelessly in every mode. Its USB connection supplies
+power and Companion maintenance; it does not become an independent USB keyboard.
+RIGHT OFF controls its battery supply. USB can still power it, so a lit indicator
+with USB attached does not prove the battery switch is faulty.
 
-In Bluetooth mode, tap Fn+1, Fn+2 or Fn+3 to choose a saved computer. Hold the
-same combination for five seconds to replace its pairing, then choose
-**NocFree RMK** in that computer's Bluetooth settings. Other slots are retained.
+Tap Fn+1 through Fn+5 to select a saved Bluetooth profile. Hold the same chord
+for five seconds without pressing another key to replace that profile's pairing,
+then choose **NocFree RMK** in the computer's Bluetooth settings. The intended v1
+limit is three profiles; current development firmware still provides five.
+Fn+0 currently clears the selected Bluetooth bond. It is not an RMK recovery key.
 
-Companion provides connection repair, restart, confirmed settings reset, updates,
-and factory restoration. The install/update action is selected from the detected
-firmware state; an already current RMK installation offers neither action.
-Factory files come from the user's verified backups or individually validated
-left/right/receiver files; official firmware is not bundled.
+Mac F1/F2 control display brightness, F3 Mission Control, F4 Spotlight, F5/F6
+keyboard backlight, F7–F9 media, and F10–F12 audio. Fn exposes ordinary function
+keys. Hold F5/F6 to repeat backlight adjustments; brightness is saved and shared
+between halves.
 
-Ordinary Fn+Escape, Fn+0, Fn+U and Fn+B have no maintenance or connection action
-in this release design. Updates are deliberate Companion journeys. Restart does
-not erase settings; settings reset and restoring factory firmware are separate
-confirmed actions.
+## Recovery and updates
 
-## Intended emergency recovery
+Open **Start Recovery Mode** in Companion and choose LEFT, RIGHT, or dongle.
+Follow its steps for the detected firmware. Normal RMK runtime recovery works
+through the connected component's USB maintenance interface. Recovery entry
+alone does not erase settings or install firmware.
 
-The proposed board-specific bootloader checks physical keys before RMK starts:
+Current RMK has no Fn+Escape bootloader shortcut or startup key chord. Fn+U and
+Fn+B no longer select transports; the physical left switch does that. Do not use
+old development instructions that intentionally entered recovery on USB startup.
+The factory bootloader is retained. The watchdog protects application hangs;
+normal runtime recovery and deliberate-hang recovery are separate validation
+results, not a guarantee against every possible damaged application.
 
-| Half | Hold during a genuine startup with USB attached |
-| --- | --- |
-| Left | Its own Fn + Escape |
-| Right | Its own Fn + Backspace |
+Use Companion's available guided journeys to save backups and open recovery.
+The public factory-return journey is still disabled pending completion and
+acceptance; controlled developer restore trials do not make it available to
+newcomers. Official firmware is not bundled: the completed flow will use the
+appropriate user-supplied files or a verified local backup. Restart, settings
+reset, and factory restoration are different actions.
 
-Hold until the firmware drive appears, then release and open Companion's recovery
-journey. Each half must work alone with its peer off and radio unavailable.
-Saved keymap changes must not change these physical recovery positions.
-Ordinary cable attachment, mode selection, and these chords during normal typing
-must not enter recovery. Recovery entry alone never clears settings or writes a
-firmware image.
+## Sleep
 
-These gestures are proposals. A precise power-on procedure is still required:
-USB unplugging is not necessarily an MCU reset when battery power remains, and
-the right power switch does not necessarily reset a USB-powered MCU. The gesture
-must be tested on each actual hardware revision before publishing final steps.
-The receiver has no keys; its independent emergency entry is unresolved and must
-not inherit this procedure.
-
-## Installed development firmware
-
-The left mode selector is not yet authoritative. Leave the left in Bluetooth
-after battery-first startup; attach USB only once the application has started.
-Middle WIRED with USB removed for five seconds, then Bluetooth for ten seconds
-before reconnecting USB is the previously tested left startup procedure. The
-right's tested battery-first procedure is OFF with USB removed for five seconds,
-then ON for ten seconds before optionally attaching USB. Neither is release UX.
-
-Current shortcuts are Fn+1..5 for Bluetooth slots (hold five seconds to replace
-that slot's pairing), Fn+U to select the RMK receiver (hold five seconds to
-replace receiver pairing), Fn+B to toggle USB/BLE preference, and Fn+0 to clear
-the selected host bond. Left Fn+Escape requests the existing bootloader without
-a long hold. Right Fn+0 does not locally enter recovery in the full split build.
-
-The halves' recovery-first application marker intentionally makes USB-first
-startup enter the existing firmware drive before RMK. This preserves the tested
-development recovery route, but conflicts with the intended release startup.
-Do not remove the marker until the replacement route is independently verified.
-The receiver's independent crash-recovery route remains unresolved.
+USB power keeps that local half awake regardless of mode. On battery, LEFT's
+current idle candidate sleeps after 30 minutes; RIGHT follows LEFT except while
+RIGHT has its own USB power. The 30-minute first-key wake test is still pending.
+Backlights follow sleep and restore the saved brightness on wake. Battery
+endurance and instrumented wake latency have not been measured.
 
 ## Factory firmware
 
-The factory selector chooses dongle/wired/Bluetooth. Tap Fn+1/2/3 to select a
-Bluetooth computer; long-hold the same chord to pair. Receiver repair uses left
-Fn+4 for five seconds in dongle mode. Factory split repair uses long-hold left
-Fn+4 and right Fn+9, following the manufacturer's complete guide.
-See the [factory manual](https://www.nocfree.com/pages/nocfree-and-manual) and
-[troubleshooting guide](https://www.nocfree.com/pages/nocfree-and-troubleshooting).
+Factory Bluetooth uses tap Fn+1/2/3 to select and long-hold to pair. Factory
+recovery uses LEFT Fn+5 with USB/wired, RIGHT Fn+0 with its USB/ON, and the
+dongle DFU action assigned by NocFree Link. These depend on running factory
+firmware and are distinct from RMK's Companion recovery.
 
-Factory update entry is left Fn+5 for five seconds with USB in wired mode, or
-right Fn+0 for five seconds with that half connected directly by USB and ON.
-The receiver uses the factory Dongle DFU action, typically assigned to Fn+6;
-check the assignment in NocFree Link. These depend on running factory firmware
-and are not a universal crashed-firmware recovery route. See the
-[factory firmware guide](https://www.nocfree.com/blogs/news/nocfree-firmware-update-guide).
-
-## Release acceptance
-
-Before replacing the current development procedures:
-
-1. Establish genuine restart and selector readings on each half with and without
-   USB. Document any right-switch hardware limitation.
-2. Test ordinary cold USB startup without any recovery gesture on both halves.
-3. Test deliberate local recovery with RMK unable to run and the other half off.
-4. Test a remapped keymap, single held keys, brief chords, late key presses, and
-   mode changes: none may accidentally enter recovery.
-5. Test unavailable, failed and stuck I2C reads: bootloader decisions must finish
-   within a bounded time; no fabricated pressed-key state or indefinite loop.
-6. Verify selector routing never falls back to another host, and releases held
-   keys/modifiers on the previous host. Test simultaneous input, disconnect,
-   reconnect, saved pairing, and wake latency on USB, Bluetooth and receiver.
-7. Verify recovery survives each half's update and that Companion validates the
-   role and image before transfer. Establish a separate receiver recovery route.
-
-The host harness and role cross-builds are prerequisites, not substitutes for
-these hardware observations. Bootloader installation is a separate reviewed
-operation; existing application readbacks do not back up bootloader code or UICR.
+Use the [factory manual](https://www.nocfree.com/pages/nocfree-and-manual) and
+[firmware guide](https://www.nocfree.com/blogs/news/nocfree-firmware-update-guide)
+for complete vendor procedures. Do not assume a factory shortcut recovers a
+crashed replacement application.

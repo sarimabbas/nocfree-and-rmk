@@ -40,6 +40,12 @@ usb-log = ["rmk/usb_log", "dep:log", "log/max_level_warn", "log/release_max_leve
 battery-adc-diagnostic = ["rmk/usb_log", "dep:log", "log/max_level_error", "log/release_max_level_error"]
 # Interim compile-time Mac media row; runtime OS profiles are a later milestone.
 mac-keymap = []
+# Expander interrupt idle scanning; opt-in until each half passes wake acceptance.
+async-scanner = ["rmk/async_matrix", "dep:embedded-hal"]
+# LEFT blue status GPIO; opt-in until physical polarity/behavior acceptance.
+status-led = ["rmk/status_led", "embassy-nrf/nfc-pins-as-gpio", "embassy-nrf/preserve-uicr"]
+# Optical trial only: shared red channel is sink-only and released on USB.
+status-led-mixing = ["status-led", "rmk/status_led_mix", "dep:embedded-hal"]
 # Opt-in until the board's physical backlight polarity is verified.
 backlight = ["rmk/backlight"]
 backlight-active-low = ["backlight"]
@@ -86,7 +92,7 @@ receiver = ["rmk/dongle", "rmk/adafruit_bl", "rmk/vial", "rmk/host_lock"]
 nrf-pac = { version = "=0.4.0", features = ["nrf52833", "rt"], optional = true }
 log = { version = "0.4", optional = true }
 embassy-usb = { version = "=0.6.0", optional = true }
-rmk = { git = "https://github.com/sarimabbas/rmk-nocfree", rev = "c1480a3026735b01387ed8ff8e40e11d7faf6c1a", default-features = false, features = ["storage", "nrf52833_ble"] }
+rmk = { git = "https://github.com/sarimabbas/rmk-nocfree", rev = "a3802774bbec18d004787d2c50618b6ea1942917", default-features = false, features = ["storage", "nrf52833_ble"] }
 nocfree-input = { path = "../crates/nocfree-input" }
 nrf-sdc = { version = "0.4", features = ["defmt", "peripheral", "central", "nrf52833"] }
 nrf-mpsl = { version = "0.4", features = ["defmt", "critical-section-impl", "nrf52833"] }
@@ -94,6 +100,7 @@ embassy-nrf = { version = "0.11", features = ["defmt", "nrf52833", "time-driver-
 embassy-executor = { version = "0.10", features = ["defmt", "platform-cortex-m", "executor-thread"] }
 embassy-time = { version = "0.5", features = ["tick-hz-32_768", "defmt", "defmt-timestamp-uptime"] }
 embedded-hal-async = "1"
+embedded-hal = { version = "1", optional = true }
 cortex-m = "0.7"
 cortex-m-rt = { version = "0.7", features = ["set-vtor"] }
 defmt = "1"
