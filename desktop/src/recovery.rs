@@ -1,7 +1,7 @@
 //! Explicitly armed recovery guide. Requests recovery only; never writes firmware.
+use crate::recovery_journey::Procedure;
+use crate::runtime_recovery::{ArmedRequest, Role, matches as runtime_matches};
 use crate::{device, session::Session};
-use nocfree_companion::recovery_journey::Procedure;
-use nocfree_companion::runtime_recovery::{ArmedRequest, Role, matches as runtime_matches};
 use std::{
     sync::{
         Arc,
@@ -24,7 +24,7 @@ pub(crate) fn run(
         .map_err(|_| "Couldn’t start recovery.".to_owned())?;
     let result = runtime.block_on(async move {
         let mut session = Session::new();
-        session.select(if role == Role::Right { device::Role::Right } else { device::Role::Left });
+        session.select_recovery_role(role);
         let mut disconnected = false;
         let mut last_procedure = None;
         let mut requested_location=None;

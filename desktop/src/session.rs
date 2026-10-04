@@ -28,10 +28,12 @@ enum ReturnPhase {
 #[derive(Default)]
 pub struct Session {
     role: Option<Role>,
+    recovery_role: Option<crate::runtime_recovery::Role>,
     location: Option<u64>,
     ready: Option<BootMount>,
     normal_present: bool,
     rmk_left: bool,
+    legacy_left_start: bool,
     factory_right: bool,
     connection_present: bool,
     problem: Option<String>,
@@ -60,6 +62,29 @@ impl Session {
             status: "Waiting for normal-mode identification.".into(),
             ..Self::default()
         };
+    }
+    /// Explicit role selected by the recovery worker; shared factory USB identities
+    /// cannot establish whether the physically selected component is a dongle.
+    pub fn select_recovery_role(&mut self, role: crate::runtime_recovery::Role) {
+        self.select(if role == crate::runtime_recovery::Role::Right {
+            Role::Right
+        } else {
+            Role::Left
+        });
+        self.recovery_role = Some(role);
+    }
+    pub(crate) fn recovery_binding(
+        &self,
+    ) -> Result<(crate::runtime_recovery::Role, u64, BootMount), String> {
+        if self.problem.is_some() {
+            return Err("Recovery connection is unavailable.".into());
+        }
+        Ok((
+            self.recovery_role
+                .ok_or("Recovery role was not explicitly selected.")?,
+            self.location.ok_or("Recovery connection is missing.")?,
+            self.ready.clone().ok_or("Recovery drive is missing.")?,
+        ))
     }
     /// Retry the physical return guide without losing a completed host archive.
     /// A retained port is correlation for this live guide, not fresh role evidence.
@@ -213,7 +238,7 @@ impl Session {
             ReturnPhase::OffWait { since }
                 if now.saturating_duration_since(since) >= Duration::from_secs(5) =>
             {
-                if self.role == Some(Role::Right) || self.rmk_left {
+                if self.role == Some(Role::Right) || self.legacy_left_start {
                     ReturnPhase::PowerOn
                 } else {
                     ReturnPhase::Reconnect
@@ -421,6 +446,11 @@ impl Session {
                     .map_err(|_| "Could not encode the local journal.")?,
             )?;
             self.backup_path = Some(folder.clone());
+            self.legacy_left_start = self.rmk_left
+                && data.as_chunks::<512>().0.iter().any(|block| {
+                    u32::from_le_bytes(block[12..16].try_into().unwrap()) == 0x1200
+                        && u32::from_le_bytes(block[32..36].try_into().unwrap()) == 0x87eeb07c
+                });
             self.archived_location = location;
             self.return_phase = Some(ReturnPhase::Disconnect);
             self.status = "Private readback saved and hashed. No firmware was written.".into();
@@ -507,6 +537,28 @@ fn atomic_file(folder: &Path, name: &str, bytes: &[u8]) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn modern_left_returns_in_wired_while_legacy_marker_keeps_old_start_guide() {
+        let now = std::time::Instant::now();
+        for legacy in [false, true] {
+            let mut session = super::Session {
+                role: Some(crate::device::Role::Left),
+                rmk_left: true,
+                legacy_left_start: legacy,
+                return_phase: Some(super::ReturnPhase::OffWait { since: now }),
+                ..Default::default()
+            };
+            session.advance_return(now + std::time::Duration::from_secs(5));
+            assert_eq!(
+                matches!(session.return_phase, Some(super::ReturnPhase::PowerOn)),
+                legacy
+            );
+            assert_eq!(
+                matches!(session.return_phase, Some(super::ReturnPhase::Reconnect)),
+                !legacy
+            );
+        }
+    }
     use super::*;
     use crate::device::Device;
     fn normal() -> Snapshot {
@@ -861,6 +913,8 @@ mod tests {
         s.observe_at(Ok(boot(true)), now);
         assert!(s.view().can_save);
         // Same saved-archive return seam exercised by the existing factory tests.
+        // Legacy marker classification comes from saved bytes, never the USB name.
+        s.legacy_left_start = true;
         s.backup_path = Some(PathBuf::from("/private/rmk-fixture"));
         s.return_phase = Some(ReturnPhase::Disconnect);
         s.observe_at(Ok(Snapshot::default()), now);

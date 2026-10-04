@@ -1,0 +1,11 @@
+# Companion local firmware release
+
+`python3 scripts/package_companion_release.py` produces the fixed local release in ignored `dist/companion-firmware`. `--check` validates without generating files. The script reads private review and installed UF2 readback evidence for each role, binds exact candidate hashes, and reruns the address/vector/family guard. It neither queries devices nor writes firmware. Factory firmware is never packaged.
+
+This local release contains the verified ANSI layout with Mac key behavior; it is not presented as a separate tested Windows/Linux keymap release. The package contains a schema-1 manifest plus an exact UF2/BIN pair for left, right and dongle. The manifest identifies source checkpoints and RMK revisions separately per role: the physically verified left uses the switch-routing revision, while right and dongle retain their prior framework revision. The two half calibrations are provisional 150/100 voltage estimates, not a validated battery capacity model. The dongle retains S140; the halves use reclaimed application space. Storage schema changes can require re-pairing when installing from a different revision.
+
+Companion loads `Contents/Resources/Firmware` in its app bundle. A debug build can use the generated dist directory. The code pins the exact manifest hash, denies unknown fields, bounds file sizes, accepts only plain filenames, binds each role to its exact UF2/BIN hashes and reruns the Rust image guard. An edited manifest or a structurally valid image from another role is rejected. Public imports do not become trusted releases.
+
+These images were independently reviewed and installed readbacks matched exactly. The receiver's prior storage changed as expected when its schema changed; this is not mislabeled as storage preservation. Runtime Companion recovery was observed, but a deliberate receiver crash/recovery test remains unperformed. Package validation establishes byte identity; the installer still requires separate device identity, recovery and backup gates.
+
+USB names indicate a role, never a firmware version. Whether a board already has the release must be determined from exact recovery readback, with a saved checkpoint used only as a record of that observation. Updating the allowlist requires another reviewed, role-specific package and a new release ID.

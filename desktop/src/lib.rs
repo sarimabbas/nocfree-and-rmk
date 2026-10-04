@@ -1,4 +1,6 @@
-//! Host-side update preparation. This library does not transfer firmware.
+//! Companion's shared recovery, backup and guarded application-update core.
+pub mod firmware_journey;
+pub mod release;
 pub mod runtime_recovery;
 pub mod update;
 pub mod update_image;
@@ -10,4 +12,7 @@ pub mod session;
 
 pub mod recovery_journey;
 
+mod battery;
 pub mod flow_presentation;
+mod recovery;
+pub mod ui;

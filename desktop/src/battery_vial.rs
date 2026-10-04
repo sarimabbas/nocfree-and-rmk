@@ -2,8 +2,8 @@
 //! Native HID writes are synchronous: the UI bounds observation time, not the
 //! OS syscall. Battery's single-flight guard prevents accumulating stuck calls.
 use super::Readings;
+use crate::runtime_recovery::Role;
 use hidapi::{BusType, DeviceInfo as HidInfo, HidApi};
-use nocfree_companion::runtime_recovery::Role;
 use nusb::{DeviceInfo, MaybeFuture};
 use rynk::rmk_types::battery::{BatteryStatus, ChargeState};
 use std::time::{Duration, Instant};

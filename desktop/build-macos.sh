@@ -29,6 +29,10 @@ for size in 16 32 128 256 512; do
   /usr/bin/sips -z "$double" "$double" "$icon_work/icon.png" --out "$icon_work/Companion.iconset/icon_${size}x${size}@2x.png" >/dev/null
 done
 /usr/bin/iconutil -c icns "$icon_work/Companion.iconset" -o "$bundle/Contents/Resources/Companion.icns"
+if [ -f ../dist/companion-firmware/manifest.json ]; then
+    mkdir -p "$bundle/Contents/Resources/Firmware"
+    cp ../dist/companion-firmware/* "$bundle/Contents/Resources/Firmware/"
+fi
 cp target/debug/nocfree-companion "$bundle/Contents/MacOS/nocfree-companion.new"
 mv "$bundle/Contents/MacOS/nocfree-companion.new" "$bundle/Contents/MacOS/nocfree-companion"
 cat > "$bundle/Contents/Info.plist" <<'PLIST'

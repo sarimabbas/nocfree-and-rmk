@@ -17,6 +17,8 @@ pub enum ImagePolicy {
     LeftStartup,
     RightStartup,
     ReceiverProtected,
+    /// Page-padded UF2 release, distinct from the legacy serial BIN package.
+    ReceiverProtectedPage,
 }
 impl ImagePolicy {
     pub fn role(self) -> crate::runtime_recovery::Role {
@@ -24,12 +26,12 @@ impl ImagePolicy {
         match self {
             Self::LegacyLeftMigration | Self::LeftStartup => Role::Left,
             Self::RightStartup => Role::Right,
-            Self::ReceiverProtected => Role::Receiver,
+            Self::ReceiverProtected | Self::ReceiverProtectedPage => Role::Receiver,
         }
     }
     pub fn start(self) -> u32 {
         match self {
-            Self::ReceiverProtected => 0x27000,
+            Self::ReceiverProtected | Self::ReceiverProtectedPage => 0x27000,
             _ => START,
         }
     }
@@ -206,7 +208,7 @@ pub fn validate_for(
     {
         return Err(Coverage);
     }
-    let minimum = if policy == ImagePolicy::ReceiverProtected {
+    let minimum = if policy.role() == crate::runtime_recovery::Role::Receiver {
         8
     } else {
         (0x3008 - START) as usize
@@ -262,14 +264,14 @@ pub fn validate_for(
         {
             return Err(StartupReserve);
         }
-        ImagePolicy::ReceiverProtected
+        ImagePolicy::ReceiverProtected | ImagePolicy::ReceiverProtectedPage
             if binary.len() >= 0x204 && word(binary, 0x200) == 0x87eeb07c =>
         {
             return Err(ReceiverMarker);
         }
         _ => {}
     }
-    if policy != ImagePolicy::ReceiverProtected
+    if policy.role() != crate::runtime_recovery::Role::Receiver
         && word(binary, (0x3004 - START) as usize) == 0x51b1e5db
     {
         return Err(OldSoftDevice);
@@ -302,6 +304,10 @@ mod tests {
     }
 
     fn uf2(binary: &[u8]) -> Vec<u8> {
+        uf2_at(binary, START)
+    }
+
+    fn uf2_at(binary: &[u8], origin: u32) -> Vec<u8> {
         let mut padded = binary.to_vec();
         padded.resize(binary.len().div_ceil(PAGE) * PAGE, 0xff);
         let count = padded.len() / PAYLOAD;
@@ -311,7 +317,7 @@ mod tests {
                 (0, 0x0a324655),
                 (4, 0x9e5d5157),
                 (8, 0x2000),
-                (12, START + (index * PAYLOAD) as u32),
+                (12, origin + (index * PAYLOAD) as u32),
                 (16, PAYLOAD as u32),
                 (20, index as u32),
                 (24, count as u32),
@@ -323,6 +329,37 @@ mod tests {
             block[32..288].copy_from_slice(&padded[index * PAYLOAD..(index + 1) * PAYLOAD]);
         }
         image
+    }
+
+    #[test]
+    fn protected_receiver_requires_exact_page_padded_pair() {
+        let mut bin = vec![0u8; 0x204];
+        put(&mut bin, 0, 0x20020000);
+        put(&mut bin, 4, 0x27101);
+        let image = uf2_at(&bin, 0x27000);
+        let proof = validate_for(ImagePolicy::ReceiverProtectedPage, &image, &bin).unwrap();
+        assert_eq!(proof.end_exclusive(), 0x28000);
+        assert_eq!(proof.blocks(), 16);
+        let mut wrong = bin.clone();
+        put(&mut wrong, 0x200, 0x87eeb07c);
+        assert_eq!(
+            validate_for(
+                ImagePolicy::ReceiverProtectedPage,
+                &uf2_at(&wrong, 0x27000),
+                &wrong
+            )
+            .unwrap_err(),
+            ValidationError::ReceiverMarker
+        );
+        // A structurally valid 256-byte padded pair is shorter than one flash page.
+        let mut short = image[..3 * 512].to_vec();
+        for block in short.as_chunks_mut::<512>().0 {
+            put(block, 24, 3);
+        }
+        assert_eq!(
+            validate_for(ImagePolicy::ReceiverProtectedPage, &short, &bin).unwrap_err(),
+            ValidationError::ExactMatch
+        );
     }
 
     #[test]

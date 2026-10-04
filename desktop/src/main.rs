@@ -1,14 +1,4 @@
-mod battery;
-mod device;
-mod flow_presentation;
-mod home;
-use nocfree_companion::recovery_journey;
-#[cfg(test)]
-use nocfree_companion::runtime_recovery;
-mod journey;
-mod recovery;
-mod session;
-mod ui;
+use nocfree_companion::ui;
 
 use gpui_kit::{
     App, AppContext, Bounds, Focusable, KeyBinding, Menu, MenuItem, TitlebarOptions, WindowBounds,
