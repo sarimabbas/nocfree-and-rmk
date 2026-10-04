@@ -66,6 +66,20 @@ These image findings cannot decide whether the charger is faulty or the cell cur
 
 ### Downloaded release normalizes against a learned full reference
 
+The downloaded v2.4.5 RIGHT application has the same additional normalization.
+Its ADC call at `0x2a0ca` feeds the intermediate conversion at
+`0x2a0d4`–`0x2a0f4`: approximately `raw × 3300 / 4095 × 1.3`, followed by
+75:25 smoothing into object offset36. The full-reference field at offset40
+defaults to3300 at `0x29ece`–`0x29ed2`. At `0x2a154`–`0x2a172`, the loop
+validates that reference against2600–3600, substitutes3300 if invalid, then
+computes `intermediate × 4200 / reference`. This establishes matching factory
+software normalization for both halves, not physical right-half calibration.
+After the owner turned the right ON and reported delayed wake with8%, a live
+read-only framework query reported right connected at10% and left100%. The
+query returns the producer cache; it does not establish a new sample, charge
+state, wake duration, or true cell capacity. The installed right scale remains
+130/100.
+
 The downloaded release does **not** stop at the published1.3 multiplier. Its sampling path first computes approximately `raw × 3300 / 4095 × 1.3`, then smooths into object offset40 (old/new75%/25%). At `0x2ee6e`–`0x2ee8c` it multiplies that value by4200 and divides by the full-reference field at offset44, accepting2600–3600 and substituting3300 otherwise. A second reporting path at `0x2ea44`–`0x2ea64` uses the same normalization before its percentage curve. With default reference3300, the two3300 factors cancel: final normalized voltage is approximately `raw × 4200 / 4095 × 1.3`. Relative to RMK's nominal3.6V ADC model, this is an effective multiplier around1.517, not merely1.3. This is software normalization, not proof of physical resistor values.
 
 The function at `0x2de8c` loads a saved calibration record, rather than reading a charging-status pin. It requires magic `0x42415431`, a16-bit reference plus its complemented upper16 bits, and reference2600–3600. Success writes offset44 and returns1, stored in object flag25. The flash location is derived from UICR's bootloader address (or FICR flash geometry) minus two flash pages, with record offsets0x30/0x34; this inference describes the existing vendor implementation and authorizes no flash access or copied persistence implementation.
