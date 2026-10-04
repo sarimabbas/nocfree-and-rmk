@@ -142,7 +142,7 @@ mod machine {
 /// The Statig state is authoritative; State only projects it for rendering.
 pub struct Machine {
     machine: statig::blocking::StateMachine<machine::Backup>,
-    completion: crate::completion_gate::CompletionGate<(State, journey::State)>,
+    pending: Option<journey::State>,
 }
 impl Default for Machine {
     fn default() -> Self {
@@ -154,7 +154,7 @@ impl Machine {
         use statig::prelude::IntoStateMachineExt;
         Self {
             machine: machine::Backup.state_machine(),
-            completion: Default::default(),
+            pending: None,
         }
     }
     pub fn state(&self) -> State {
@@ -171,23 +171,37 @@ impl Machine {
         }
     }
     pub fn transition(&mut self, event: Event) -> bool {
-        self.transition_at(event, std::time::Instant::now())
-    }
-    fn transition_at(&mut self, event: Event, now: std::time::Instant) -> bool {
-        let source = self.state();
-        if let Event::Observed(target) = event {
-            // Complete already contains the child's continuously checked
-            // five-second return. Do not delay a frozen terminal result again.
-            let completed = matches!((source, target), (State::Saving, journey::State::Returning));
-            if !self.completion.ready((source, target), completed, now) && completed {
-                return false;
-            }
-        } else {
-            self.completion.reset();
+        if let Event::Observed(target) = event
+            && !matches!(target, journey::State::Failed | journey::State::Paused)
+        {
+            let projected = match target {
+                journey::State::Guiding | journey::State::ReadyToSave => State::Guiding,
+                journey::State::Returning => State::Returning,
+                journey::State::Complete => State::Complete,
+                _ => unreachable!(),
+            };
+            self.pending = (matches!(
+                self.state(),
+                State::Guiding | State::Saving | State::Returning
+            ) && projected != self.state())
+            .then_some(target);
+            return false;
         }
+        self.pending = None;
+        self.dispatch(event)
+    }
+    fn dispatch(&mut self, event: Event) -> bool {
         let mut accepted = false;
         self.machine.handle_with_context(&event, &mut accepted);
         accepted
+    }
+    pub fn can_next(&self) -> bool {
+        self.pending.is_some()
+    }
+    pub fn next(&mut self) -> bool {
+        self.pending
+            .take()
+            .is_some_and(|target| self.dispatch(Event::Observed(target)))
     }
     pub fn active(&self) -> bool {
         self.state().active()
@@ -207,38 +221,27 @@ impl Machine {
 mod tests {
     use super::*;
     #[test]
-    fn completion_waits_five_seconds_and_lost_readiness_resets_it() {
-        use std::time::{Duration, Instant};
+    fn observations_enable_next_without_advancing_and_updates_replace_pending_step() {
         let mut flow = Machine::new();
-        let now = Instant::now();
-        flow.transition_at(Event::Select, now);
-        flow.transition_at(Event::SaveStarted, now);
-        let completed = Event::Observed(journey::State::Returning);
-        assert!(!flow.transition_at(completed, now));
-        assert!(!flow.transition_at(completed, now + Duration::from_secs(4)));
+        flow.transition(Event::Select);
+        flow.transition(Event::SaveStarted);
+        assert!(!flow.transition(Event::Observed(journey::State::Returning)));
         assert_eq!(flow.state(), State::Saving);
-        flow.transition_at(
-            Event::Observed(journey::State::Guiding),
-            now + Duration::from_secs(5),
-        );
-        flow.transition_at(Event::SaveStarted, now + Duration::from_secs(5));
-        assert!(!flow.transition_at(completed, now + Duration::from_secs(6)));
-        assert!(!flow.transition_at(completed, now + Duration::from_secs(10)));
-        assert!(flow.transition_at(completed, now + Duration::from_secs(11)));
+        assert!(flow.can_next());
+        assert!(flow.next());
         assert_eq!(flow.state(), State::Returning);
-        assert!(flow.transition_at(
-            Event::Observed(journey::State::Complete),
-            now + Duration::from_secs(11)
-        ));
-        assert_eq!(flow.state(), State::Complete);
+        assert!(!flow.next());
+        flow.transition(Event::Observed(journey::State::Complete));
+        assert!(flow.can_next());
+        flow.transition(Event::Observed(journey::State::Returning));
+        assert!(!flow.can_next());
+        assert!(!flow.next());
+        flow.transition(Event::Observed(journey::State::Failed));
+        assert_eq!(flow.state(), State::Failed);
+        assert!(!flow.next());
     }
     pub(super) fn settled(machine: &mut Machine, event: Event) -> bool {
-        let now = std::time::Instant::now();
-        machine.transition_at(event, now)
-            || machine.transition_at(
-                event,
-                now + crate::completion_gate::DEFAULT_COMPLETION_DELAY,
-            )
+        machine.transition(event) || machine.next()
     }
     #[test]
     fn cancel_recovery_then_ignore_late_result_and_start_fresh() {

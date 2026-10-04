@@ -211,18 +211,15 @@ impl Journey {
         self.session.observe_with_mode(observation, mode);
         self.advance();
     }
-    pub(crate) fn completion_remaining(&self) -> Option<std::time::Duration> {
-        self.session.completion_remaining()
+    pub(crate) fn can_next_return(&self) -> bool {
+        self.session.can_next_return()
     }
-    pub(crate) fn confirm_wired(&mut self) {
-        if matches!(
-            self.state(),
-            State::Paused | State::Failed | State::Complete
-        ) {
-            return;
+    pub(crate) fn next_return(&mut self) -> bool {
+        let changed = self.session.next_return();
+        if changed {
+            self.advance();
         }
-        self.session.confirm_wired();
-        self.advance();
+        changed
     }
     fn advance(&mut self) {
         let view = self.session.view();

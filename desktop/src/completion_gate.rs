@@ -1,11 +1,11 @@
-//! Default pacing for successful, automatic journey steps.
+//! Readiness adapter for effects that still use the shared gate interface.
 //!
-//! Poll with the current step identity and freshly checked prerequisites. A
-//! different step or lost prerequisite starts the full delay again. This gate
-//! never sleeps, performs effects, or delays cancellation and failure handling.
+//! Freshly satisfied conditions are immediately ready. Visible journey stages
+//! advance only through explicit Next events; there is no artificial hold.
+//! This helper never performs effects or delays cancellation and failures.
 use std::time::{Duration, Instant};
 
-pub const DEFAULT_COMPLETION_DELAY: Duration = Duration::from_secs(5);
+pub const DEFAULT_COMPLETION_DELAY: Duration = Duration::ZERO;
 
 #[derive(Debug)]
 pub struct CompletionGate<K> {
@@ -19,8 +19,8 @@ impl<K> Default for CompletionGate<K> {
 }
 
 impl<K: Eq> CompletionGate<K> {
-    /// True only after the same step's prerequisites remain satisfied for five
-    /// seconds. Call on each fresh observation, including unsuccessful ones.
+    /// Current readiness, with no artificial delay. Poll with freshly checked
+    /// prerequisites, including unsuccessful observations.
     pub fn ready(&mut self, key: K, condition: bool, now: Instant) -> bool {
         if !condition {
             self.reset();
@@ -35,7 +35,7 @@ impl<K: Eq> CompletionGate<K> {
             _ => {}
         }
         self.pending = Some((key, now));
-        false
+        DEFAULT_COMPLETION_DELAY.is_zero()
     }
 
     /// Discard a pending success after cancellation, failure, or explicit reset.
@@ -43,6 +43,9 @@ impl<K: Eq> CompletionGate<K> {
         self.pending = None;
     }
     pub fn remaining(&self, now: Instant) -> Option<Duration> {
+        if DEFAULT_COMPLETION_DELAY.is_zero() {
+            return None;
+        }
         self.pending.as_ref().map(|(_, since)| {
             DEFAULT_COMPLETION_DELAY.saturating_sub(now.saturating_duration_since(*since))
         })
@@ -54,52 +57,50 @@ mod tests {
     use super::*;
 
     #[test]
-    fn success_waits_the_full_default_delay() {
+    fn fresh_satisfied_conditions_are_ready_without_a_timer() {
         let now = Instant::now();
         let mut gate = CompletionGate::default();
-        assert!(!gate.ready("left", true, now));
-        assert!(!gate.ready("left", true, now + Duration::from_millis(4999)));
-        assert!(gate.ready("left", true, now + DEFAULT_COMPLETION_DELAY));
+        assert_eq!(DEFAULT_COMPLETION_DELAY, Duration::ZERO);
+        assert!(gate.ready("left", true, now));
+        assert!(gate.remaining(now).is_none());
     }
 
     #[test]
-    fn lost_prerequisite_discards_even_an_expired_success() {
+    fn readiness_loss_clears_pending_proof_immediately() {
         let now = Instant::now();
         let mut gate = CompletionGate::default();
-        assert!(!gate.ready("left", true, now));
-        assert!(!gate.ready("left", false, now + DEFAULT_COMPLETION_DELAY));
-        assert!(!gate.ready("left", true, now + Duration::from_secs(6)));
-        assert!(!gate.ready("left", true, now + Duration::from_secs(10)));
-        assert!(gate.ready("left", true, now + Duration::from_secs(11)));
+        assert!(gate.ready("left", true, now));
+        assert!(!gate.ready("left", false, now));
+        assert!(gate.pending.is_none());
+        assert!(gate.ready("left", true, now));
     }
 
     #[test]
-    fn new_step_cannot_inherit_another_steps_elapsed_time() {
+    fn new_identity_uses_its_current_condition() {
         let now = Instant::now();
         let mut gate = CompletionGate::default();
-        assert!(!gate.ready(("left", 1), true, now));
-        assert!(!gate.ready(("right", 1), true, now + Duration::from_secs(6)));
-        assert!(!gate.ready(("right", 2), true, now + Duration::from_secs(12)));
-        assert!(gate.ready(("right", 2), true, now + Duration::from_secs(17)));
+        assert!(gate.ready(("left", 1), true, now));
+        assert!(!gate.ready(("right", 2), false, now));
+        assert!(gate.ready(("right", 2), true, now));
+        assert_eq!(gate.pending.as_ref().unwrap().0, ("right", 2));
     }
 
     #[test]
-    fn backwards_time_restarts_the_window_instead_of_advancing() {
+    fn backwards_time_does_not_invent_a_hold() {
         let now = Instant::now();
         let mut gate = CompletionGate::default();
-        assert!(!gate.ready("left", true, now + Duration::from_secs(10)));
-        assert!(!gate.ready("left", true, now + Duration::from_secs(2)));
-        assert!(!gate.ready("left", true, now + Duration::from_secs(6)));
-        assert!(gate.ready("left", true, now + Duration::from_secs(7)));
+        assert!(gate.ready("left", true, now + Duration::from_secs(10)));
+        assert!(gate.ready("left", true, now));
+        assert!(!gate.ready("left", false, now));
     }
 
     #[test]
-    fn explicit_reset_prevents_reusing_completed_step() {
+    fn explicit_reset_discards_the_previous_observation() {
         let now = Instant::now();
         let mut gate = CompletionGate::default();
-        assert!(!gate.ready("left", true, now));
-        assert!(gate.ready("left", true, now + DEFAULT_COMPLETION_DELAY));
+        assert!(gate.ready("left", true, now));
         gate.reset();
-        assert!(!gate.ready("left", true, now + Duration::from_secs(6)));
+        assert!(gate.pending.is_none());
+        assert!(!gate.ready("left", false, now));
     }
 }

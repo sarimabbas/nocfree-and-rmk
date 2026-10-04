@@ -1,18 +1,20 @@
 # Companion transition guards
 
-Automatic successful journey steps use `CompletionGate`, with a shared five-second default. Each observation must still satisfy the step prerequisites. Losing readiness, changing the bound part or step, or losing fresh evidence resets the pending completion. The gate uses an injected monotonic clock; it does not block the UI thread.
+Visible successful journey stages advance only after an explicit **Next** event. Observations update authoritative readiness and pending results; they do not advance the journey. Readiness depends on the current role, bound USB location, fresh telemetry, and the stage's prerequisites. Missing or changed evidence invalidates readiness. There is no artificial completion delay.
 
-| Machine / boundary | Completion prerequisite |
+| Machine / boundary | Next prerequisite |
 | --- | --- |
 | Firmware install / restore return | Normal firmware at the bound USB location; RMK left additionally reports Wired mode. Factory left requires explicit Wired confirmation after normal USB return. |
-| Backup return | The same guarded return, followed by the saved-copy completion boundary. |
-| Recovery worker | Exactly one validated, correlated recovery drive; continued drive observations through the completion interval. Runtime request dispatch also requires stable target presence. |
-| Scope identification | Stable detach, then exactly one matching newly attached candidate. Stale inventory resets completion. |
-| Peripheral batch | Observed detach of the current part before offering the next part. |
-| Check pairing | Stable readiness before dispatch, stable completed links before success. Whole-keyboard checks require a dongle. |
-| Installation mode tests | Fresh evidence of the requested mode, USB power arrangement and links for five seconds. Matching typed text enables the manual Next button immediately while prerequisites remain satisfied. |
+| Backup return | The same guarded return; saved-copy and return completion are adopted through Next. |
+| Recovery worker | One validated, correlated recovery drive is recorded as a pending result. Next adopts it after current evidence is checked. Runtime dispatch occurs only within the explicitly started recovery step. |
+| Scope identification | Fresh absence before Next offers connection; then one matching, unique attached candidate before Next records identity. |
+| Peripheral batch | Fresh absence of the current recovery drive before Next starts the next part. |
+| Check pairing | Fresh link observations queue the next guidance stage; Next adopts it. Repair writes require explicit Next from Ready. Whole-keyboard checks require a dongle. |
+| Installation mode tests | Fresh evidence of the requested mode, USB power arrangement and links enables typing. The exact typed token enables Next; it does not advance automatically. |
 
-Navigation, scope selection, explicit Next, cancellation, failures, operation permits and effect callbacks remain immediate. These are control events rather than automatically completed physical steps. Delaying them could retain a cancelled effect or permit duplicate work. Statig state remains the authoritative source for rendering.
+Navigation, selections, cancellation, errors and asynchronous operation bookkeeping remain immediate. These events do not authorize further device work by themselves. A successful effect updates readiness for the next explicit action. Statig state remains authoritative for rendering; callbacks must carry the current operation ticket or generation.
+
+Power-off/startup waits required by the hardware procedure remain part of their physical steps. Time passing only enables Next. It does not advance to another instruction automatically.
 
 A verified image observed running normally on its bound USB port can satisfy return without another physical power cycle. Restart instructions are conditional on its recovery drive remaining open. USB presence alone still cannot satisfy the left's Wired-mode requirement. Satisfied instructions display a green check derived from the machine's readiness or completed state.
 

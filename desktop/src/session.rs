@@ -48,6 +48,7 @@ pub struct Session {
     archived_location: Option<u64>,
     left_mode: Option<crate::device_status::Mode>,
     wired_ack: bool,
+    observed_at: Option<Instant>,
 }
 impl Session {
     pub fn new() -> Self {
@@ -75,6 +76,17 @@ impl Session {
     pub fn select_recovery_role(&mut self, role: Role) {
         self.select(role);
         self.recovery_role = Some(role);
+    }
+    pub(crate) fn recovery_observation_matches(&self, snapshot: &Snapshot) -> bool {
+        self.location.is_some_and(|location| {
+            snapshot
+                .devices
+                .iter()
+                .any(|d| d.location == location && d.bootloader())
+        }) && self
+            .ready
+            .as_ref()
+            .is_some_and(|mount| snapshot.mounts.contains(mount))
     }
     pub(crate) fn recovery_binding(
         &self,
@@ -159,6 +171,7 @@ impl Session {
     ) {
         self.left_mode = mode;
         let fresh = observation.is_ok();
+        self.observed_at = fresh.then_some(now);
         self.observe_snapshot(observation);
         if !fresh || !self.normal_present {
             self.wired_ack = false;
@@ -307,8 +320,20 @@ impl Session {
             needs_power_on: self.role == Some(Role::Right) || self.legacy_left_start,
         });
     }
-    pub(crate) fn completion_remaining(&self) -> Option<Duration> {
-        self.return_flow.completion_remaining()
+    pub fn can_next_return(&self) -> bool {
+        self.observed_at
+            .is_some_and(|seen| seen.elapsed() <= Duration::from_secs(5))
+            && (self.view().needs_wired_ack || self.return_flow.can_next(Instant::now()))
+    }
+    pub fn next_return(&mut self) -> bool {
+        if !self.can_next_return() {
+            return false;
+        }
+        if self.view().needs_wired_ack {
+            self.confirm_wired();
+            self.advance_return(Instant::now());
+        }
+        self.return_flow.next(Instant::now())
     }
     pub fn confirm_wired(&mut self) {
         if self.role == Some(Role::Left)
@@ -688,7 +713,11 @@ mod tests {
                 return_flow: ReturnFlow::at(super::ReturnPhase::OffWait { since: now }),
                 ..Default::default()
             };
+            session.advance_return(now);
             session.advance_return(now + std::time::Duration::from_secs(5));
+            session
+                .return_flow
+                .next(now + std::time::Duration::from_secs(5));
             assert_eq!(
                 matches!(
                     session.return_flow.phase(),
@@ -706,6 +735,14 @@ mod tests {
         }
     }
     use super::*;
+    impl Session {
+        fn observe_advance_at(&mut self, snapshot: Result<Snapshot, String>, now: Instant) {
+            self.observe_at(snapshot, now);
+            if !matches!(self.return_flow.phase(), Some(ReturnPhase::PowerOn)) {
+                self.return_flow.next(now);
+            }
+        }
+    }
     use crate::device::Device;
     fn normal() -> Snapshot {
         Snapshot {
@@ -743,7 +780,7 @@ mod tests {
         session
     }
     #[test]
-    fn modern_return_requires_same_port_and_five_seconds_of_ready_evidence() {
+    fn modern_return_requires_same_port_and_explicit_next() {
         let now = Instant::now();
         for elapsed in [
             Duration::from_millis(4900),
@@ -754,9 +791,9 @@ mod tests {
             session.backup_path = Some(PathBuf::from("/saved"));
             session.archived_location = Some(7);
             session.return_flow.restart();
-            session.observe_at(Ok(boot(true)), now);
+            session.observe_advance_at(Ok(boot(true)), now);
             assert!(!session.view().return_complete);
-            session.observe_at(Ok(Snapshot::default()), now + Duration::from_millis(100));
+            session.observe_advance_at(Ok(Snapshot::default()), now + Duration::from_millis(100));
             complete_return(&mut session, normal(), now + elapsed, None);
             assert!(
                 session.view().return_complete,
@@ -771,15 +808,15 @@ mod tests {
         session.backup_path = Some(PathBuf::from("/saved"));
         session.archived_location = Some(7);
         session.return_flow.restart();
-        session.observe_at(Err("Inventory failed".into()), now);
+        session.observe_advance_at(Err("Inventory failed".into()), now);
         assert!(!session.view().return_complete);
         let mut session = identified();
         session.backup_path = Some(PathBuf::from("/saved"));
         session.archived_location = Some(7);
         session.return_flow.restart();
         session.legacy_left_start = true;
-        session.observe_at(Ok(Snapshot::default()), now);
-        session.observe_at(Ok(normal()), now + Duration::from_secs(4));
+        session.observe_advance_at(Ok(Snapshot::default()), now);
+        session.observe_advance_at(Ok(normal()), now + Duration::from_secs(4));
         assert!(!session.view().return_complete);
     }
     #[test]
@@ -798,17 +835,17 @@ mod tests {
         let mut session = make();
         let mut wrong = normal();
         wrong.devices[0].location = 8;
-        session.observe_at(Ok(wrong), now);
+        session.observe_advance_at(Ok(wrong), now);
         assert!(!session.view().return_complete);
         let mut session = make();
         let mut wrong = normal();
         wrong.devices[0].vendor = 0x4c4b;
         wrong.devices[0].product = 0x4671;
         wrong.devices[0].name = "NocFree RMK Right".into();
-        session.observe_at(Ok(wrong), now);
+        session.observe_advance_at(Ok(wrong), now);
         assert!(!session.view().return_complete);
         let mut session = make();
-        session.observe_at(Ok(boot(true)), now);
+        session.observe_advance_at(Ok(boot(true)), now);
         assert!(!session.view().return_complete);
     }
     #[test]
@@ -1045,11 +1082,11 @@ mod tests {
         let now = Instant::now();
         s.retry();
         assert_eq!(s.view().backup_path.as_ref(), Some(&path));
-        s.observe_at(Ok(boot(true)), now);
+        s.observe_advance_at(Ok(boot(true)), now);
         assert!(!s.view().can_save);
         assert!(!s.view().return_complete);
-        s.observe_at(Ok(Snapshot::default()), now + Duration::from_secs(1));
-        s.observe_at(Ok(Snapshot::default()), now + Duration::from_secs(6));
+        s.observe_advance_at(Ok(Snapshot::default()), now + Duration::from_secs(1));
+        s.observe_advance_at(Ok(Snapshot::default()), now + Duration::from_secs(6));
         complete_return(&mut s, normal(), now + Duration::from_secs(7), None);
         assert!(s.view().return_complete);
         assert!(!s.view().can_save);
@@ -1071,17 +1108,13 @@ mod tests {
         session.observe_mode_at(Ok(snapshot.clone()), mode, now);
         assert!(
             !session.view().return_complete,
-            "a normal descriptor alone must not finish immediately"
+            "observation must not advance"
         );
         if session.view().needs_wired_ack {
             session.confirm_wired();
         }
-        session.observe_mode_at(Ok(snapshot.clone()), mode, now);
-        session.observe_mode_at(
-            Ok(snapshot),
-            mode,
-            now + crate::completion_gate::DEFAULT_COMPLETION_DELAY,
-        );
+        session.observe_mode_at(Ok(snapshot), mode, now);
+        assert!(session.return_flow.next(now));
     }
     fn saved_session(role: Role) -> Session {
         let mut s = identified();
@@ -1109,6 +1142,22 @@ mod tests {
         fresh.pause();
         assert!(!fresh.accept_recovery(identified()));
         assert_eq!(fresh.state(), crate::journey::State::Paused);
+    }
+    #[test]
+    fn pending_recovery_proof_requires_the_original_port_and_mount() {
+        let mut session = Session::new();
+        session.select(Role::Left);
+        session.bind_recovery(7);
+        let original = boot(true);
+        session.observe(Ok(original.clone()));
+        assert!(session.recovery_observation_matches(&original));
+        let mut replaced = original.clone();
+        replaced.devices[0].location = 8;
+        assert!(!session.recovery_observation_matches(&replaced));
+        let mut replaced = original;
+        replaced.mounts[0].path = PathBuf::from("/Volumes/OTHER");
+        assert!(!session.recovery_observation_matches(&replaced));
+        assert!(!session.recovery_observation_matches(&Snapshot::default()));
     }
     #[test]
     fn local_recovery_binding_rejects_wrong_port_or_unreviewed_board_metadata() {
@@ -1143,8 +1192,8 @@ mod tests {
     fn selected_backup_completes_without_automatically_visiting_another_half() {
         let now = Instant::now();
         let mut session = saved_session(Role::Left);
-        session.observe_at(Ok(Snapshot::default()), now);
-        session.observe_at(Ok(Snapshot::default()), now + Duration::from_secs(5));
+        session.observe_advance_at(Ok(Snapshot::default()), now);
+        session.observe_advance_at(Ok(Snapshot::default()), now + Duration::from_secs(5));
         complete_return(&mut session, normal(), now + Duration::from_secs(6), None);
         let mut journey = crate::journey::Journey::from_saved_test_session(session);
         assert_eq!(journey.component(), Role::Left);
@@ -1158,8 +1207,8 @@ mod tests {
     fn left_only_journey_completes_after_observed_normal_return() {
         let now = Instant::now();
         let mut session = saved_session(Role::Left);
-        session.observe_at(Ok(Snapshot::default()), now);
-        session.observe_at(Ok(Snapshot::default()), now + Duration::from_secs(5));
+        session.observe_advance_at(Ok(Snapshot::default()), now);
+        session.observe_advance_at(Ok(Snapshot::default()), now + Duration::from_secs(5));
         complete_return(&mut session, normal(), now + Duration::from_secs(6), None);
         let journey = crate::journey::Journey::from_saved_test_session(session);
         assert!(journey.is_complete());
@@ -1170,27 +1219,27 @@ mod tests {
     fn left_return_requires_observed_absence_then_full_wait() {
         let now = Instant::now();
         let mut s = saved_session(Role::Left);
-        s.observe_at(Ok(normal()), now);
+        s.observe_advance_at(Ok(normal()), now);
         assert!(!s.view().return_complete);
-        s.observe_at(Ok(Snapshot::default()), now);
-        s.observe_at(Ok(Snapshot::default()), now + Duration::from_secs(4));
+        s.observe_advance_at(Ok(Snapshot::default()), now);
+        s.observe_advance_at(Ok(Snapshot::default()), now + Duration::from_secs(4));
         assert!(matches!(
             s.return_flow.phase(),
             Some(ReturnPhase::OffWait { .. })
         ));
-        s.observe_at(Ok(normal()), now + Duration::from_secs(4));
+        s.observe_advance_at(Ok(normal()), now + Duration::from_secs(4));
         assert!(matches!(
             s.return_flow.phase(),
             Some(ReturnPhase::Disconnect)
         ));
         assert!(!s.view().return_complete);
-        s.observe_at(Ok(Snapshot::default()), now + Duration::from_secs(5));
-        s.observe_at(Ok(Snapshot::default()), now + Duration::from_secs(10));
+        s.observe_advance_at(Ok(Snapshot::default()), now + Duration::from_secs(5));
+        s.observe_advance_at(Ok(Snapshot::default()), now + Duration::from_secs(10));
         assert!(matches!(
             s.return_flow.phase(),
             Some(ReturnPhase::Reconnect)
         ));
-        s.observe_at(Ok(boot(true)), now + Duration::from_secs(11));
+        s.observe_advance_at(Ok(boot(true)), now + Duration::from_secs(11));
         assert!(matches!(
             s.return_flow.phase(),
             Some(ReturnPhase::Disconnect)
@@ -1198,29 +1247,29 @@ mod tests {
         assert!(s.view().error.is_none());
         assert!(!s.view().can_save);
         assert!(s.view().instruction.contains("stayed in recovery"));
-        s.observe_at(Ok(Snapshot::default()), now + Duration::from_secs(12));
-        s.observe_at(Ok(Snapshot::default()), now + Duration::from_secs(17));
+        s.observe_advance_at(Ok(Snapshot::default()), now + Duration::from_secs(12));
+        s.observe_advance_at(Ok(Snapshot::default()), now + Duration::from_secs(17));
         complete_return(&mut s, normal(), now + Duration::from_secs(18), None);
         assert!(s.view().return_complete);
-        s.observe_at(Ok(Snapshot::default()), now + Duration::from_secs(24));
+        s.observe_advance_at(Ok(Snapshot::default()), now + Duration::from_secs(24));
         assert!(!s.view().return_complete);
     }
     #[test]
     fn right_start_wait_begins_only_after_explicit_power_ack() {
         let now = Instant::now();
         let mut s = saved_session(Role::Right);
-        s.observe_at(Ok(Snapshot::default()), now);
-        s.observe_at(Ok(Snapshot::default()), now + Duration::from_secs(5));
+        s.observe_advance_at(Ok(Snapshot::default()), now);
+        s.observe_advance_at(Ok(Snapshot::default()), now + Duration::from_secs(5));
         assert!(s.view().needs_power_on_ack);
-        s.observe_at(Ok(Snapshot::default()), now + Duration::from_secs(100));
+        s.observe_advance_at(Ok(Snapshot::default()), now + Duration::from_secs(100));
         assert!(s.view().needs_power_on_ack);
         s.confirm_power_on_at(now + Duration::from_secs(100));
-        s.observe_at(Ok(Snapshot::default()), now + Duration::from_secs(109));
+        s.observe_advance_at(Ok(Snapshot::default()), now + Duration::from_secs(109));
         assert!(matches!(
             s.return_flow.phase(),
             Some(ReturnPhase::StartWait { .. })
         ));
-        s.observe_at(Ok(Snapshot::default()), now + Duration::from_secs(110));
+        s.observe_advance_at(Ok(Snapshot::default()), now + Duration::from_secs(110));
         assert!(matches!(
             s.return_flow.phase(),
             Some(ReturnPhase::Reconnect)
@@ -1231,7 +1280,7 @@ mod tests {
         right.devices[0].name = "NocFree Input Probe Right Mac".into();
         complete_return(&mut s, right, now + Duration::from_secs(111), None);
         assert!(s.view().return_complete);
-        s.observe_at(
+        s.observe_advance_at(
             Err("USB discovery failed".into()),
             now + Duration::from_secs(117),
         );
@@ -1242,10 +1291,10 @@ mod tests {
     fn premature_right_usb_and_discovery_failure_invalidate_waits() {
         let now = Instant::now();
         let mut s = saved_session(Role::Right);
-        s.observe_at(Ok(Snapshot::default()), now);
-        s.observe_at(Ok(Snapshot::default()), now + Duration::from_secs(5));
+        s.observe_advance_at(Ok(Snapshot::default()), now);
+        s.observe_advance_at(Ok(Snapshot::default()), now + Duration::from_secs(5));
         s.confirm_power_on_at(now + Duration::from_secs(5));
-        s.observe_at(Ok(boot(true)), now + Duration::from_secs(6));
+        s.observe_advance_at(Ok(boot(true)), now + Duration::from_secs(6));
         assert!(matches!(
             s.return_flow.phase(),
             Some(ReturnPhase::Disconnect)
@@ -1255,8 +1304,8 @@ mod tests {
             s.return_flow.phase(),
             Some(ReturnPhase::Disconnect)
         ));
-        s.observe_at(Ok(Snapshot::default()), now + Duration::from_secs(8));
-        s.observe_at(Err("USB unavailable".into()), now + Duration::from_secs(9));
+        s.observe_advance_at(Ok(Snapshot::default()), now + Duration::from_secs(8));
+        s.observe_advance_at(Err("USB unavailable".into()), now + Duration::from_secs(9));
         assert!(matches!(
             s.return_flow.phase(),
             Some(ReturnPhase::Disconnect)
@@ -1272,28 +1321,28 @@ mod tests {
         rmk.devices[0].name = "NocFree RMK".into();
         let mut s = Session::new();
         s.select(Role::Left);
-        s.observe_at(Ok(rmk.clone()), now);
+        s.observe_advance_at(Ok(rmk.clone()), now);
         assert!(s.view().instruction.contains("installed firmware"));
         assert!(!s.view().instruction.contains("Escape"));
         assert!(!s.view().instruction.contains("Fn + 5"));
-        s.observe_at(Ok(boot(true)), now);
+        s.observe_advance_at(Ok(boot(true)), now);
         assert!(s.view().can_save);
         // Same saved-archive return seam exercised by the existing factory tests.
         // Legacy marker classification comes from saved bytes, never the USB name.
         s.legacy_left_start = true;
         s.backup_path = Some(PathBuf::from("/private/rmk-fixture"));
         s.return_flow.restart();
-        s.observe_at(Ok(Snapshot::default()), now);
-        s.observe_at(Ok(Snapshot::default()), now + Duration::from_secs(5));
+        s.observe_advance_at(Ok(Snapshot::default()), now);
+        s.observe_advance_at(Ok(Snapshot::default()), now + Duration::from_secs(5));
         assert!(s.view().needs_power_on_ack);
         assert!(s.view().title.contains("Bluetooth"));
         s.confirm_power_on_at(now + Duration::from_secs(5));
-        s.observe_at(Ok(Snapshot::default()), now + Duration::from_secs(14));
+        s.observe_advance_at(Ok(Snapshot::default()), now + Duration::from_secs(14));
         assert!(matches!(
             s.return_flow.phase(),
             Some(ReturnPhase::StartWait { .. })
         ));
-        s.observe_at(Ok(Snapshot::default()), now + Duration::from_secs(15));
+        s.observe_advance_at(Ok(Snapshot::default()), now + Duration::from_secs(15));
         assert!(matches!(
             s.return_flow.phase(),
             Some(ReturnPhase::Reconnect)

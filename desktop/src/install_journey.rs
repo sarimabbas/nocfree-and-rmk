@@ -153,7 +153,6 @@ mod machine {
         pub phase: u64,
         pub target: Target,
         pub scope: Scope,
-        pub route_gate: crate::completion_gate::CompletionGate<Mode>,
         pub route_ready: bool,
     }
     pub enum Event {
@@ -209,7 +208,7 @@ mod machine {
                     match result {
                         Ok(()) => {
                             self.advance();
-                            Transition(State::checking(Mode::Wired, None, String::new(), true))
+                            Transition(State::checking(Mode::Wired, None, String::new(), false))
                         }
                         Err(error) => Transition(State::failed(error.clone())),
                     }
@@ -240,11 +239,7 @@ mod machine {
                         // the earlier route, even when that same route returns.
                         self.advance();
                     }
-                    self.route_ready = self.route_gate.ready(
-                        *mode,
-                        latest.ready(*mode, self.target),
-                        latest.observed_at,
-                    );
+                    self.route_ready = latest.ready(*mode, self.target);
                     let keep = evidence.is_some_and(|old| {
                         old.ready(*mode, self.target)
                             && latest.ready(*mode, self.target)
@@ -254,7 +249,7 @@ mod machine {
                         *mode,
                         Some(*latest),
                         if keep { input.clone() } else { String::new() },
-                        *armed && !changed || self.target == Target::Rmk,
+                        *armed && !changed,
                     ))
                 }
                 Event::Input(ticket, text)
@@ -268,7 +263,6 @@ mod machine {
                 }
                 Event::Next(ticket)
                     if self.current(*ticket)
-                        && self.target == Target::Factory
                         && !*armed
                         && self.route_ready
                         && evidence.is_some_and(|e| e.ready(*mode, self.target)) =>
@@ -287,18 +281,12 @@ mod machine {
                     *context = true;
                     self.advance();
                     match mode {
-                        Mode::Wired => Transition(State::checking(
-                            Mode::Bluetooth,
-                            None,
-                            String::new(),
-                            self.target == Target::Rmk,
-                        )),
-                        Mode::Bluetooth => Transition(State::checking(
-                            Mode::Dongle,
-                            None,
-                            String::new(),
-                            self.target == Target::Rmk,
-                        )),
+                        Mode::Wired => {
+                            Transition(State::checking(Mode::Bluetooth, None, String::new(), false))
+                        }
+                        Mode::Bluetooth => {
+                            Transition(State::checking(Mode::Dongle, None, String::new(), false))
+                        }
                         Mode::Dongle => Transition(State::complete()),
                     }
                 }
@@ -363,7 +351,6 @@ impl Machine {
                 phase: 0,
                 target,
                 scope,
-                route_gate: Default::default(),
                 route_ready: false,
             }
             .state_machine(),
@@ -403,7 +390,7 @@ impl Machine {
     pub fn can_next(&self) -> bool {
         matches!(self.machine.state(), machine::State::Checking {mode, evidence, input, armed}
             if self.machine.inner().route_ready && evidence.is_some_and(|e| e.ready(*mode, self.target()))
-                && ((!*armed && self.target() == Target::Factory) || (*armed && input.trim() == TOKEN)))
+                && ((!*armed) || (*armed && input.trim() == TOKEN)))
     }
     pub fn text(&self) -> &str {
         match self.machine.state() {
@@ -450,45 +437,38 @@ mod tests {
             let accepted = self.observe(ticket, evidence);
             evidence.observed_at = now + Duration::from_secs(5);
             self.observe(self.ticket(), evidence);
+            if self.target() == Target::Rmk
+                && matches!(self.stage(), Stage::Setup(_))
+                && self.can_next()
+            {
+                self.next(self.ticket());
+            }
             accepted
         }
     }
     #[test]
-    fn route_needs_full_delay_but_correct_typing_enables_next_immediately() {
-        let mut machine = Machine::new();
-        machine.installed(machine.ticket(), Ok(()));
-        machine.paired(machine.ticket(), Ok(()));
-        let now = Instant::now();
-        let observed = |mode, seconds| {
-            let mut e = evidence(mode);
-            e.observed_at = now + Duration::from_secs(seconds);
-            e
-        };
-        machine.observe(machine.ticket(), observed(Mode::Wired, 0));
+    fn observed_valid_route_waits_for_next_and_correct_typing_enables_next_immediately() {
+        let mut machine = checks();
+        machine.observe(machine.ticket(), evidence(Mode::Wired));
         assert_eq!(machine.stage(), Stage::Setup(Mode::Wired));
-        machine.observe(machine.ticket(), observed(Mode::Dongle, 1));
-        machine.observe(machine.ticket(), observed(Mode::Wired, 2));
-        machine.observe(machine.ticket(), observed(Mode::Wired, 6));
-        assert_eq!(machine.stage(), Stage::Setup(Mode::Wired));
+        assert!(machine.can_next());
         assert!(!machine.input(machine.ticket(), TOKEN.into()));
-        machine.observe(machine.ticket(), observed(Mode::Wired, 7));
+        machine.next(machine.ticket());
         assert_eq!(machine.stage(), Stage::Typing(Mode::Wired));
-        machine.input(machine.ticket(), "qwert hjkl h".into());
-        assert!(!machine.can_next());
         machine.input(machine.ticket(), TOKEN.into());
         assert!(machine.can_next());
         assert_eq!(machine.stage(), Stage::Typing(Mode::Wired));
-        let previous = machine.ticket();
-        machine.observe(machine.ticket(), observed(Mode::Dongle, 8));
+        let old = machine.ticket();
+        machine.observe(machine.ticket(), evidence(Mode::Dongle));
+        assert_eq!(machine.stage(), Stage::Setup(Mode::Wired));
         assert!(!machine.can_next());
-        assert_eq!(machine.text(), "");
-        machine.observe(machine.ticket(), observed(Mode::Wired, 9));
-        machine.observe(machine.ticket(), observed(Mode::Wired, 14));
-        assert!(!machine.input(previous, TOKEN.into()));
-        assert!(!machine.can_next());
+        machine.observe(machine.ticket(), evidence(Mode::Wired));
+        assert_eq!(machine.stage(), Stage::Setup(Mode::Wired));
+        assert!(!machine.input(old, TOKEN.into()));
+        machine.next(machine.ticket());
         machine.input(machine.ticket(), TOKEN.into());
         assert!(machine.can_next());
-        assert!(machine.next(machine.ticket()));
+        machine.next(machine.ticket());
         assert_eq!(machine.stage(), Stage::Setup(Mode::Bluetooth));
     }
     fn evidence(mode: Mode) -> Evidence {
@@ -691,6 +671,7 @@ mod tests {
         let mut machine = checks();
         let wired = machine.ticket();
         machine.observe_settled(wired, evidence(Mode::Wired));
+        let wired = machine.ticket();
         machine.input(wired, TOKEN.into());
         assert!(machine.next(wired));
         let mut bluetooth = evidence(Mode::Bluetooth);

@@ -114,12 +114,10 @@ pub enum State {
     Failed(String),
     Cancelled,
 }
-type PairingConditions = (bool, Option<Snapshot>, Option<Snapshot>, Option<Binding>);
-
 #[derive(Default)]
 struct PairingData {
     require_dongle: bool,
-    completion: crate::completion_gate::CompletionGate<PairingConditions>,
+    pending: Option<(Instant, State)>,
     request: Option<Arc<AtomicU8>>,
     binding: Option<Binding>,
     accepted: Option<Instant>,
@@ -134,6 +132,7 @@ enum PairingEvent<'a> {
         now: Instant,
     },
     Accepted(&'a Result<(), String>, Instant),
+    Next(Instant),
     Cancel,
 }
 
@@ -160,7 +159,7 @@ impl StatigState<PairingData> for State {
                 Handled
             } else {
                 data.deadline = None;
-                data.completion.reset();
+                data.pending = None;
                 Transition(State::Cancelled)
             };
         }
@@ -168,11 +167,24 @@ impl StatigState<PairingData> for State {
             return Handled;
         }
         match event {
+            PairingEvent::Next(now)
+                if data.pending.as_ref().is_some_and(|(seen, _)| {
+                    now.checked_duration_since(*seen)
+                        .is_some_and(|age| age < REQUEST_AGE)
+                }) =>
+            {
+                let (_, next) = data.pending.take().expect("Fresh pending pairing step");
+                if next == State::Connected {
+                    data.deadline = None;
+                }
+                Transition(next)
+            }
             PairingEvent::Begin {
                 binding,
                 permit,
                 now,
             } if *self == State::Ready => {
+                data.pending = None;
                 data.binding = Some((*binding).clone());
                 data.request = Some((*permit).clone());
                 data.accepted = None;
@@ -193,6 +205,7 @@ impl StatigState<PairingData> for State {
                 }
             }
             PairingEvent::Observe(observation, now) => {
+                data.pending = None;
                 if data.deadline.is_some_and(|deadline| *now >= deadline) {
                     return Transition(State::Failed(
                         "Pairing timed out. The keyboard's other Bluetooth pairings are unchanged."
@@ -200,7 +213,7 @@ impl StatigState<PairingData> for State {
                     ));
                 }
                 if observation.is_err() {
-                    data.completion.reset();
+                    data.pending = None;
                 }
                 let observed = match observation {
                     Ok(value) => value,
@@ -237,23 +250,9 @@ impl StatigState<PairingData> for State {
                 }
                 let complete =
                     observed.complete() && (!data.require_dongle || observed.dongle.is_some());
-                let ready = observed.ready();
-                if !data.completion.ready(
-                    (
-                        complete,
-                        observed.left,
-                        observed.dongle,
-                        observed.binding.clone(),
-                    ),
-                    complete || ready,
-                    *now,
-                ) && (complete || ready)
-                {
-                    return Handled;
-                }
                 if complete {
-                    data.deadline = None;
-                    return Transition(State::Connected);
+                    data.pending = Some((observed.seen, State::Connected));
+                    return Handled;
                 }
                 if *self == State::Pairing {
                     return if observed.left.is_none() || observed.dongle.is_none() {
@@ -288,10 +287,13 @@ impl StatigState<PairingData> for State {
                 } else {
                     State::Ready
                 };
-                if *self == next {
+                if matches!(next, State::Failed(_)) {
+                    Transition(next)
+                } else if *self == next {
                     Handled
                 } else {
-                    Transition(next)
+                    data.pending = Some((observed.seen, next));
+                    Handled
                 }
             }
             _ => Handled,
@@ -322,15 +324,29 @@ impl Journey {
             .state_machine(),
         }
     }
-    pub(crate) fn completion_remaining(&self) -> Option<Duration> {
-        if matches!(
+    pub fn can_next(&self) -> bool {
+        !matches!(
             self.state(),
             State::Connected | State::Failed(_) | State::Cancelled
-        ) {
-            None
-        } else {
-            self.machine.inner().completion.remaining(Instant::now())
-        }
+        ) && self
+            .machine
+            .inner()
+            .pending
+            .as_ref()
+            .is_some_and(|(seen, _)| {
+                Instant::now()
+                    .checked_duration_since(*seen)
+                    .is_some_and(|age| age < REQUEST_AGE)
+            })
+    }
+    #[allow(clippy::should_implement_trait)] // Explicit journey button, not an iterator.
+    pub fn next(&mut self) -> bool {
+        self.next_at(Instant::now())
+    }
+    fn next_at(&mut self, now: Instant) -> bool {
+        let previous = self.state().clone();
+        self.machine.handle(&PairingEvent::Next(now));
+        *self.state() != previous
     }
     pub fn state(&self) -> &State {
         self.machine.state()
@@ -661,14 +677,8 @@ mod tests {
         observation: Result<Observation, String>,
         now: Instant,
     ) {
-        journey.observe(observation.clone(), now);
-        let later = now + crate::completion_gate::DEFAULT_COMPLETION_DELAY;
-        let fresh = observation.map(|mut o| {
-            o.started = later;
-            o.seen = later;
-            o
-        });
-        journey.observe(fresh, later);
+        journey.observe(observation, now);
+        journey.next_at(now);
     }
     fn reply(role: Role, state: u8) -> [u8; 32] {
         let mut bytes = [0; 32];
@@ -685,7 +695,7 @@ mod tests {
         bytes
     }
     #[test]
-    fn connected_success_waits_five_seconds_and_mode_loss_restarts_it() {
+    fn observations_wait_for_next_and_loss_or_expiration_invalidates_it() {
         let now = Instant::now();
         let mut journey = Journey::new();
         let good = |t| {
@@ -696,31 +706,14 @@ mod tests {
             ))
         };
         journey.observe(good(now), now);
-        journey.observe(
-            good(now + Duration::from_secs(4)),
-            now + Duration::from_secs(4),
-        );
-        assert_ne!(journey.state(), &State::Connected);
-        let changed = now + Duration::from_secs(5);
-        journey.observe(
-            Ok(observation(
-                Some(snapshot(Link::Idle, false)),
-                Some(snapshot(Link::Searching, false)),
-                changed,
-            )),
-            changed,
-        );
-        let again = now + Duration::from_secs(6);
-        journey.observe(good(again), again);
-        journey.observe(
-            good(now + Duration::from_secs(10)),
-            now + Duration::from_secs(10),
-        );
-        assert_ne!(journey.state(), &State::Connected);
-        journey.observe(
-            good(now + Duration::from_secs(11)),
-            now + Duration::from_secs(11),
-        );
+        assert_eq!(journey.state(), &State::Connect);
+        assert!(journey.can_next());
+        assert!(!journey.next_at(now + REQUEST_AGE));
+        journey.observe(Ok(observation(None, None, now)), now);
+        assert!(!journey.can_next());
+        assert!(!journey.next_at(now));
+        journey.observe(good(now), now);
+        assert!(journey.next_at(now));
         assert_eq!(journey.state(), &State::Connected);
         assert!(journey.machine.inner().request.is_none());
     }
