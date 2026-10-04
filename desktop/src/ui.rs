@@ -965,15 +965,12 @@ impl Companion {
                 button("begin-dongle-pairing", "Next")
                     .on_click(cx.listener(|this, _, _, cx| this.begin_pairing(cx))),
             ),
-            PairingState::Connected => Some(
-                button("pairing-done", "Next")
-                    .on_click(cx.listener(|this, _, _, cx| this.navigate(Page::Home, cx))),
-            ),
             _ => None,
         };
         JourneyScreen {
             body,
-            actions: Some(self.footer(next, cx)),
+            actions: (!matches!(self.pairing.state(), PairingState::Connected))
+                .then(|| self.footer(next, cx)),
         }
     }
 

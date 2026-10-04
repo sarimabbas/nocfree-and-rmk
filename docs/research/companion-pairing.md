@@ -48,3 +48,5 @@ Firmware host suite: 322/322 isolated nextest tests passed, including strict pac
 validation, local handling without link, duplicates busy, dedicated slot action,
 actual encryption latch, exact identity filters, and right split snapshot. This
 is host validation, not a hardware pairing result.
+
+Companion ends Check pairing on its successful connection summary. It does not require a completion button or redirect to Backup firmware.
