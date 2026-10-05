@@ -548,13 +548,7 @@ fn read_request(directory: &Path) -> Result<Request, String> {
     Ok(request)
 }
 fn write_status(directory: &Path, bytes: &[u8]) -> Result<(), String> {
-    if fs::symlink_metadata(directory)
-        .map_err(|_| "The local trial folder is unavailable.")?
-        .file_type()
-        .is_symlink()
-    {
-        return Err("The local trial folder must be a private directory.".into());
-    }
+    crate::host_storage::check_directory(directory)?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -568,11 +562,7 @@ fn write_status(directory: &Path, bytes: &[u8]) -> Result<(), String> {
     let temporary = directory.join(format!(".status-{}-{stamp}.partial", std::process::id()));
     let mut options = fs::OpenOptions::new();
     options.write(true).create_new(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
-    }
+    crate::host_storage::private_file_options(&mut options);
     let mut file = options
         .open(&temporary)
         .map_err(|_| "Could not save the local startup observation.")?;
@@ -581,9 +571,7 @@ fn write_status(directory: &Path, bytes: &[u8]) -> Result<(), String> {
         .map_err(|_| "Could not finish saving the startup observation.")?;
     fs::rename(&temporary, directory.join("status.json"))
         .map_err(|_| "Could not finalize the startup observation.")?;
-    fs::File::open(directory)
-        .and_then(|directory| directory.sync_all())
-        .map_err(|_| "Could not flush the startup observation.")?;
+    crate::host_storage::sync_directory(directory)?;
     Ok(())
 }
 

@@ -230,10 +230,14 @@ fn archive_support(source: &Path, destination: &Path) -> Result<(), String> {
         .arg(destination)
         .status();
     #[cfg(target_os = "windows")]
-    let result = Command::new("powershell.exe")
-        .args(["-NoProfile", "-NonInteractive", "-Command", "Compress-Archive -LiteralPath $env:NOCFREE_SUPPORT_CONTENTS -DestinationPath $env:NOCFREE_SUPPORT_ARCHIVE -ErrorAction Stop"])
-        .env("NOCFREE_SUPPORT_CONTENTS", source)
-        .env("NOCFREE_SUPPORT_ARCHIVE", destination).status();
+    let result = {
+        use std::os::windows::process::CommandExt;
+        Command::new("powershell.exe")
+            .creation_flags(0x0800_0000)
+            .args(["-NoProfile", "-NonInteractive", "-Command", "Compress-Archive -LiteralPath $env:NOCFREE_SUPPORT_CONTENTS -DestinationPath $env:NOCFREE_SUPPORT_ARCHIVE -ErrorAction Stop"])
+            .env("NOCFREE_SUPPORT_CONTENTS", source)
+            .env("NOCFREE_SUPPORT_ARCHIVE", destination).status()
+    };
     #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     let result = Command::new("zip")
         .args(["-q", "-r"])

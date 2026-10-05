@@ -472,17 +472,17 @@ fn verify(archive: &[u8], baseline: &[u8], image: &ReleaseImage) -> Result<usize
         .count())
 }
 fn durable(folder: &Path, name: &str, bytes: &[u8]) -> Result<(), String> {
-    let mut file = fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
+    crate::host_storage::check_directory(folder)?;
+    let mut options = fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    crate::host_storage::private_file_options(&mut options);
+    let mut file = options
         .open(folder.join(name))
         .map_err(|_| "A saved operation already exists or could not be created.")?;
     file.write_all(bytes)
         .and_then(|_| file.sync_all())
         .map_err(|_| "Could not save the operation record.")?;
-    fs::File::open(folder)
-        .and_then(|f| f.sync_all())
-        .map_err(|_| "Could not make the operation record durable.".to_owned())
+    crate::host_storage::sync_directory(folder)
 }
 fn correlated(snapshot: &Snapshot, location: u64, mount: &BootMount) -> bool {
     let boots: Vec<_> = snapshot.devices.iter().filter(|d| d.bootloader()).collect();
