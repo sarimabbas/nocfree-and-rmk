@@ -1,11 +1,88 @@
-name: Firmware checks
+name: CI
 on:
   push:
+    branches: [main]
   pull_request:
+    branches: [main]
+  release:
+    types: [published]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 jobs:
+  changes:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      firmware: ${{ github.event_name == 'release' || github.event_name == 'workflow_dispatch' || steps.paths.outputs.firmware == 'true' }}
+      companion: ${{ github.event_name == 'release' || github.event_name == 'workflow_dispatch' || steps.paths.outputs.companion == 'true' }}
+      host: ${{ github.event_name == 'release' || github.event_name == 'workflow_dispatch' || steps.paths.outputs.host == 'true' }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: dorny/paths-filter@15192bc058cc28a13dbf6cde61f19e18988b7af6 # v3
+        id: paths
+        if: github.event_name == 'push' || github.event_name == 'pull_request'
+        with:
+          base: ${{ github.event.before || github.ref }}
+          filters: |
+            firmware:
+              - 'firmware/**'
+              - 'crates/**'
+              - 'rust-toolchain.toml'
+              - '.cargo/**'
+              - 'scripts/check.sh'
+              - 'scripts/build_firmware_candidates.py'
+              - '.github/workflows/check.yml'
+            companion:
+              - 'desktop/**'
+              - 'scripts/image_guard.py'
+              - 'scripts/migration_guard.py'
+              - 'tests/test_migration_guard.py'
+              - 'rust-toolchain.toml'
+              - '.cargo/**'
+              - '.github/workflows/**'
+            host:
+              - 'firmware/**'
+              - 'crates/**'
+              - 'tests/**'
+              - 'scripts/**'
+              - 'desktop/**'
+              - 'docs/notices/**'
+              - 'LICENSE'
+              - 'rust-toolchain.toml'
+              - '.cargo/**'
+              - '.github/workflows/**'
+
+  host:
+    needs: changes
+    if: needs.changes.outputs.host == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Install pinned Rust toolchain
+        run: rustup show active-toolchain
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: crates/nocfree-input -> target
+          cache-bin: false
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Host tests and guards
+        run: ./scripts/check.sh --host-only
+
   check:
+    needs: changes
+    if: needs.changes.outputs.firmware == 'true'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -17,7 +94,13 @@ jobs:
           persist-credentials: false
       - name: Install Rust target and formatter
         run: rustup target add thumbv7em-none-eabihf && rustup component add rustfmt
-      - name: Install Arm compiler and newlib
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: firmware -> target
+          shared-key: firmware-check-${{ matrix.layout }}
+          cache-bin: false
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Install Arm build dependencies
         run: sudo apt-get update && sudo apt-get install -y gcc-arm-none-eabi libnewlib-arm-none-eabi
       - name: Check firmware layout
         env:
@@ -27,10 +110,12 @@ jobs:
             cd firmware
             cargo build --locked --release --bin nocfree-rmk --target thumbv7em-none-eabihf --no-default-features --features defmt-logging,receiver,runtime-recovery
           else
-            ./scripts/check.sh --reclaimed-softdevice
+            ./scripts/check.sh --build-only --reclaimed-softdevice
           fi
 
   backlight:
+    needs: changes
+    if: needs.changes.outputs.firmware == 'true'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -42,14 +127,22 @@ jobs:
           persist-credentials: false
       - name: Install Rust target and formatter
         run: rustup target add thumbv7em-none-eabihf && rustup component add rustfmt
-      - name: Install Arm compiler and newlib
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: firmware -> target
+          shared-key: firmware-backlight-${{ matrix.polarity }}
+          cache-bin: false
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Install Arm build dependencies
         run: sudo apt-get update && sudo apt-get install -y gcc-arm-none-eabi libnewlib-arm-none-eabi
       - name: Check optional backlight and all roles
         env:
           POLARITY: ${{ matrix.polarity }}
-        run: ./scripts/check.sh --reclaimed-softdevice --backlight-active-${POLARITY}
+        run: ./scripts/check.sh --build-only --reclaimed-softdevice --backlight-active-${POLARITY}
 
   runtime-recovery:
+    needs: changes
+    if: needs.changes.outputs.firmware == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -57,10 +150,16 @@ jobs:
           persist-credentials: false
       - name: Install Rust target and formatter
         run: rustup target add thumbv7em-none-eabihf && rustup component add rustfmt
-      - name: Install Arm compiler and newlib
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: firmware -> target
+          shared-key: firmware-runtime-recovery
+          cache-bin: false
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Install Arm build dependencies
         run: sudo apt-get update && sudo apt-get install -y gcc-arm-none-eabi libnewlib-arm-none-eabi
       - name: Check Vial, runtime recovery and all roles
-        run: ./scripts/check.sh --reclaimed-softdevice --backlight-active-high --runtime-recovery
+        run: ./scripts/check.sh --build-only --reclaimed-softdevice --backlight-active-high --runtime-recovery
       - name: Build opt-in left blue status indicator
         working-directory: firmware
         run: cargo build --locked --release --bin nocfree-rmk --target thumbv7em-none-eabihf --no-default-features --features defmt-logging,left,mac-keymap,runtime-recovery,reclaimed-softdevice,backlight-active-high,status-led
@@ -72,6 +171,8 @@ jobs:
           done
 
   companion:
+    needs: changes
+    if: needs.changes.outputs.companion == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -91,16 +192,39 @@ jobs:
           sudo apt-get install -y build-essential clang cmake pkg-config libfontconfig1-dev libfreetype-dev libwayland-dev libxkbcommon-dev libxkbcommon-x11-dev libxcb1-dev libxcb-xkb-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libssl-dev libudev-dev libvulkan-dev zip
       - name: Install pinned desktop toolchain
         working-directory: desktop
-        run: rustup show active-toolchain
+        run: |
+          toolchain="$(rustup show active-toolchain | cut -d ' ' -f 1)"
+          echo "RUSTUP_TOOLCHAIN=$toolchain" >> "$GITHUB_ENV"
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: desktop -> target
+          shared-key: desktop-${{ runner.os }}-${{ runner.arch }}
+          cache-bin: false
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Desktop tests and lint
         working-directory: desktop
         run: |
           cargo test --locked
           cargo clippy --locked --all-targets -- -D warnings
           cargo fmt --check
-      - name: Public synthetic image and package guards
-        run: python -m unittest discover -s tests -v
-      - name: Vial preset guards
-        run: python firmware/presets/test_presets.py
-      - name: Companion packaging and notice guards
-        run: python -m unittest discover -s scripts -p 'test_companion_*.py' -v
+
+  ci:
+    name: CI
+    if: always()
+    needs: [changes, host, check, backlight, runtime-recovery, companion]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require all relevant checks to pass
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          python3 - <<'PY'
+          import json, os
+          results = json.loads(os.environ["RESULTS"])
+          assert results["changes"]["result"] == "success", "File detection failed"
+          failed = [name for name, job in results.items() if job["result"] not in ("success", "skipped")]
+          assert not failed, f"Checks did not pass: {failed}"
+          for gate, jobs in {"host": ["host"], "firmware": ["check", "backlight", "runtime-recovery"], "companion": ["companion"]}.items():
+              if results["changes"]["outputs"][gate] == "true":
+                  assert all(results[job]["result"] == "success" for job in jobs), f"Required {gate} checks were skipped"
+          PY

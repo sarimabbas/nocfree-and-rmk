@@ -36,10 +36,21 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Install Rust
+      - name: Install desktop toolchain
+        working-directory: desktop
+        shell: bash
         run: |
-          rustup toolchain install 1.98.1 --profile minimal --component rustfmt,clippy
-          rustup default 1.98.1
+          set -euo pipefail
+          toolchain="$(rustup show active-toolchain | cut -d ' ' -f1)"
+          echo "RUSTUP_TOOLCHAIN=$toolchain" >> "$GITHUB_ENV"
+
+      - name: Cache desktop dependencies
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: desktop-${{ runner.os }}-${{ runner.arch }}
+          workspaces: desktop -> target
+          cache-bin: false
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Verify requested and project versions
         id: version
@@ -134,11 +145,21 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential clang cmake pkg-config libfontconfig1-dev libfreetype-dev libwayland-dev libxkbcommon-dev libxkbcommon-x11-dev libxcb1-dev libxcb-xkb-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libssl-dev libudev-dev libvulkan-dev bluez zip
-      - name: Install Rust
+      - name: Install desktop toolchain
+        working-directory: desktop
         shell: bash
         run: |
-          rustup toolchain install 1.98.1 --profile minimal --component rustfmt,clippy
-          rustup default 1.98.1
+          set -euo pipefail
+          toolchain="$(rustup show active-toolchain | cut -d ' ' -f1)"
+          echo "RUSTUP_TOOLCHAIN=$toolchain" >> "$GITHUB_ENV"
+
+      - name: Cache desktop dependencies
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: desktop-${{ runner.os }}-${{ runner.arch }}
+          workspaces: desktop -> target
+          cache-bin: false
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Verify native release version
         id: version
         env:
