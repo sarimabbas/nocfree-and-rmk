@@ -191,7 +191,11 @@ impl DiscoveryPoll {
         }
         let (started, task) = self.pending.as_ref()?;
         if !task.is_finished() {
-            if started.elapsed() >= Duration::from_secs(3) {
+            // USB reset and volume mounting can outlast the normal inventory
+            // budget. After dispatch, run_with's 15-second drive deadline bounds
+            // this read instead; a slow (or stale pre-reset) poll is not failure
+            // evidence. Keep one pending inventory and require a fresh result.
+            if after.is_none() && started.elapsed() >= Duration::from_secs(3) {
                 return Some(Err(
                     "USB discovery took too long. Try recovery again.".into()
                 ));
@@ -749,6 +753,72 @@ mod tests {
         assert!(inventory.poll(None).await.unwrap().is_ok());
         assert!(inventory.pending.is_none());
     }
+    #[tokio::test]
+    async fn pre_detach_inventory_timeout_cannot_fail_a_dispatched_recovery() {
+        let (release, wait) = std::sync::mpsc::channel();
+        let started = Instant::now() - Duration::from_secs(4);
+        let requested = Instant::now();
+        let task = tokio::task::spawn_blocking(move || {
+            wait.recv().unwrap();
+            Ok(device::Snapshot::default())
+        });
+        let mut inventory = DiscoveryPoll {
+            pending: Some((started, task)),
+        };
+        let observation = inventory.poll(Some(requested)).await;
+        release.send(()).unwrap();
+        assert!(
+            observation.is_none(),
+            "A stale inventory must not fail recovery: {observation:?}"
+        );
+        assert_eq!(inventory.pending.as_ref().unwrap().0, started);
+        while !inventory.pending.as_ref().unwrap().1.is_finished() {
+            tokio::task::yield_now().await;
+        }
+        assert!(inventory.poll(Some(requested)).await.is_none());
+        assert!(inventory.pending.is_none());
+    }
+
+    #[tokio::test]
+    async fn post_detach_inventory_uses_drive_deadline_without_overlapping_reads() {
+        let (release, wait) = std::sync::mpsc::channel();
+        let requested = Instant::now() - Duration::from_secs(5);
+        let started = requested + Duration::from_secs(1);
+        let task = tokio::task::spawn_blocking(move || {
+            wait.recv().unwrap();
+            Ok(factory_boot(10))
+        });
+        let mut inventory = DiscoveryPoll {
+            pending: Some((started, task)),
+        };
+        let observation = inventory.poll(Some(requested)).await;
+        release.send(()).unwrap();
+        assert!(observation.is_none());
+        assert_eq!(inventory.pending.as_ref().unwrap().0, started);
+        while !inventory.pending.as_ref().unwrap().1.is_finished() {
+            tokio::task::yield_now().await;
+        }
+        let snapshot = inventory.poll(Some(requested)).await.unwrap().unwrap();
+        assert_eq!(snapshot.devices, factory_boot(10).devices);
+        assert_eq!(snapshot.mounts, factory_boot(10).mounts);
+        assert!(inventory.pending.is_none());
+    }
+
+    #[tokio::test]
+    async fn normal_inventory_retains_its_finite_timeout() {
+        let (release, wait) = std::sync::mpsc::channel();
+        let task = tokio::task::spawn_blocking(move || {
+            wait.recv().unwrap();
+            Ok(device::Snapshot::default())
+        });
+        let mut inventory = DiscoveryPoll {
+            pending: Some((Instant::now() - Duration::from_secs(4), task)),
+        };
+        let observation = inventory.poll(None).await;
+        release.send(()).unwrap();
+        assert!(observation.unwrap().is_err());
+    }
+
     #[tokio::test]
     async fn inventory_started_before_detach_is_discarded_even_if_it_finishes_afterward() {
         let started = Instant::now();
