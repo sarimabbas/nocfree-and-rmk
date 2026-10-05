@@ -43,7 +43,7 @@ def encode(binary, start):
 
 def guard(role, image, binary):
     if role != 'receiver':
-        return migration_guard.inspect_application_shim(image, binary, role)
+        return migration_guard.inspect_startup_image(image, binary, role)
     result = image_guard.inspect(image)
     payload = migration_guard._payload(image, image_guard.START,
                                        int(result['end_exclusive'], 16), image_guard.FAMILY)

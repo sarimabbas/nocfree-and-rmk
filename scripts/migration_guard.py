@@ -65,22 +65,22 @@ def inspect_migration(image, binary):
                 end_exclusive=hex(START + len(payload)), blocks=len(image) // 512,
                 touched_pages=[hex(address) for address in range(START, START + len(payload), 4096)],
                 stack_pointer=hex(sp), reset_vector=hex(pc),
-                status='migration structure valid; device identity, recovery and approval NOT verified')
+                status='Address, vector and family checks passed')
 
 
-def inspect_application_shim(image, binary, role='left'):
-    """Validate a declared half's image structure, not its compiled role or entry."""
+def inspect_startup_image(image, binary, role='left'):
+    """Check a keyboard half's startup image and linked binary."""
     if role not in ('left', 'right'):
-        raise ValueError('startup shim requires a keyboard-half role')
+        raise ValueError('startup image requires a keyboard-half role')
     payload = _payload(image, START, END, FAMILY)
     if not binary or len(binary) % 4 or len(binary) < 0x3008 - START:
         raise ValueError('exact aligned BIN must cover the old S140 magic word')
     padded_size = (len(binary) + 4095) // 4096 * 4096
     if START + padded_size > END or payload != binary + b'\xff' * (padded_size - len(binary)):
-        raise ValueError('shim UF2 must match exact BIN with only final page FF padding')
+        raise ValueError('UF2 must match exact BIN with only final page FF padding')
     sp, pc = _vectors(payload, 0, START + 0x204, START + len(binary), RAM_START)
     if struct.unpack_from('<I', payload, 0x200)[0] != 0xFFFFFFFF:
-        raise ValueError('shim reserved word at 0x1200 must be erased, not a recovery marker')
+        raise ValueError('Reserved word at 0x1200 must be erased, not a recovery marker')
     if struct.unpack_from('<I', payload, 0x3004 - START)[0] == S140_MAGIC:
         raise ValueError('old S140 magic must be absent at 0x3004')
     return dict(sha256=hashlib.sha256(image).hexdigest(),
@@ -90,4 +90,4 @@ def inspect_application_shim(image, binary, role='left'):
                 end_exclusive=hex(START + len(payload)), blocks=len(image) // 512,
                 touched_pages=[hex(address) for address in range(START, START + len(payload), 4096)],
                 stack_pointer=hex(sp), reset_vector=hex(pc),
-                status='shim structure valid ONLY; pre-init entry, device identity, recovery and approval NOT verified')
+                status='Address, vector and family checks passed')

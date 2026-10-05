@@ -8,7 +8,7 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'scripts'))
-from migration_guard import inspect_application_shim
+from migration_guard import inspect_startup_image
 from image_guard import inspect as inspect_receiver
 
 VERSION = '0.1.1'
@@ -62,7 +62,7 @@ def verified_pair(root, role, spec):
         if expected != padded or (int(guard['reset_vector'], 16) & ~1) >= start + len(binary):
             raise ValueError('dongle UF2/BIN or vector mismatch')
     else:
-        guard = inspect_application_shim(uf2, binary, role)
+        guard = inspect_startup_image(uf2, binary, role)
     offset, end = start - 0x1000, start - 0x1000 + len(padded)
     if actual[offset:end] != padded or actual[:offset] != old[:offset] or actual[end:0x64000] != old[end:0x64000]:
         raise ValueError(f'{role}: application, padding or preserved bytes differ')

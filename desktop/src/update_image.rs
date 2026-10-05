@@ -164,7 +164,7 @@ pub fn validate(image: &[u8], binary: &[u8]) -> Result<ValidatedImage, Validatio
     validate_for(ImagePolicy::LegacyLeftMigration, image, binary)
 }
 
-/// Validate half startup bytes against `inspect_application_shim`, or protected
+/// Validate half startup bytes against `inspect_startup_image`, or protected
 /// receiver bytes against `inspect_receiver_serial_package`. Bootloader evidence,
 /// source provenance, endpoint role and recovery eligibility remain separate gates.
 pub fn validate_for(

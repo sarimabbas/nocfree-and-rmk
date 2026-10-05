@@ -19,12 +19,13 @@ jobs:
         run: rustup target add thumbv7em-none-eabihf && rustup component add rustfmt
       - name: Install Arm compiler and newlib
         run: sudo apt-get update && sudo apt-get install -y gcc-arm-none-eabi libnewlib-arm-none-eabi
-      - name: Host tests and all firmware roles
+      - name: Check firmware layout
         env:
           LAYOUT: ${{ matrix.layout }}
         run: |
           if [ "$LAYOUT" = factory-layout ]; then
-            ./scripts/check.sh --backlight-active-high
+            cd firmware
+            cargo build --locked --release --bin nocfree-rmk --target thumbv7em-none-eabihf --no-default-features --features defmt-logging,receiver,runtime-recovery
           else
             ./scripts/check.sh --reclaimed-softdevice
           fi

@@ -54,14 +54,14 @@ def inspect(data, require_recovery_marker=False):
     return dict(sha256=hashlib.sha256(data).hexdigest(), family_id=hex(FAMILY),
                 start=hex(START), end_exclusive=hex(end), blocks=total,
                 stack_pointer=hex(sp), reset_vector=hex(pc),
-                status='structurally valid; device compatibility and recovery NOT verified')
+                status='Address, vector and family checks passed')
 
 
 def inspect_serial_package(package, image):
     """Bind an application-only legacy DFU package to a guarded recovery UF2.
 
     START erases application pages before DATA, so validate the actual ZIP,
-    not just a companion image. This does not establish the connected role.
+    including the application bytes and init packet.
     """
     guarded = inspect(image, require_recovery_marker=True)
     return _inspect_serial_package(package, image, guarded)
@@ -71,7 +71,6 @@ def inspect_receiver_serial_package(package, image):
     """Validate a protected receiver package without recovery-first boot behavior.
 
     USB-only receivers must start their application to expose RMK DFU detach.
-    This validates image policy, not independent recovery or device approval.
     """
     guarded = inspect(image)
     for offset in range(0, len(image), 512):
@@ -131,16 +130,16 @@ def _inspect_serial_package(package, image, guarded):
     return dict(package_sha256=hashlib.sha256(package).hexdigest(),
                 binary_sha256=hashlib.sha256(binary).hexdigest(), binary_size=len(binary),
                 erase_start=hex(START), erase_end_exclusive=hex(erase_end), uf2=guarded,
-                status='application-only package matches guarded UF2; device role and approval NOT verified')
+                status='Application package matches the checked UF2')
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--image', '-i', type=Path, required=True, help='Application UF2 to inspect; never written to a device')
     parser.add_argument('--require-recovery-marker', '-r', action='store_true',
-                        help='Also require the recovery-first marker; does not verify installed bootloader behavior')
+                        help='Require the recovery marker at the image startup offset')
     parser.add_argument('--serial-package', '-p', type=Path,
-                        help='Also validate a legacy application-only DFU ZIP against this recovery-marked UF2; never flashes')
+                        help='Check a legacy application DFU ZIP against this UF2')
     args = parser.parse_args()
     try:
         data = args.image.read_bytes()

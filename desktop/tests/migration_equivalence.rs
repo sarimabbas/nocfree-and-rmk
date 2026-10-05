@@ -185,7 +185,7 @@ def receiver_guard(image,binary):
     return dict(report['uf2'],binary_sha256=report['binary_sha256'],binary_size=report['binary_size'])
 def add(policy,name,image,binary):
     try:
-        metadata=receiver_guard(image,binary) if policy=='receiver' else m.inspect_application_shim(image,binary,policy)
+        metadata=receiver_guard(image,binary) if policy=='receiver' else m.inspect_startup_image(image,binary,policy)
         accepted=True
     except ValueError:
         metadata,accepted=None,False
