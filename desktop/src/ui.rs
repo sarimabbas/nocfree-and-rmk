@@ -538,10 +538,11 @@ impl Companion {
         self.session.as_ref().map(Journey::view)
     }
     fn firmware_view(&self) -> Option<FirmwareView> {
-        self.firmware
-            .as_ref()
-            .map(FirmwareJourney::view)
-            .or_else(|| self.operation.firmware_view())
+        displayed_firmware_view(
+            self.pending_firmware.as_ref().map(FirmwareJourney::view),
+            self.firmware.as_ref().map(FirmwareJourney::view),
+            self.operation.firmware_view(),
+        )
     }
 
     fn observe_device_key(&mut self, key: crate::device_status::UsbKey) -> bool {
@@ -3381,4 +3382,51 @@ fn scope_guide(scope: Scope, instruction: &str, cx: &App) -> gpui::Div {
         .child(artwork)
         .child(div().font_weight(FontWeight::MEDIUM).child(scope.label()))
         .child(instruction_line(instruction.to_owned(), false, cx))
+}
+
+// Completed worker results remain authoritative for display while Next has not
+// adopted them. Reading the view never changes the journey.
+fn displayed_firmware_view(
+    pending: Option<FirmwareView>,
+    current: Option<FirmwareView>,
+    operation: Option<FirmwareView>,
+) -> Option<FirmwareView> {
+    pending.or(current).or(operation)
+}
+
+#[cfg(test)]
+mod firmware_presentation_tests {
+    use super::*;
+
+    #[test]
+    fn completed_right_step_keeps_its_progress_until_next_adoption() {
+        let mut right = FirmwareJourney::new(crate::release::fixture()).view();
+        right.role = RecoveryRole::Right;
+        right.step = 1;
+        let mut operation = crate::operation::Operation::default();
+        let ticket = operation
+            .begin(
+                crate::operation::Kind::Firmware,
+                Some(right.role),
+                Some(right.clone()),
+            )
+            .unwrap();
+        assert_eq!(
+            displayed_firmware_view(None, None, operation.firmware_view())
+                .unwrap()
+                .step,
+            1
+        );
+        assert!(operation.complete(ticket));
+        let pending = displayed_firmware_view(Some(right), None, operation.firmware_view())
+            .expect("pending worker result must remain visible");
+        assert_eq!(pending.role, RecoveryRole::Right);
+        assert_eq!(pending.step, 1);
+        assert_eq!(
+            displayed_firmware_view(None, Some(pending), None)
+                .unwrap()
+                .step,
+            1
+        );
+    }
 }
