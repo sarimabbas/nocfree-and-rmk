@@ -43,9 +43,28 @@ fn main() {
 
 fn generate_vial_definition() {
     use std::io::{Read, Write};
-    println!("cargo:rerun-if-changed=vial.json");
+    let path = if std::env::var_os("CARGO_FEATURE_LAYOUT_ISO").is_some() {
+        "vial-iso.json"
+    } else if std::env::var_os("CARGO_FEATURE_LAYOUT_JIS").is_some() {
+        "vial-jis.json"
+    } else if std::env::var_os("CARGO_FEATURE_LAYOUT_KR").is_some() {
+        "vial-kr.json"
+    } else {
+        "vial.json"
+    };
+    for feature in ["LAYOUT_ISO", "LAYOUT_JIS", "LAYOUT_KR"] {
+        println!("cargo:rerun-if-env-changed=CARGO_FEATURE_{feature}");
+    }
+    for file in [
+        "vial.json",
+        "vial-iso.json",
+        "vial-jis.json",
+        "vial-kr.json",
+    ] {
+        println!("cargo:rerun-if-changed={file}");
+    }
     let definition: serde_json::Value =
-        serde_json::from_slice(&std::fs::read("vial.json").unwrap()).unwrap();
+        serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
     let compact = serde_json::to_vec(&definition).unwrap();
     let mut encoder = xz2::read::XzEncoder::new(compact.as_slice(), 6);
     let mut compressed = Vec::new();

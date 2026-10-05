@@ -6,6 +6,9 @@ license = "MIT"
 default-run = "nocfree-rmk"
 
 [features]
+layout-iso = ["nocfree-input/layout-iso"]
+layout-jis = ["nocfree-input/layout-jis"]
+layout-kr = ["nocfree-input/layout-kr"]
 default = ["defmt-logging", "runtime-recovery"]
 # Register-only early guard, adopted and fed by RMK in normal operation.
 startup-watchdog = ["rmk/watchdog"]
@@ -34,7 +37,7 @@ right = ["rmk/usb_power_awake", "rmk/split", "rmk/adafruit_bl"]
 receiver = ["rmk/dongle", "rmk/adafruit_bl", "rmk/vial", "rmk/host_lock"]
 [dependencies]
 log = { version = "0.4", optional = true }
-rmk = { git = "https://github.com/sarimabbas/rmk-nocfree", rev = "89fead1de856132911ec685313fa88cda0652bac", default-features = false, features = ["storage", "nrf52833_ble"] }
+rmk = { git = "https://github.com/sarimabbas/rmk-nocfree", rev = "108067bf3577e5b46e9436522c6b805d2cf36fbd", default-features = false, features = ["storage", "nrf52833_ble"] }
 nocfree-input = { path = "../crates/nocfree-input" }
 nrf-sdc = { version = "0.4", features = ["defmt", "peripheral", "central", "nrf52833"] }
 nrf-mpsl = { version = "0.4", features = ["defmt", "critical-section-impl", "nrf52833"] }

@@ -6,26 +6,35 @@ use embedded_hal_async::i2c::I2c;
 /// A complete snapshot is returned only if every expander read succeeds.
 pub struct Inputs<I> {
     bus: I,
+    extra_port: bool,
 }
 pub const ADDRESSES: [u8; 3] = [0x20, 0x22, 0x24];
-pub const LEFT_BITS: [u8; 37] = [
-    0, 1, 2, 3, 4, 5, 6, 8, 9, 10, 11, 12, 13, 14, 16, 17, 18, 19, 20, 21, 24, 25, 26, 27, 28, 29,
-    32, 33, 34, 35, 36, 37, 40, 41, 42, 43, 44,
-];
-pub const RIGHT_BITS: [u8; 47] = [
-    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25,
-    26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46,
-];
+pub mod layout;
+pub use layout::{LEFT_BITS, RIGHT_BITS};
 
 impl<I: I2c> Inputs<I> {
     pub fn new(bus: I) -> Self {
-        Self { bus }
+        Self {
+            bus,
+            extra_port: false,
+        }
+    }
+    /// KR right has four additional inputs on expander 0x21 port 0.
+    pub fn with_extra_port(bus: I) -> Self {
+        Self {
+            bus,
+            extra_port: true,
+        }
     }
     pub async fn initialize(&mut self) -> Result<(), I::Error> {
         for address in ADDRESSES {
             // No output pins. Explicitly clear polarity inversion after a warm reset.
             self.bus.write(address, &[6, 0xff, 0xff]).await?;
             self.bus.write(address, &[4, 0, 0]).await?;
+        }
+        if self.extra_port {
+            self.bus.write(0x21, &[6, 0xff, 0xff]).await?;
+            self.bus.write(0x21, &[4, 0, 0]).await?;
         }
         Ok(())
     }
@@ -48,6 +57,14 @@ impl<I: I2c> Inputs<I> {
             }
             pressed |= ((!u16::from_le_bytes(ports)) as u64) << (16 * index);
         }
+        if self.extra_port {
+            let mut port = [0];
+            self.bus.write_read(0x21, &[0], &mut port).await?;
+            if park_pointer {
+                self.bus.write(0x21, &[2]).await?;
+            }
+            pressed |= ((!port[0]) as u64) << 48;
+        }
         Ok(pressed)
     }
 }
@@ -66,6 +83,7 @@ mod tests {
     use std::vec::Vec;
     struct Bus {
         ports: [u16; 3],
+        extra: u8,
         fail: Option<u8>,
         reads: usize,
         writes: Vec<(u8, Vec<u8>)>,
@@ -84,6 +102,11 @@ mod tests {
             }
             match operations {
                 [Operation::Write(bytes)] => self.writes.push((address, bytes.to_vec())),
+                [Operation::Write([0]), Operation::Read(buf)] if address == 0x21 => {
+                    assert_eq!(buf.len(), 1);
+                    buf[0] = self.extra;
+                    self.reads += 1;
+                }
                 [Operation::Write([0]), Operation::Read(buf)] => {
                     assert_eq!(buf.len(), 2);
                     let index = ADDRESSES.iter().position(|&a| a == address).unwrap();
@@ -98,6 +121,7 @@ mod tests {
     fn bus(ports: [u16; 3]) -> Bus {
         Bus {
             ports,
+            extra: 0,
             fail: None,
             reads: 0,
             writes: Vec::new(),
@@ -122,7 +146,7 @@ mod tests {
     }
     #[test]
     fn all_keys_can_be_pressed_simultaneously() {
-        let mut inputs = Inputs::new(bus([0; 3]));
+        let mut inputs = Inputs::with_extra_port(bus([0; 3]));
         let snapshot = block_on(inputs.snapshot()).unwrap();
         assert!(
             LEFT_BITS
@@ -141,16 +165,84 @@ mod tests {
         assert_eq!(block_on(inputs.snapshot()).unwrap(), 0xffff_ffff_ffff);
     }
     #[test]
-    fn ansi_mapping_has_no_duplicate_or_out_of_range_bits() {
+    fn every_selected_input_produces_one_press_then_releases() {
+        for &bit in LEFT_BITS.iter().chain(RIGHT_BITS.iter()) {
+            let mut b = bus([0xffff; 3]);
+            b.extra = 0xff;
+            if bit < 48 {
+                b.ports[bit as usize / 16] &= !(1 << (bit % 16));
+            } else {
+                b.extra &= !(1 << (bit - 48));
+            }
+            let mut inputs = if bit < 48 {
+                Inputs::new(b)
+            } else {
+                Inputs::with_extra_port(b)
+            };
+            assert_eq!(block_on(inputs.snapshot()), Ok(1_u64 << bit));
+            inputs.bus.ports = [0xffff; 3];
+            inputs.bus.extra = 0xff;
+            assert_eq!(block_on(inputs.snapshot()), Ok(0));
+        }
+    }
+    #[test]
+    fn kr_extra_port_is_read_only_for_the_right_scanner() {
+        let mut inputs = Inputs::with_extra_port(bus([0xffff; 3]));
+        block_on(inputs.initialize()).unwrap();
+        assert_eq!(
+            &inputs.bus.writes[6..],
+            &[(0x21, std::vec![6, 255, 255]), (0x21, std::vec![4, 0, 0])]
+        );
+        inputs.bus.extra = 0xf0;
+        assert_eq!(block_on(inputs.snapshot_for_interrupt()), Ok(0xf_u64 << 48));
+        assert_eq!(inputs.bus.writes.last(), Some(&(0x21, std::vec![2])));
+        inputs.bus.fail = Some(0x21);
+        assert_eq!(block_on(inputs.snapshot()), Err(ErrorKind::Other));
+        inputs.bus.fail = None;
+        inputs.bus.extra = 0xff;
+        assert_eq!(block_on(inputs.snapshot()), Ok(0));
+    }
+    #[test]
+    fn physical_layout_positions_keep_their_host_usages() {
+        #[cfg(feature = "layout-iso")]
+        {
+            assert_eq!(layout::USAGES[27], 0x64); // Extra key beside left Shift.
+            assert_eq!((layout::LEFT_FN, layout::RIGHT_FN), (33, 80));
+        }
+        #[cfg(feature = "layout-jis")]
+        {
+            assert_eq!(layout::USAGES[51], 0x89); // Yen.
+            assert_eq!(layout::USAGES[74], 0x87); // Ro.
+            assert_eq!(layout::USAGES[78], 0x8a); // Convert.
+            assert_eq!((layout::LEFT_FN, layout::RIGHT_FN), (35, 80));
+        }
+        #[cfg(feature = "layout-kr")]
+        {
+            assert_eq!(&RIGHT_BITS[46..], &[48, 49, 50, 51]);
+            assert_eq!(&layout::USAGES[85..], &[0x4a, 0x4c, 0x4b, 0x4e]);
+            assert_eq!((layout::LEFT_FN, layout::RIGHT_FN), (34, 80));
+        }
+        #[cfg(not(any(feature = "layout-iso", feature = "layout-jis", feature = "layout-kr")))]
+        {
+            assert_eq!(layout::USAGES[37], 0x40);
+            assert_eq!(layout::USAGES[48], 0x27);
+            assert_eq!((layout::LEFT_FN, layout::RIGHT_FN), (32, 79));
+        }
+    }
+    #[test]
+    fn selected_mapping_has_no_duplicate_or_out_of_range_bits() {
         for bits in [&LEFT_BITS[..], &RIGHT_BITS[..]] {
             for (i, &bit) in bits.iter().enumerate() {
-                assert!(bit < 48);
+                assert!(bit < 56);
                 assert!(!bits[..i].contains(&bit));
             }
         }
-        assert!(!LEFT_BITS.contains(&7));
-        assert!(!LEFT_BITS.contains(&15));
-        assert!(!RIGHT_BITS.contains(&47));
+        assert_eq!(layout::USAGES[layout::LEFT_SHIFT], 0xe1);
+        assert_eq!(layout::USAGES[layout::LEFT_FN], 0);
+        assert_eq!(layout::USAGES[layout::RIGHT_FN], 0);
+        let mut sorted = layout::VISUAL_TO_RAW;
+        sorted.sort_unstable();
+        assert!(sorted.iter().enumerate().all(|(i, &raw)| raw == i));
     }
 }
 

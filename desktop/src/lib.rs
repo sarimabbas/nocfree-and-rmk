@@ -2,6 +2,7 @@
 pub mod completion_gate;
 pub mod diagnostics;
 pub mod firmware_journey;
+pub mod keyboard_layout;
 pub mod release;
 pub mod runtime_recovery;
 pub mod update;

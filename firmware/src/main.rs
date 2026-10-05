@@ -146,6 +146,17 @@ async fn main(spawner: Spawner) {
     let storage_config = StorageConfig {
         start_addr: 0x65000,
         num_sectors: 8,
+        layout_id: if cfg!(feature = "receiver") {
+            None
+        } else if cfg!(feature = "layout-iso") {
+            Some(2)
+        } else if cfg!(feature = "layout-jis") {
+            Some(4)
+        } else if cfg!(feature = "layout-kr") {
+            Some(3)
+        } else {
+            None
+        },
         ..Default::default()
     };
     #[cfg(any(not(feature = "right"), feature = "runtime-recovery"))]
@@ -312,9 +323,9 @@ async fn main(spawner: Spawner) {
                 config,
                 [PeripheralMatrixConfig {
                     rows: 1,
-                    cols: 47,
+                    cols: nocfree_input::layout::RIGHT_COUNT as u8,
                     row_offset: 0,
-                    col_offset: 37,
+                    col_offset: nocfree_input::layout::LEFT_COUNT as u8,
                 }],
             );
             let mut ble = ble.with_host_service(&host_service);

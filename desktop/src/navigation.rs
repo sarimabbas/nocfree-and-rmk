@@ -1,5 +1,5 @@
 //! Page entry is passive. Only Next accepts a setup selection and starts a journey.
-use crate::{runtime_recovery::Role, scope::Scope};
+use crate::{keyboard_layout::KeyboardLayout, runtime_recovery::Role, scope::Scope};
 use statig::prelude::*;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Page {
@@ -42,6 +42,8 @@ enum Event {
     #[cfg(test)]
     Select(Scope),
     Available([bool; 3]),
+    Layout(KeyboardLayout),
+    Layouts([bool; 4]),
     Checked(Role, bool),
     ChooseNext,
     Next,
@@ -54,6 +56,8 @@ struct Storage {
     available: [bool; 3],
     checked: [bool; 3],
     customized: bool,
+    layout: KeyboardLayout,
+    layouts: [bool; 4],
 }
 fn role_index(role: Role) -> usize {
     match role {
@@ -108,6 +112,16 @@ fn entry(
     context: &mut Option<Start>,
 ) -> Outcome<State> {
     match event {
+        Event::Layout(layout)
+            if page == Page::Firmware && !matches!(stage, Stage::Active { .. }) =>
+        {
+            storage.layout = *layout;
+            Handled
+        }
+        Event::Layouts(layouts) => {
+            storage.layouts = *layouts;
+            Handled
+        }
         Event::Reset => {
             storage.reset_selection();
             select(&page)
@@ -176,6 +190,7 @@ fn entry(
             if let Stage::Setup { scope, readiness } = *stage
                 && readiness.permits_start()
                 && (page == Page::Pairing || storage.connected(scope))
+                && (page != Page::Firmware || storage.layouts[storage.layout as usize])
             {
                 *context = Some(match page {
                     Page::Home | Page::Backups => Start::Backup(scope),
@@ -246,6 +261,31 @@ impl Default for Navigation {
     }
 }
 impl Navigation {
+    pub fn with_layout(layout: KeyboardLayout) -> Self {
+        Self(
+            Storage {
+                layout,
+                ..Storage::default()
+            }
+            .state_machine(),
+        )
+    }
+    pub fn layout(&self) -> KeyboardLayout {
+        self.0.inner().layout
+    }
+    pub fn select_layout(&mut self, layout: KeyboardLayout) {
+        self.0
+            .handle_with_context(&Event::Layout(layout), &mut None);
+    }
+    pub fn observe_layouts(&mut self, layouts: &[KeyboardLayout]) {
+        self.0.handle_with_context(
+            &Event::Layouts(KeyboardLayout::ALL.map(|layout| layouts.contains(&layout))),
+            &mut None,
+        );
+    }
+    pub fn layout_available(&self) -> bool {
+        self.0.inner().layouts[self.layout() as usize]
+    }
     fn snapshot(&self) -> (Page, Stage) {
         match self.0.state() {
             State::Backups { stage } => (Page::Backups, *stage),
@@ -311,7 +351,7 @@ impl Navigation {
             .handle_with_context(&Event::Observe(readiness), &mut None);
     }
     pub fn can_start(&self) -> bool {
-        matches!(self.snapshot().1, Stage::Setup { scope, readiness } if readiness.permits_start() && (self.page() == Page::Pairing || self.0.inner().connected(scope)))
+        matches!(self.snapshot().1, Stage::Setup { scope, readiness } if readiness.permits_start() && (self.page() == Page::Pairing || self.0.inner().connected(scope)) && (self.page() != Page::Firmware || self.layout_available()))
     }
     pub fn navigate(&mut self, page: Page) {
         self.0
@@ -391,6 +431,34 @@ mod tests {
         assert!(!nav.checked(Role::Left));
     }
     #[test]
+    fn installation_requires_bundled_layout_and_freezes_it_after_next() {
+        let mut nav = Navigation::with_layout(KeyboardLayout::Iso);
+        nav.navigate(Page::Firmware);
+        nav.observe_available([true; 3]);
+        nav.observe_layouts(&[KeyboardLayout::Ansi]);
+        assert!(nav.choose_next());
+        assert!(!nav.can_start());
+        assert_eq!(nav.next(), None);
+        nav.select_layout(KeyboardLayout::Ansi);
+        assert!(nav.can_start());
+        assert_eq!(nav.next(), Some(Start::Firmware(Scope::Whole)));
+        nav.select_layout(KeyboardLayout::Jis);
+        assert_eq!(nav.layout(), KeyboardLayout::Ansi);
+        nav.navigate(Page::Backups);
+        nav.select_layout(KeyboardLayout::Kr);
+        assert_eq!(nav.layout(), KeyboardLayout::Ansi);
+    }
+    #[test]
+    fn no_installation_before_package_discovery() {
+        let mut nav = Navigation::with_layout(KeyboardLayout::Ansi);
+        nav.navigate(Page::Firmware);
+        nav.observe_available([true; 3]);
+        assert!(nav.choose_next());
+        assert_eq!(nav.next(), None);
+        nav.observe_layouts(&[KeyboardLayout::Ansi]);
+        assert_eq!(nav.next(), Some(Start::Firmware(Scope::Whole)));
+    }
+    #[test]
     fn availability_gates_setup_but_active_disconnect_never_changes_plan() {
         let mut nav = Navigation::default();
         nav.observe_available([true; 3]);
@@ -440,6 +508,7 @@ mod tests {
                 Scope::Part(Role::Receiver),
             ] {
                 let mut nav = Navigation::default();
+                nav.observe_layouts(&[KeyboardLayout::Ansi]);
                 nav.observe_available([true; 3]);
                 nav.navigate(page);
                 assert!(nav.choosing());
@@ -477,6 +546,7 @@ mod tests {
     #[test]
     fn previous_returns_to_picker_without_starting_and_clears_scope() {
         let mut nav = Navigation::default();
+        nav.observe_layouts(&[KeyboardLayout::Ansi]);
         nav.observe_available([true; 3]);
         nav.navigate(Page::Firmware);
         nav.select_scope(Scope::Whole);
@@ -498,6 +568,7 @@ mod tests {
             (Page::Restore, Readiness::AlreadyFactory),
         ] {
             let mut nav = Navigation::default();
+            nav.observe_layouts(&[KeyboardLayout::Ansi]);
             nav.observe_available([true; 3]);
             nav.navigate(page);
             nav.observe(already);

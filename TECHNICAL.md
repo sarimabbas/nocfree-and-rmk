@@ -4,6 +4,32 @@
 
 The keyboard images use the ANSI NocFree AND layout. The right half sends keys to the left half. The left half sends them to the computer through USB, Bluetooth or the dongle. Install RMK on the dongle to use it with the RMK keyboard firmware.
 
+## Physical layouts
+
+Install RMK remembers the layout chosen on its setup screen. Next starts installation only when the app includes approved firmware for that layout. The current package contains ANSI firmware.
+
+The scanner, default keys, split dimensions and Vial definition share one compile-time layout choice. ANSI is the default. Select `layout-iso`, `layout-jis` or `layout-kr` for both halves; these features are mutually exclusive. The dongle forwards reports and configuration to the left half and uses one common image.
+
+| Layout | Left keys | Right keys |
+| --- | --- | --- |
+| ANSI | 37 | 47 |
+| ISO | 38 | 47 |
+| JIS | 37 | 48 |
+| KR | 39 | 50 |
+
+The mappings in `crates/nocfree-input/src/layout/` use the MIT-licensed [layout definitions from jhkim0218](https://github.com/jhkim0218/Nocfree-and-ZMK-rust/tree/5b0fefcff9af3cc4876bb420f86f6b471eed55ba/src/keymap). KR reads four additional right inputs at `0x21/P0`. Each layout has its own Vial identifier; ANSI keeps its existing identifier and key assignments.
+
+Check all mappings and production builds without connecting a keyboard:
+
+```sh
+./scripts/check.sh --all-layouts --reclaimed-softdevice --backlight-active-high --runtime-recovery
+python3 scripts/build_firmware_candidates.py --all-layouts
+```
+
+Candidate outputs have separate layout folders and record their source hashes. They are not approved app packages. RMK's storage schema includes a physical layout identity for ISO, JIS and KR, so equal-sized layouts cannot reuse each other's saved keys. ANSI and the common dongle use the default identity. Changing the RMK revision still resets saved settings under RMK's existing schema policy; check pairing and saved key assignments when testing a new image.
+
+An owner of each layout must then check every physical key in Vial, Fn and Shift across halves, simultaneous input, release after disconnect, wake on the first key, wired/Bluetooth/dongle typing, saved remaps after restart, and recovery entry and exit. Record those observations separately from host tests and cross-builds before adding the images to an app package.
+
 ## Architecture and source map
 
 ```text

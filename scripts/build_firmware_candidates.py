@@ -16,10 +16,17 @@ import migration_guard
 ROOT = Path(__file__).resolve().parents[1]
 TARGET = 'thumbv7em-none-eabihf'
 ROLES = ('left', 'right', 'receiver')
+LAYOUTS = ('ansi', 'iso', 'jis', 'kr')
 
 
-def features(role):
-    result = ['defmt-logging', role, 'mac-keymap', 'runtime-recovery']
+def features(role, layout='ansi'):
+    if layout not in LAYOUTS:
+        raise ValueError('Unknown keyboard layout')
+    result = ['defmt-logging', role, 'runtime-recovery']
+    if role != 'receiver':
+        result.append('mac-keymap')
+        if layout != 'ansi':
+            result.append(f'layout-{layout}')
     if role != 'receiver':
         result += ['reclaimed-softdevice', 'backlight-active-high', 'async-scanner']
     if role == 'left':
@@ -84,12 +91,19 @@ def source_hashes():
         'firmware/.cargo/config.toml',
         'crates/nocfree-input/Cargo.toml'))
     paths.update((ROOT / 'firmware').glob('*.x'))
+    paths.update((ROOT / 'firmware').glob('vial-*.json'))
+    paths.update(path for path in (ROOT / 'firmware/layouts').rglob('*') if path.is_file())
     return {str(path.relative_to(ROOT)): digest(path.read_bytes()) for path in sorted(paths)}
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, epilog=(
         'Run scripts/check.sh before building. Existing output files are replaced.'))
+    layouts = parser.add_mutually_exclusive_group()
+    layouts.add_argument('--layout', choices=LAYOUTS, default='ansi',
+                        help='Physical keyboard layout (default: ansi)')
+    layouts.add_argument('--all-layouts', action='store_true',
+                        help='Build each layout in its own output directory')
     parser.add_argument('--output', '-o', type=Path,
                         default=ROOT / 'dist/firmware')
     parser.add_argument('--toolchain', '-t', default=tomllib.loads(
@@ -101,51 +115,53 @@ def main():
         manifest = tomllib.loads((ROOT / 'firmware/Cargo.toml').read_text())
         rmk = manifest['dependencies']['rmk']['rev']
         before = source_hashes()
-        output = args.output.resolve()
-        plan = {'rmk_revision': rmk, 'roles': {role: features(role) for role in ROLES},
-                'output': str(output), 'toolchain': args.toolchain}
-        if args.dry_run:
-            print(json.dumps(plan, indent=2))
-            return
-        output.mkdir(parents=True, exist_ok=True)
-        (output / 'manifest.json').unlink(missing_ok=True)
-        objcopy = llvm_tool('llvm-objcopy', args.toolchain)
-        size_tool = llvm_tool('llvm-size', args.toolchain)
-        environment = dict(os.environ, CARGO_TARGET_DIR=str(output / 'target'))
-        report = {'schema': 1, **plan, 'source_sha256': before,
-                  'compiler': capture(['rustup', 'run', args.toolchain, 'rustc', '--version']),
-                  'llvm_objcopy': capture([objcopy, '--version']), 'images': {},
-                  'status': 'image checks passed'}
-        for role in ROLES:
-            folder = output / role
-            folder.mkdir(exist_ok=True)
-            print(f'Building {role} with pinned RMK {rmk}...', flush=True)
-            with (folder / 'build.log').open('w') as log:
-                subprocess.run(['rustup', 'run', args.toolchain, 'cargo', 'build', '--locked',
-                                '--release', '--bin', 'nocfree-rmk', '--target', TARGET,
-                                '--no-default-features', '--features', ','.join(features(role))],
-                               cwd=ROOT / 'firmware', env=environment, stdout=log, stderr=log,
+        for layout in LAYOUTS if args.all_layouts else (args.layout,):
+            output = args.output.resolve() / layout if args.all_layouts else args.output.resolve()
+            plan = {'layout': layout, 'rmk_revision': rmk, 'roles': {role: features(role, layout) for role in ROLES},
+                    'output': str(output), 'toolchain': args.toolchain}
+            if args.dry_run:
+                print(json.dumps(plan, indent=2))
+                continue
+            output.mkdir(parents=True, exist_ok=True)
+            (output / 'manifest.json').unlink(missing_ok=True)
+            objcopy = llvm_tool('llvm-objcopy', args.toolchain)
+            size_tool = llvm_tool('llvm-size', args.toolchain)
+            target_dir = args.output.resolve() / 'target'
+            environment = dict(os.environ, CARGO_TARGET_DIR=str(target_dir))
+            report = {'schema': 1, **plan, 'source_sha256': before,
+                      'compiler': capture(['rustup', 'run', args.toolchain, 'rustc', '--version']),
+                      'llvm_objcopy': capture([objcopy, '--version']), 'images': {},
+                      'status': 'image checks passed', 'hardware_validated': False}
+            for role in ROLES:
+                folder = output / role
+                folder.mkdir(exist_ok=True)
+                print(f'Building {role} with pinned RMK {rmk}...', flush=True)
+                with (folder / 'build.log').open('w') as log:
+                    subprocess.run(['rustup', 'run', args.toolchain, 'cargo', 'build', '--locked',
+                                    '--release', '--bin', 'nocfree-rmk', '--target', TARGET,
+                                    '--no-default-features', '--features', ','.join(features(role, layout))],
+                                   cwd=ROOT / 'firmware', env=environment, stdout=log, stderr=log,
+                                   check=True)
+                elf = target_dir / TARGET / 'release/nocfree-rmk'
+                subprocess.run([objcopy, '-O', 'binary', str(elf), str(folder / 'candidate.bin')],
                                check=True)
-            elf = output / 'target' / TARGET / 'release/nocfree-rmk'
-            subprocess.run([objcopy, '-O', 'binary', str(elf), str(folder / 'candidate.bin')],
-                           check=True)
-            (folder / 'size.txt').write_text(capture([size_tool, '-A', str(elf)]) + '\n')
-            binary = (folder / 'candidate.bin').read_bytes()
-            version = manifest['package']['version']
-            if f'NocFree RMK;fw={version}'.encode() not in binary:
-                raise ValueError(f'{role}: expected firmware version descriptor missing')
-            image = encode(binary, 0x27000 if role == 'receiver' else 0x1000)
-            result = guard(role, image, binary)
-            (folder / 'candidate.uf2').write_bytes(image)
-            (folder / 'guard.json').write_text(json.dumps(result, indent=2) + '\n')
-            report['images'][role] = {'features': features(role), 'guard': result,
-                                     'binary_sha256': digest(binary), 'uf2_sha256': digest(image),
-                                     'binary_size': len(binary)}
-            print(f'{role}: image checks passed ({len(binary)} bytes)', flush=True)
-        if source_hashes() != before:
-            raise ValueError('firmware sources changed during build; rebuild candidates')
-        (output / 'manifest.json').write_text(json.dumps(report, indent=2) + '\n')
-        print(f'Candidate manifest: {output / "manifest.json"}')
+                (folder / 'size.txt').write_text(capture([size_tool, '-A', str(elf)]) + '\n')
+                binary = (folder / 'candidate.bin').read_bytes()
+                version = manifest['package']['version']
+                if f'NocFree RMK;fw={version}'.encode() not in binary:
+                    raise ValueError(f'{role}: expected firmware version descriptor missing')
+                image = encode(binary, 0x27000 if role == 'receiver' else 0x1000)
+                result = guard(role, image, binary)
+                (folder / 'candidate.uf2').write_bytes(image)
+                (folder / 'guard.json').write_text(json.dumps(result, indent=2) + '\n')
+                report['images'][role] = {'features': features(role, layout), 'guard': result,
+                                         'binary_sha256': digest(binary), 'uf2_sha256': digest(image),
+                                         'binary_size': len(binary)}
+                print(f'{role}: image checks passed ({len(binary)} bytes)', flush=True)
+            if source_hashes() != before:
+                raise ValueError('firmware sources changed during build; rebuild candidates')
+            (output / 'manifest.json').write_text(json.dumps(report, indent=2) + '\n')
+            print(f'Candidate manifest: {output / "manifest.json"}')
     except (OSError, ValueError, subprocess.CalledProcessError) as error:
         parser.exit(1, f'Build rejected: {error}\n')
 

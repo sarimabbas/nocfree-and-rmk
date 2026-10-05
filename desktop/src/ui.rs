@@ -49,6 +49,7 @@ use gpui_kit::component::{
 
 use crate::factory_release::FactoryRelease;
 use crate::install_journey::{self, Machine as InstallMachine, Stage as InstallStage};
+use crate::keyboard_layout::KeyboardLayout;
 use crate::navigation::{Navigation, Page, Start};
 use crate::scope::Scope;
 use gpui_kit::component::input::{Input, InputEvent, InputState};
@@ -158,11 +159,16 @@ impl Companion {
                 .spawn(async {
                     FirmwareRelease::bundled()
                         .ok()
-                        .map(|r| r.version().to_owned())
+                        .map(|r| (r.version().to_owned(), r.layouts()))
                 })
                 .await;
             let _ = this.update(cx, |this, cx| {
-                this.bundled_version = bundled;
+                let (version, layouts) = bundled
+                    .map_or((None, Vec::new()), |(version, layouts)| {
+                        (Some(version), layouts)
+                    });
+                this.bundled_version = version;
+                this.navigation.observe_layouts(&layouts);
                 this.observe_preflight();
                 cx.notify();
             });
@@ -482,7 +488,7 @@ impl Companion {
             }
         });
         Self {
-            navigation: Navigation::default(),
+            navigation: Navigation::with_layout(KeyboardLayout::load()),
             diagnostic_state: None,
             diagnostic_heartbeat: Instant::now(),
             peripherals: None,
@@ -1028,7 +1034,7 @@ impl Companion {
         body
     }
     fn observe_preflight(&mut self) {
-        let ready = crate::firmware_preflight::assess_scoped(
+        let mut ready = crate::firmware_preflight::assess_scoped(
             self.navigation.page(),
             &self.device_key,
             &self.firmware_versions,
@@ -1040,6 +1046,12 @@ impl Companion {
                 .is_some_and(|t| t.elapsed() < Duration::from_secs(5)),
             self.navigation.scope(),
         );
+        if self.navigation.page() == Page::Firmware
+            && self.navigation.layout() != KeyboardLayout::Ansi
+            && ready == crate::navigation::Readiness::AlreadyLatest
+        {
+            ready = crate::navigation::Readiness::Needed;
+        }
         self.navigation.observe(ready);
     }
     fn start_selected_journey(&mut self, cx: &mut Context<Self>) {
@@ -1077,6 +1089,50 @@ impl Companion {
             self.factory_source
                 .ready_for(scope.roles().iter().all(|role| release.has(*role)), scope)
         })
+    }
+    fn layout_picker(&self, cx: &mut Context<Self>) -> gpui::Div {
+        let selected = self.navigation.layout();
+        let mut choices = div().flex().gap(px(8.)).w_full().max_w(px(680.));
+        for layout in KeyboardLayout::ALL {
+            choices = choices.child(
+                Button::new(("keyboard-layout", layout as usize))
+                    .label(layout.label())
+                    .outline()
+                    .flex_1()
+                    .cursor_pointer()
+                    .when(selected == layout, |button| button.bg(cx.theme().secondary))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.navigation.select_layout(layout);
+                        let _ = layout.save();
+                        this.observe_preflight();
+                        cx.notify();
+                    })),
+            );
+        }
+        div()
+            .flex()
+            .flex_col()
+            .items_center()
+            .gap(px(12.))
+            .w_full()
+            .child(
+                div()
+                    .font_weight(FontWeight::MEDIUM)
+                    .child("Choose your keyboard layout"),
+            )
+            .child(choices)
+            .child(instruction_line(
+                "Choose the layout you ordered. You can change key actions in Vial.",
+                false,
+                cx,
+            ))
+            .when(!self.navigation.layout_available(), |body| {
+                body.child(instruction_line(
+                    "Firmware for this layout is not included in this app.",
+                    false,
+                    cx,
+                ))
+            })
     }
     fn setup_screen(&self, cx: &mut Context<Self>) -> JourneyScreen {
         if self.navigation.choosing() {
@@ -1195,11 +1251,14 @@ impl Companion {
         };
         if let Some(label) = already {
             return JourneyScreen {
-                body: scope_guide(scope, label, cx),
+                body: scope_guide(scope, label, cx)
+                    .when(self.navigation.page() == Page::Firmware, |body| {
+                        body.child(self.layout_picker(cx))
+                    }),
                 actions: Some(self.footer(None, cx)),
             };
         }
-        let body = match self.navigation.page() {
+        let mut body = match self.navigation.page() {
             Page::Restore => self.factory_sources_screen(cx).when(scope != Scope::Whole, |body| {
                 body.child(
                     div()
@@ -1233,6 +1292,9 @@ impl Companion {
                 cx,
             ),
         };
+        if self.navigation.page() == Page::Firmware {
+            body = body.child(self.layout_picker(cx));
+        }
         let enabled = self.navigation.can_start()
             && !self.operation.busy()
             && (self.navigation.page() != Page::Restore
@@ -2509,6 +2571,10 @@ impl Companion {
             },
             scope,
         ));
+        let layout = self.navigation.layout();
+        if !factory {
+            let _ = layout.save();
+        }
         let originals = self.factory_release.clone();
         self.typing_input = None;
 
@@ -2529,7 +2595,7 @@ impl Companion {
                             scope,
                         )
                     } else {
-                        FirmwareRelease::bundled()
+                        FirmwareRelease::bundled_for(layout)
                             .map(|release| FirmwareJourney::new_scoped(release, scope))
                     }
                 })

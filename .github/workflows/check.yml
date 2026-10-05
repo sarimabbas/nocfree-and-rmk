@@ -78,7 +78,7 @@ jobs:
           cache-bin: false
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Host tests and guards
-        run: ./scripts/check.sh --host-only
+        run: ./scripts/check.sh --host-only --all-layouts
 
   check:
     needs: changes
@@ -159,7 +159,7 @@ jobs:
       - name: Install Arm build dependencies
         run: sudo apt-get update && sudo apt-get install -y gcc-arm-none-eabi libnewlib-arm-none-eabi
       - name: Check Vial, runtime recovery and all roles
-        run: ./scripts/check.sh --build-only --reclaimed-softdevice --backlight-active-high --runtime-recovery
+        run: ./scripts/check.sh --build-only --all-layouts --reclaimed-softdevice --backlight-active-high --runtime-recovery
       - name: Build opt-in left blue status indicator
         working-directory: firmware
         run: cargo build --locked --release --bin nocfree-rmk --target thumbv7em-none-eabihf --no-default-features --features defmt-logging,left,mac-keymap,runtime-recovery,reclaimed-softdevice,backlight-active-high,status-led

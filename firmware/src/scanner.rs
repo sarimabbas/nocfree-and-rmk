@@ -63,7 +63,11 @@ impl<I: I2c, const N: usize> Scanner<I, N> {
     }
     fn with_interrupt<P>(bus: I, bits: &'static [u8; N], interrupt: P) -> Scanner<I, N, P> {
         Scanner {
-            inputs: Inputs::new(bus),
+            inputs: if bits.iter().any(|&bit| bit >= 48) {
+                Inputs::with_extra_port(bus)
+            } else {
+                Inputs::new(bus)
+            },
             bits,
             states: [KeyState { pressed: false }; N],
             debounce: DefaultDebouncer::new(),

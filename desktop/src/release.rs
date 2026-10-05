@@ -2,6 +2,7 @@
 //! a public UF2, USB product name, or edited manifest can never become a trusted release.
 //! This module only reads files. Device identity and installation consent are separate.
 use crate::{
+    keyboard_layout::KeyboardLayout,
     runtime_recovery::Role,
     update_image::{self, ImagePolicy, ValidatedImage},
 };
@@ -114,6 +115,30 @@ impl FirmwareRelease {
             Err("This Companion build has no bundled firmware release".into())
         }
     }
+    pub fn bundled_for(layout: KeyboardLayout) -> Result<Self, String> {
+        let release = Self::bundled()?;
+        if !release.supports_layout(layout) {
+            return Err(format!(
+                "{} firmware is not available in this app yet",
+                layout.label()
+            ));
+        }
+        Ok(release)
+    }
+
+    pub fn supports_layout(&self, layout: KeyboardLayout) -> bool {
+        self.images
+            .iter()
+            .all(|image| image.metadata.role == "receiver" || image.metadata.layout == layout.id())
+    }
+
+    pub fn layouts(&self) -> Vec<KeyboardLayout> {
+        KeyboardLayout::ALL
+            .into_iter()
+            .filter(|layout| self.supports_layout(*layout))
+            .collect()
+    }
+
     /// Loads only this code-reviewed release; not an arbitrary package import API.
     pub fn load_from(dir: &Path) -> Result<Self, String> {
         let bytes = read_file(dir, "manifest.json", 32768)?;
@@ -137,7 +162,8 @@ impl FirmwareRelease {
                 Role::Right => ("right", ImagePolicy::RightStartup),
                 Role::Receiver => ("receiver", ImagePolicy::ReceiverProtectedPage),
             };
-            if metadata.role != name
+            if metadata.layout != KeyboardLayout::Ansi.id()
+                || metadata.role != name
                 || metadata.uf2 != format!("{name}.uf2")
                 || metadata.binary != format!("{name}.bin")
             {
@@ -267,6 +293,21 @@ pub(crate) fn fixture() -> FirmwareRelease {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn release_layout_requires_both_halves_to_agree_with_a_shared_receiver() {
+        let mut release = fixture();
+        assert!(release.supports_layout(KeyboardLayout::Ansi));
+        assert_eq!(release.layouts(), vec![KeyboardLayout::Ansi]);
+        for layout in [KeyboardLayout::Iso, KeyboardLayout::Jis, KeyboardLayout::Kr] {
+            assert!(!release.supports_layout(layout));
+        }
+        release.images[1].metadata.layout = "iso".into();
+        assert!(release.layouts().is_empty());
+        release.images[0].metadata.layout = "iso".into();
+        assert_eq!(release.layouts(), vec![KeyboardLayout::Iso]);
+        assert_eq!(release.images[2].metadata.layout, "ansi");
+    }
+
     #[test]
     fn rejects_paths() {
         for name in [

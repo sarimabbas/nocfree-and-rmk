@@ -50,6 +50,17 @@ class PresetTests(unittest.TestCase):
         self.assertEqual(pc[1][3:5], [0x0001, 0x0001])
         self.assertEqual(pc[1][5:7], [0x7803, 0x7804])
 
+    def test_each_physical_layout_exposes_every_key_once_in_vial(self):
+        for name, count in (("iso", 85), ("jis", 85), ("kr", 89)):
+            definition = json.loads((ROOT / f"firmware/vial-{name}.json").read_text())
+            self.assertEqual(definition["matrix"], {"rows": 1, "cols": count})
+            coords = [item for row in definition["layouts"]["keymap"]
+                      for item in row if isinstance(item, str)]
+            self.assertEqual(len(coords), count)
+            self.assertEqual(set(coords), {f"0,{i}" for i in range(count)})
+            ansi = json.loads((ROOT / "firmware/vial.json").read_text())
+            self.assertEqual(definition["customKeycodes"], ansi["customKeycodes"])
+
     def test_custom_names_cover_preset_user_slots_without_changing_geometry(self):
         definition = json.loads((ROOT / "firmware/vial.json").read_text())
         self.assertEqual(len(definition["customKeycodes"]), 8)
