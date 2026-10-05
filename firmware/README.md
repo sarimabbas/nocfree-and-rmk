@@ -1,4 +1,21 @@
-The firmware uses RMK at commit `9607aedf343b17dd6b27307583ae80c4f728fbbd` (unreleased changes after 0.9.0). `main.rs` selects exactly one hardware role. RMK owns key behavior, HID, Bluetooth profiles, split transport, receiver transport, and persistent bonds. `scanner.rs` adapts the independent PCA9555 inputs to RMK events; `battery.rs` switches the divider around each measurement. The shared, host-tested electrical driver lives in `../crates/nocfree-input`.
+# NocFree firmware
+
+The current source is version `0.1.1`, pinned to RMK main commit `89fead1de856132911ec685313fa88cda0652bac` and Rust `1.98.1`. RMK owns key behavior, HID, Bluetooth profiles, split/dongle transport and persistent storage. Board code adapts the PCA9555 scanner and measurement hardware.
+
+Build all three production candidates from the repository root with an Arm GNU toolchain including newlib on `PATH`:
+
+```sh
+python3 scripts/build_firmware_candidates.py --dry-run
+python3 scripts/build_firmware_candidates.py
+```
+
+The script generates ignored BIN/UF2 pairs, source hashes and address/vector/family guard results. LEFT and RIGHT use reclaimed application space, active-high backlight and interrupt scanning; LEFT also uses the simplified status LED. The dongle retains its resident S140 region. No command accesses or flashes devices.
+
+These candidates include Vial Bluetooth labels and the backlight keycode round-trip fix. They are not the hardware-verified Companion bundle. Promotion requires per-role review, exact installed readback and hardware acceptance; see [candidate acceptance](../docs/research/main-firmware-update.md) and [current bundled release](../docs/research/companion-firmware-release.md).
+
+## Historical bring-up notes
+
+The following records earlier layout/size experiments and their original restrictions; they are not current candidate build instructions or current measurements.
 
 Build from this directory so Cargo reads `.cargo/config.toml` and RMK reads `keyboard.toml`:
 
