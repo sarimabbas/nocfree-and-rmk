@@ -18,6 +18,12 @@ Use the file for your computer. Mac uses a ZIP file. Open it, then move **NocFre
 
 Windows: open the ZIP file, keep all its files together, then open **nocfree-companion.exe**. Linux: open the archive and follow the included **README.txt**.
 
+On Mac, you can also use Homebrew:
+
+```sh
+brew install --cask sarimabbas/tap/nocfree-rmk-companion
+```
+
 This is an early release for the ANSI NocFree AND. The keyboard and app have been tested on Mac. Windows and Linux need more testing.
 
 ## Start here
