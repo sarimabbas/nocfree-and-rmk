@@ -25,10 +25,10 @@ brew install --cask sarimabbas/tap/nocfree-rmk-companion
 ## Start here
 
 1. Connect both keyboard halves and the dongle to your computer with USB.
-2. Open Companion and select **Backup firmware** to save the original software. Keep these backup files.
-3. Select **Install RMK**, follow the instructions on each screen, and click **Next** when you are ready.
+2. Open Companion and select **Install RMK**.
+3. Follow the instructions on each screen and click **Next** when you are ready.
 
-Keep the USB cables connected until the app asks you to remove them.
+Before it replaces the software on a part, Companion saves a backup automatically. Keep the USB cables connected until the app asks you to remove them.
 
 ## What works
 
