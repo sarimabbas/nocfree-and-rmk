@@ -80,7 +80,7 @@ impl Home {
         match self {
             Self::Connect => "Connect your keyboard",
             Self::Recovery => "Recovery mode",
-            Self::Factory => "Make it your own",
+            Self::Factory => "Install RMK",
             Self::Rmk(UpdateAssessment::Current) => "You’re up to date",
             Self::Rmk(UpdateAssessment::Available) => "An update is ready",
             Self::Rmk(UpdateAssessment::Unknown) => "Running RMK",
@@ -90,8 +90,8 @@ impl Home {
     pub fn description(self) -> &'static str {
         match self {
             Self::Connect => "Connect the left half by USB to get started.",
-            Self::Recovery => "Return to normal mode so we can recognize your keyboard.",
-            Self::Factory => "Switch to RMK, with your factory firmware saved first.",
+            Self::Recovery => "Restart your keyboard to leave recovery mode.",
+            Self::Factory => "Save your factory firmware and install RMK.",
             Self::Rmk(UpdateAssessment::Available) => {
                 "Your current firmware will be saved before updating."
             }

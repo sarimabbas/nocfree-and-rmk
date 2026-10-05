@@ -100,7 +100,7 @@ impl TargetImage {
             Self::Rmk(i) => verify(archive, baseline, i),
             Self::Factory(_) => {
                 if !self.exact(archive)? {
-                    return Err("Factory readback differs from the complete planned restore, including S140 and saved settings.".into());
+                    return Err("The firmware on this part does not match the selected factory firmware and saved settings.".into());
                 }
                 let old = flash_bytes(baseline)?;
                 let actual = flash_bytes(archive)?;
@@ -461,7 +461,7 @@ fn verify(archive: &[u8], baseline: &[u8], image: &ReleaseImage) -> Result<usize
     let boundary = 0x65000 - 0x1000;
     if actual[..boundary] != expected[..boundary] {
         return Err(
-            "Firmware readback differs from the planned image. Keep the recovery drive connected."
+            "The firmware on this part does not match the selected file. Keep the recovery drive connected."
                 .into(),
         );
     }
@@ -518,18 +518,18 @@ fn sibling_folder(root: &Path, value: &serde_json::Value) -> Result<PathBuf, Str
     let p = PathBuf::from(
         value
             .as_str()
-            .ok_or("Factory verification path is missing.")?,
+            .ok_or("The factory firmware check folder is missing.")?,
     );
     if p.parent() != Some(root)
         || !fs::symlink_metadata(&p)
-            .map_err(|_| "Factory verification folder is unavailable.")?
+            .map_err(|_| "The factory firmware check folder is unavailable.")?
             .is_dir()
         || fs::symlink_metadata(&p)
-            .map_err(|_| "Factory verification folder is unavailable.")?
+            .map_err(|_| "The factory firmware check folder is unavailable.")?
             .file_type()
             .is_symlink()
     {
-        return Err("Factory verification must remain in the private backup folder.".into());
+        return Err("The factory firmware check files must stay in the backup folder.".into());
     }
     Ok(p)
 }
@@ -541,7 +541,7 @@ fn superseded(prior: &Path, raw_intent: &[u8], role: Role) -> Result<bool, Strin
     let root = prior.parent().ok_or("Backup folder is unavailable.")?;
     let marker: serde_json::Value =
         serde_json::from_slice(&device::read_bounded(&marker_path, 8192)?)
-            .map_err(|_| "Factory supersession record is unreadable.")?;
+            .map_err(|_| "Could not read the factory restore record.")?;
     let old: serde_json::Value = serde_json::from_slice(raw_intent)
         .map_err(|_| "Original operation record is unreadable.")?;
     if marker["schema"].as_u64() != Some(1)
@@ -550,7 +550,9 @@ fn superseded(prior: &Path, raw_intent: &[u8], role: Role) -> Result<bool, Strin
         || marker["role"] != old["role"]
         || marker["location"] != old["location"]
     {
-        return Err("Factory supersession does not bind the original RMK attempt.".into());
+        return Err(
+            "The factory restore record does not match the earlier RMK installation.".into(),
+        );
     }
     let folder = sibling_folder(root, &marker["factory_verification"])?;
     let proof: serde_json::Value = serde_json::from_slice(&device::read_bounded(
@@ -564,7 +566,7 @@ fn superseded(prior: &Path, raw_intent: &[u8], role: Role) -> Result<bool, Strin
         || proof["target_sha256"] != marker["factory_target_sha256"]
         || proof["readback_sha256"] != marker["factory_readback_sha256"]
     {
-        return Err("Factory verification does not bind the supersession record.".into());
+        return Err("The factory firmware check does not match the restore record.".into());
     }
     let readback = sibling_folder(root, &proof["readback"])?;
     let actual = device::read_bounded(&readback.join("CURRENT.UF2"), ARCHIVE_LIMIT)?;
@@ -573,7 +575,7 @@ fn superseded(prior: &Path, raw_intent: &[u8], role: Role) -> Result<bool, Strin
         || proof["target_sha256"].as_str() != Some(image.sha256.as_str())
     {
         return Err(
-            "Verified factory readback changed; the old RMK attempt remains uncertain.".into(),
+            "The saved factory firmware changed. Companion cannot confirm the earlier RMK installation.".into(),
         );
     }
     Ok(true)
@@ -587,7 +589,7 @@ fn record_factory_supersession(
     image: &TargetImage,
 ) -> Result<(), String> {
     if !matches!(image, TargetImage::Factory(_)) || !image.exact(actual)? {
-        return Err("Exact complete factory verification is required before supersession.".into());
+        return Err("Check that the firmware matches the factory backup before replacing the earlier installation record.".into());
     }
     let root = folder.parent().ok_or("Backup folder is unavailable.")?;
     let proof = serde_json::json!({"schema":1,"role":format!("{role:?}"),"location":location,"target_sha256":image.sha(),"readback_sha256":hash(actual),"readback":readback,"classification":"factory readback exact; preceding RMK result remains uncertain"});
@@ -597,14 +599,14 @@ fn record_factory_supersession(
             serde_json::from_slice(&device::read_bounded(&proof_path, 8192)?)
                 .map_err(|_| "Factory verification record is unreadable.")?;
         if old != proof {
-            return Err("Factory verification record differs from this observation.".into());
+            return Err("The saved factory firmware check does not match this part.".into());
         }
     } else {
         durable(
             folder,
             "factory-verified.json",
             &serde_json::to_vec_pretty(&proof)
-                .map_err(|_| "Could not encode factory verification.")?,
+                .map_err(|_| "Could not save the factory firmware check.")?,
         )?;
     }
     for entry in fs::read_dir(root).map_err(|_| "Could not check earlier RMK attempts.")? {
@@ -623,8 +625,8 @@ fn record_factory_supersession(
             continue;
         }
         let raw = device::read_bounded(&intent, 8192)?;
-        let old: serde_json::Value =
-            serde_json::from_slice(&raw).map_err(|_| "Earlier RMK intent is unreadable.")?;
+        let old: serde_json::Value = serde_json::from_slice(&raw)
+            .map_err(|_| "Could not read the earlier RMK installation record.")?;
         if old["schema"].as_u64() != Some(1)
             || !rmk_intent(&old)
             || old["role"].as_str() != Some(format!("{role:?}").as_str())
@@ -639,7 +641,8 @@ fn record_factory_supersession(
         durable(
             &prior,
             "install-superseded.json",
-            &serde_json::to_vec_pretty(&marker).map_err(|_| "Could not encode supersession.")?,
+            &serde_json::to_vec_pretty(&marker)
+                .map_err(|_| "Could not save the factory restore record.")?,
         )?;
     }
     Ok(())
@@ -731,14 +734,14 @@ fn reconcile_target(
         if record["location"].as_u64() != Some(location)
             || record["target_sha256"].as_str() != Some(reconciliation_image.sha())
         {
-            return Err("An earlier installation needs reconciliation on its original USB connection and release.".into());
+            return Err("Reconnect this part to its original USB port and check the earlier installation with the same firmware version.".into());
         }
         let previous = device::read_bounded(&prior.join("CURRENT.UF2"), ARCHIVE_LIMIT)?;
         if record["backup_sha256"].as_str() != Some(hash(&previous).as_str()) {
             return Err("The earlier installation backup changed.".into());
         }
         let storage = reconciliation_image.verify(actual, &previous)?;
-        durable(&prior,"install-verified.json",&serde_json::to_vec_pretty(&serde_json::json!({"schema":1,"readback_sha256":hash(actual),"settings_changed_bytes":storage,"reconciled_after_restart":true})).map_err(|_| "Could not encode reconciliation.")?)?;
+        durable(&prior,"install-verified.json",&serde_json::to_vec_pretty(&serde_json::json!({"schema":1,"readback_sha256":hash(actual),"settings_changed_bytes":storage,"reconciled_after_restart":true})).map_err(|_| "Could not save the installation check.")?)?;
     }
     Ok(())
 }
@@ -922,7 +925,7 @@ impl FirmwareJourney {
             return Err("Choose Restore factory before starting its guided steps.".into());
         }
         if role != self.role() {
-            return Err("Recovery belongs to a different component.".into());
+            return Err("This recovery drive belongs to a different part.".into());
         }
         let stock_origin = session.factory_recovery_role();
         let folder = session.save_backup()?;
@@ -1001,7 +1004,7 @@ impl FirmwareJourney {
             || device::read_bounded(&baseline.folder.join("INFO_UF2.TXT"), 8192)?
                 != baseline.mount.info.as_bytes()
             || device::read_bounded(&baseline.mount.path.join("INFO_UF2.TXT"), 8192)
-                .map_err(|_| "Recovery metadata is unavailable.")?
+                .map_err(|_| "Could not read the recovery drive information.")?
                 != baseline.mount.info.as_bytes()
             || !correlated(&device::discover()?, baseline.location, &baseline.mount)
         {
@@ -1014,7 +1017,7 @@ impl FirmwareJourney {
             &baseline.folder,
             "install-intent.json",
             &serde_json::to_vec_pretty(&intent)
-                .map_err(|_| "Could not encode installation record.")?,
+                .map_err(|_| "Could not save the installation record.")?,
         )?;
         // Set the state before touching the drive: even a partial/failed copy cannot
         // return this live journey to an install button.
@@ -1024,9 +1027,9 @@ impl FirmwareJourney {
                 || device::read_bounded(&baseline.mount.path.join("INFO_UF2.TXT"), 8192)?
                     != baseline.mount.info.as_bytes()
             {
-                return Err("Recovery connection changed after the operation was saved. Check its readback before continuing.".into());
+                return Err("The USB connection changed after installation started. Check the firmware on the part before continuing.".into());
             }
-            let mut destination = fs::OpenOptions::new().write(true).create_new(true).open(baseline.mount.path.join("COMPANION.UF2")).map_err(|_| "The transfer could not start. Check the recovery drive; don’t repeat the copy.")?;
+            let mut destination = fs::OpenOptions::new().write(true).create_new(true).open(baseline.mount.path.join("COMPANION.UF2")).map_err(|_| "The transfer could not start. Click Next to check the firmware on the part.")?;
             let written = destination.write_all(image.uf2());
             let flushed = written.as_ref().ok().map(|_| destination.sync_all());
             record_transfer_outcome(&baseline.folder, written, flushed)
@@ -1044,12 +1047,12 @@ impl FirmwareJourney {
             .inner()
             .baseline
             .as_ref()
-            .ok_or("Saved installation evidence is missing.")?;
+            .ok_or("The saved installation record is missing.")?;
         if role != self.role()
             || location != baseline.location
             || !same_recovery_identity(&mount.info, &baseline.mount.info)
         {
-            return Err("Verification belongs to a different component or USB connection.".into());
+            return Err("This firmware check belongs to a different part or USB port.".into());
         }
         let folder = session.save_backup()?;
         let actual = device::read_bounded(&folder.join("CURRENT.UF2"), ARCHIVE_LIMIT)?;
@@ -1059,7 +1062,7 @@ impl FirmwareJourney {
             .release
             .image(role)?
             .verify(&actual, &baseline.bytes)?;
-        durable(&baseline.folder,"install-verified.json",&serde_json::to_vec_pretty(&serde_json::json!({"schema":1,"readback_sha256":hash(&actual),"settings_changed_bytes":changed_storage,"settings_range":"0x65000..0x6d000","settings_action":if self.is_factory(){"restore original factory settings exactly"}else{"RMK schema migration permitted"},"readback":folder})).map_err(|_| "Could not encode verification record.")?)?;
+        durable(&baseline.folder,"install-verified.json",&serde_json::to_vec_pretty(&serde_json::json!({"schema":1,"readback_sha256":hash(&actual),"settings_changed_bytes":changed_storage,"settings_range":"0x65000..0x6d000","settings_action":if self.is_factory(){"restore original factory settings exactly"}else{"RMK schema migration permitted"},"readback":folder})).map_err(|_| "Could not save the firmware check record.")?)?;
         if self.is_factory() {
             record_factory_supersession(
                 &baseline.folder,
@@ -1203,10 +1206,12 @@ fn record_transfer_outcome(
         folder,
         "transfer-outcome.json",
         &serde_json::to_vec_pretty(&report).map_err(
-            |_| "Could not record the transfer result. Verify its readback before continuing.",
+            |_| "Could not save the transfer result. Check the firmware on the part before continuing.",
         )?,
     )?;
-    written.map_err(|_| "The firmware write was interrupted. Click Next to check its readback before continuing.".to_owned())
+    written.map_err(|_| {
+        "The firmware transfer stopped. Click Next to check the firmware on the part.".to_owned()
+    })
     // A UF2 target can reset before fsync acknowledges. Even a successful
     // flush cannot prove installation: both outcomes remain in Reconcile and
     // require exact readback. Never retry the copy here.
@@ -1538,7 +1543,7 @@ mod tests {
             journey
                 .accept_recovery(session)
                 .unwrap_err()
-                .contains("different component")
+                .contains("different part")
         );
     }
     #[test]

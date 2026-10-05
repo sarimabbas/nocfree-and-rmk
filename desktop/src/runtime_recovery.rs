@@ -83,7 +83,7 @@ fn functional_valid(descriptors: &[&[u8]]) -> bool {
 fn validate_descriptor(claimed: &nusb::Interface, number: u8) -> Result<(), &'static str> {
     let desc = claimed
         .descriptor()
-        .ok_or("Missing recovery interface descriptor.")?;
+        .ok_or("Could not read the recovery connection information.")?;
     if desc.interface_number() != number
         || desc.class() != 0xfe
         || desc.subclass() != 1
@@ -91,7 +91,7 @@ fn validate_descriptor(claimed: &nusb::Interface, number: u8) -> Result<(), &'st
         || desc.alternate_setting() != 0
         || desc.num_endpoints() != 0
     {
-        return Err("Recovery interface changed.");
+        return Err("The recovery connection changed.");
     }
     let functions = desc
         .descriptors()
@@ -173,19 +173,19 @@ impl ArmedRequest {
             if cancelled.load(Ordering::Relaxed) { return Err("Recovery cancelled."); }
             let devices = nusb::list_devices().await.map_err(|_| "Could not inspect the USB connection.")?;
             let mut selected = devices.filter(|d| matches(self.role, d));
-            let endpoint = selected.next().ok_or("The selected component disconnected.")?;
+            let endpoint = selected.next().ok_or("The selected part disconnected.")?;
             if selected.next().is_some() || endpoint.id() != self.connection {
-                return Err("The USB connection changed or is ambiguous. Select the device again.");
+                return Err("The USB connection changed or matches more than one part. Select the part again.");
             }
             if cancelled.load(Ordering::Relaxed) { return Err("Recovery cancelled."); }
             if crate::device::usb_location(&endpoint) != Some(self.location) { return Err("The USB port changed."); }
-            let device = endpoint.open().await.map_err(|_| "Could not open the selected recovery interface.")?;
+            let device = endpoint.open().await.map_err(|_| "Could not open the selected recovery connection.")?;
             if cancelled.load(Ordering::Relaxed) { return Err("Recovery cancelled."); }
-            let interface = device.claim_interface(self.interface).await.map_err(|_| "Could not claim the selected recovery interface.")?;
+            let interface = device.claim_interface(self.interface).await.map_err(|_| "Could not use the selected recovery connection.")?;
             validate_descriptor(&interface, self.interface)?;
             let mut fresh = nusb::list_devices().await.map_err(|_| "Could not recheck the USB connection.")?
                 .filter(|d| matches(self.role, d));
-            let current = fresh.next().ok_or("The selected component disconnected.")?;
+            let current = fresh.next().ok_or("The selected part disconnected.")?;
             if fresh.next().is_some() || current.id() != self.connection || dfu_interface(self.role, &current) != Some(self.interface) {
                 return Err("The USB connection changed before recovery.");
             }
@@ -193,8 +193,8 @@ impl ArmedRequest {
             request_allowed(cancelled, self.armed_at)?;
             attempted.store(true,Ordering::Release);
             interface.control_out(detach_request(self.interface), Duration::from_secs(2)).await
-                .map_err(|_| "Recovery request did not complete. Check the device state before trying again.")
-        }).await.unwrap_or(Err("Recovery request timed out. Check the device state before trying again."));
+                .map_err(|_| "The recovery request did not finish. Check whether the recovery drive is open before trying again.")
+        }).await.unwrap_or(Err("The recovery request timed out. Check whether the recovery drive is open before trying again."));
         result.map_err(|message| dispatch_error(submitted.load(Ordering::Acquire), message))
     }
 }
@@ -216,8 +216,8 @@ mod tests {
     #[test]
     fn dispatch_errors_distinguish_unsent_failure_from_possible_reset() {
         assert_eq!(
-            dispatch_error(false, "Could not open the selected recovery interface."),
-            DispatchError::NotSent("Could not open the selected recovery interface.")
+            dispatch_error(false, "Could not open the selected recovery connection."),
+            DispatchError::NotSent("Could not open the selected recovery connection.")
         );
         assert_eq!(
             dispatch_error(true, "Disconnected during detach"),

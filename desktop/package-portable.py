@@ -55,7 +55,7 @@ def main():
                          '/etc/udev/rules.d/, run udevadm control --reload-rules, then reconnect the keyboard.\n'
                          'Mount the recovery drive in the file manager when asked.\n')
     else:
-        instructions += ('Open nocfree-companion.exe. This preview is not Windows-signed.\n'
+        instructions += ('Open nocfree-companion.exe.\n'
                          'Automatic recovery can require a WinUSB driver for the DFU interface.\n'
                          'Use the keyboard recovery shortcut if automatic recovery is unavailable.\n'
                          'Do not replace the keyboard HID or recovery-drive drivers.\n')

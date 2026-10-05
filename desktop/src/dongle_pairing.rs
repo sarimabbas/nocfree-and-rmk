@@ -397,7 +397,7 @@ pub struct BeginRequest {
 }
 fn allowed(started: Instant) -> Result<(), String> {
     if started.elapsed() >= REQUEST_AGE {
-        Err("The pairing request expired before submission.".into())
+        Err("The pairing request expired before it was sent. Start the check again.".into())
     } else {
         Ok(())
     }
@@ -490,7 +490,9 @@ fn open(api: &HidApi, target: &DeviceInfo, role: Role) -> Result<HidDevice, Stri
         .next()
         .ok_or("Dongle pairing is unavailable with this firmware.")?;
     if interfaces.next().is_some() {
-        return Err("The pairing interface is ambiguous.".into());
+        return Err(
+            "More than one pairing connection was found. Reconnect the selected part.".into(),
+        );
     }
     let number =
         u8::try_from(info.interface_number()).map_err(|_| "The pairing interface is invalid.")?;
@@ -531,7 +533,7 @@ fn exchange(
     unchanged(target, role)?;
     allowed(started)?;
     if device.write(&request(role, peer)).map_err(
-        |_| "The pairing request could not be submitted. Check its state before trying again.",
+        |_| "Could not send the pairing request. Check the connection before trying again.",
     )? != 33
     {
         return Err("The pairing request was incomplete. It will not retry automatically.".into());
@@ -539,7 +541,7 @@ fn exchange(
     let mut reply = [0; 32];
     let len = device
         .read_timeout(&mut reply, 500)
-        .map_err(|_| "The pairing response is unavailable. Check its state before trying again.")?;
+        .map_err(|_| "The part did not answer the pairing request. Check the connection before trying again.")?;
     unchanged(target, role)?;
     allowed(started)?;
     response(&reply[..len], role, peer)

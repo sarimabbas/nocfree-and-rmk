@@ -71,7 +71,7 @@ impl Session {
     pub fn select(&mut self, role: impl Into<Role>) {
         *self = Self {
             role: Some(role.into()),
-            status: "Waiting for normal-mode identification.".into(),
+            status: "Waiting to identify your keyboard.".into(),
             ..Self::default()
         };
     }
@@ -95,7 +95,7 @@ impl Session {
     ) -> Result<(crate::runtime_recovery::Role, u64, BootMount), String> {
         if self.archive_only {
             return Err(
-                "This read-only archive does not establish firmware installation eligibility."
+                "This backup does not identify the connected part. Identify it before installing firmware."
                     .into(),
             );
         }
@@ -104,7 +104,7 @@ impl Session {
         }
         Ok((
             self.recovery_role
-                .ok_or("Recovery role was not explicitly selected.")?,
+                .ok_or("Choose the part you want to put into recovery mode.")?,
             self.location.ok_or("Recovery connection is missing.")?,
             self.ready.clone().ok_or("Recovery drive is missing.")?,
         ))
@@ -147,7 +147,7 @@ impl Session {
             self.problem = None;
             self.return_flow.restart();
             self.wired_ack = false;
-            self.status = "Checking the saved component before restarting its return steps.".into();
+            self.status = "Checking the saved part before restarting it.".into();
         } else if let Some(role) = self.role {
             self.select(role);
         }
@@ -199,7 +199,7 @@ impl Session {
             }
         };
         let Some(role) = self.role else {
-            self.status = "Choose the component you connected.".into();
+            self.status = "Choose the part you connected.".into();
             return;
         };
         let bootloaders: Vec<_> = snapshot.devices.iter().filter(|d| d.bootloader()).collect();
@@ -207,7 +207,7 @@ impl Session {
             self.location = None;
             self.problem =
                 Some("Leave only the half we are checking connected, then try again.".into());
-            self.status = "Multiple bootloaders are connected. Disconnect them, then reconnect only the selected component in normal mode.".into();
+            self.status = "More than one part is in recovery mode. Disconnect them, then reconnect the selected part in normal mode.".into();
             return;
         }
         if self.location.is_none() {
@@ -227,8 +227,7 @@ impl Session {
                 self.connection_present = true;
                 self.problem = None;
                 self.status =
-                    "Selected component observed in normal mode. Keep the same USB connection."
-                        .into();
+                    "The selected part is connected. Keep it in the same USB port.".into();
             } else {
                 if role == Role::Right
                     && snapshot
@@ -238,7 +237,8 @@ impl Session {
                 {
                     self.problem = Some("This right half’s USB identity is unfamiliar. Reconnect the selected component.".into());
                 }
-                self.status = "Waiting for the selected component in normal mode; a bootloader drive alone cannot identify a half.".into();
+                self.status =
+                    "Start the selected part in normal mode so Companion can identify it.".into();
             }
             return;
         }
@@ -249,12 +249,11 @@ impl Session {
                 self.location = None;
                 self.connection_present = false;
                 self.problem = Some("The keyboard returned on a different USB connection. Reconnect it where it was, then try again.".into());
-                self.status = "Bootloader appeared on a different connection. Reconnect the selected component in normal mode.".into();
+                self.status = "The part entered recovery on a different USB port. Reconnect it in normal mode.".into();
                 return;
             }
             let Some(mount) = snapshot.mounts.first() else {
-                self.status =
-                    "Bootloader detected. Waiting for its recovery drive to mount.".into();
+                self.status = "Recovery mode is active. Waiting for the recovery drive.".into();
                 return;
             };
             if let Err(error) = validate_metadata(&mount.info) {
@@ -267,8 +266,7 @@ impl Session {
             }
             self.problem = None;
             self.ready = Some(mount.clone());
-            self.status =
-                "One correlated recovery drive observed. Ready to save a private readback.".into();
+            self.status = "The recovery drive is ready. You can now save a backup.".into();
         } else if let Some(normal) = snapshot
             .devices
             .iter()
@@ -281,18 +279,16 @@ impl Session {
             self.shared_factory_origin = normal.factory_left();
             self.normal_present = true;
             self.problem = None;
-            self.status =
-                "Component is in normal mode. Follow the recovery procedure shown above.".into();
+            self.status = "The part is in normal mode. Follow the recovery steps above.".into();
         } else if snapshot.devices.iter().any(|d| d.location == location) {
             self.location = None;
             self.connection_present = false;
             self.problem = Some(
                 "A different device is connected. Reconnect the keyboard, then try again.".into(),
             );
-            self.status = "An unexpected device appeared on this connection. Identify the selected component again.".into();
+            self.status = "A different device is connected to this USB port. Identify the selected part again.".into();
         } else {
-            self.status =
-                "USB disappearance observed. Waiting for the same connection to return.".into();
+            self.status = "USB is disconnected. Waiting for the part to reconnect.".into();
         }
     }
     fn advance_return(&mut self, now: Instant) {
@@ -375,7 +371,7 @@ impl Session {
         self.return_flow.phase().map(|phase| match phase {
             ReturnPhase::Disconnect if self.role == Some(Role::Receiver) => (
                 "Unplug the USB dongle".into(),
-                "Unplug it from your Mac.".into(),
+                "Unplug it from your computer.".into(),
             ),
             ReturnPhase::Disconnect if self.role == Some(Role::Right) => (
                 "Turn the right half OFF".into(),
@@ -422,11 +418,11 @@ impl Session {
             ),
             ReturnPhase::Reconnect if self.role == Some(Role::Receiver) => (
                 "Reconnect the USB dongle".into(),
-                "Plug it back into your Mac.".into(),
+                "Plug it back into your computer.".into(),
             ),
             ReturnPhase::Reconnect => (
                 format!("Reconnect the {side} half"),
-                "Plug its USB cable back into your Mac.".into(),
+                "Plug its USB cable back into your computer.".into(),
             ),
             ReturnPhase::Complete => (
                 "Firmware copy saved".into(),
@@ -568,7 +564,7 @@ impl Session {
         let result: Result<PathBuf, String> = (|| {
             if !self.view().can_save {
                 return Err(
-                    "Identify the selected component and its recovery drive before saving.".into(),
+                    "Identify the selected part and its recovery drive before saving.".into(),
                 );
             }
             let location = self.location;
@@ -576,7 +572,7 @@ impl Session {
             self.observe(Ok(discover()?));
             if self.location != location || self.ready.as_ref() != Some(&original) {
                 return Err(
-                    "Connection changed before backup. Identify the component again.".into(),
+                    "The USB connection changed before backup. Identify the part again.".into(),
                 );
             }
             let data = read(&original.path.join("CURRENT.UF2"))?;
@@ -590,7 +586,7 @@ impl Session {
             }
             let timestamp = SystemTime::now()
                 .duration_since(UNIX_EPOCH)
-                .map_err(|_| "Could not timestamp the local backup.")?
+                .map_err(|_| "Could not record the backup time.")?
                 .as_nanos();
             private_directory(root)?;
             let folder = root.join(format!("readback-{timestamp}"));
@@ -602,7 +598,7 @@ impl Session {
                 &folder,
                 "session.json",
                 &serde_json::to_vec_pretty(&journal)
-                    .map_err(|_| "Could not encode the local journal.")?,
+                    .map_err(|_| "Could not save the backup record.")?,
             )?;
             self.backup_path = Some(folder.clone());
             self.legacy_left_start = self.rmk_left
@@ -613,7 +609,7 @@ impl Session {
             self.archived_location = location;
             self.return_flow.restart();
             self.wired_ack = false;
-            self.status = "Private readback saved and hashed. No firmware was written.".into();
+            self.status = "Your firmware backup is saved.".into();
             Ok(folder)
         })();
         if let Err(error) = &result {
@@ -633,7 +629,9 @@ pub(crate) fn validate_metadata(info: &str) -> Result<(), String> {
         || !lines.contains(&"Model: NocFree &")
         || !lines.contains(&"Board-ID: NocFree &")
     {
-        return Err("This bootloader version/model has not been inspected for this prototype. Saving is unavailable.".into());
+        return Err(
+            "Companion does not recognize this recovery system. It cannot save a backup.".into(),
+        );
     }
     Ok(())
 }
@@ -684,7 +682,8 @@ fn atomic_file(folder: &Path, name: &str, bytes: &[u8]) -> Result<(), String> {
         .map_err(
             |_| "Could not finish saving backup files; the folder may contain incomplete files.",
         )?;
-    fs::rename(temporary, folder.join(name)).map_err(|_| "Could not finalize backup file.")?;
+    fs::rename(temporary, folder.join(name))
+        .map_err(|_| "Could not finish saving the backup file.")?;
     crate::host_storage::sync_directory(folder)?;
     Ok(())
 }

@@ -11,7 +11,7 @@ case "${1:-}" in
     echo 'Build the local NocFree RMK Companion macOS app.'
     echo 'Usage: desktop/build-macos.sh [--release | --help | --version]'
     echo 'Requires Rust, macOS and Apple command-line tools. Creates dist/NocFree RMK Companion.app.'
-    echo 'Requires the pinned firmware package in dist/companion-firmware/; validates it before bundling.'
+    echo 'Put the firmware package in dist/companion-firmware/. The script checks it before adding it to the app.'
     exit 0 ;;
   -v|--version) echo "NocFree RMK Companion $version"; exit 0 ;;
   -r|--release) profile=release ;;
@@ -19,7 +19,7 @@ case "${1:-}" in
   *) echo 'Unknown option. Use --help.' >&2; exit 2 ;;
 esac
 [ "$#" -le 1 ] || { echo 'Unexpected arguments. Use --help.' >&2; exit 2; }
-[ "$(uname -s)" = Darwin ] || { echo 'This prototype supports macOS only.' >&2; exit 1; }
+[ "$(uname -s)" = Darwin ] || { echo 'Run this script on macOS.' >&2; exit 1; }
 echo 'Building NocFree RMK Companion…'
 if [ "$profile" = release ]; then cargo build --locked --release; else cargo build --locked; fi
 firmware='../dist/companion-firmware'

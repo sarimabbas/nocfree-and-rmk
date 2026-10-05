@@ -41,7 +41,7 @@ impl Request {
                 .bytes()
                 .all(|c| c.is_ascii_alphanumeric() || matches!(c, b'-' | b'_'))
         {
-            return Err("The startup trial instructions are invalid. Wait for the controller to correct them.".into());
+            return Err("The startup test instructions are invalid. Waiting for new instructions.".into());
         }
         if matches!(
             self.step,
@@ -53,7 +53,7 @@ impl Request {
                 | Step::Paused
         ) && self.location.is_none()
         {
-            return Err("The controller must identify the left USB connection first.".into());
+            return Err("Identify the left USB connection before starting the test.".into());
         }
         Ok(())
     }
@@ -138,12 +138,12 @@ impl Trial {
         if request.session == self.request.session {
             if request.sequence < self.request.sequence {
                 return Err(
-                    "Older startup instructions were received. Wait for the controller.".into(),
+                    "The startup instructions are out of date. Waiting for new instructions.".into(),
                 );
             }
             if request.sequence == self.request.sequence && request != self.request {
                 return Err(
-                    "Startup instructions changed without a new step. Wait for the controller."
+                    "The startup instructions changed during this step. Waiting for new instructions."
                         .into(),
                 );
             }
@@ -260,7 +260,7 @@ impl Trial {
             .collect();
         if present.len() > 1 {
             self.invalidate(
-                "The USB connection is ambiguous. Disconnect other recovery devices.".into(),
+                "More than one recovery device matches this USB connection. Disconnect the other recovery devices.".into(),
             );
             return;
         }
@@ -301,7 +301,7 @@ impl Trial {
                     Phase::Initial
                 };
                 if self.mode == Mode::MscBootloader && !snapshot.mounts.is_empty() && !valid_mount {
-                    self.invalidate("The recovery drive has unfamiliar metadata. Wait for the controller to inspect it.".into());
+                    self.invalidate("The recovery drive information is not recognized. Waiting for the drive check.".into());
                 }
             }
             Step::UsbFirst | Step::DockFirst | Step::BatteryFirst | Step::FactoryReturn => {
@@ -413,18 +413,18 @@ impl Trial {
         };
         let (title, instruction, ack_label) = match (self.request.step, self.phase) {
             (Step::Finished, _) => (
-                "Startup observation finished".into(),
-                "The controller has finished this trial.".into(),
+                "Startup test finished".into(),
+                "The startup test is complete.".into(),
                 None,
             ),
             (Step::Paused, _) => (
                 "Ready for the next test".into(),
-                "Leave the left connected. You do not need to send a message; the next physical step will appear here when ready.".into(),
+                "Leave the left half connected. The next step will appear when ready.".into(),
                 None,
             ),
             (Step::Wait, _) | (_, Phase::Done) => (
                 "Checking the keyboard".into(),
-                "Keep the USB cable connected. The controller is checking the result.".into(),
+                "Keep the USB cable connected while Companion checks the result.".into(),
                 None,
             ),
             (Step::ConnectLeft, _) => (
@@ -482,14 +482,14 @@ impl Trial {
             ),
             (_, Phase::Reconnect) => (
                 "Reconnect the left half".into(),
-                "Plug its USB cable into the same connection on your Mac.".into(),
+                "Plug its USB cable into the same port on your computer.".into(),
                 None,
             ),
         };
         TrialView {
             title,
             instruction: if self.request.step == Step::DockFirst && self.problem.is_some() {
-                "Automatic USB cycling stopped. Keep the cable connected while the controller checks the USB state.".into()
+                "The USB port stopped restarting. Keep the cable connected while Companion checks the connection.".into()
             } else {
                 self.problem.clone().unwrap_or(instruction)
             },
@@ -529,11 +529,11 @@ impl Trial {
             observation_valid: self.fresh,
             observed_at_unix_ms: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
-                .map_err(|_| "Could not timestamp the observation.")?
+                .map_err(|_| "Could not record the test time.")?
                 .as_millis(),
         };
         let bytes =
-            serde_json::to_vec_pretty(&status).map_err(|_| "Could not record the observation.")?;
+            serde_json::to_vec_pretty(&status).map_err(|_| "Could not save the test result.")?;
         write_status(&self.directory, &bytes)
     }
 }
@@ -543,7 +543,7 @@ fn directory() -> Result<PathBuf, String> {
 fn read_request(directory: &Path) -> Result<Request, String> {
     let bytes = device::read_bounded(&directory.join("request.json"), 8192)?;
     let request: Request = serde_json::from_slice(&bytes)
-        .map_err(|_| "Could not read the controller's startup instructions.")?;
+        .map_err(|_| "Could not read the startup test instructions.")?;
     request.validate()?;
     Ok(request)
 }
@@ -553,11 +553,11 @@ fn write_status(directory: &Path, bytes: &[u8]) -> Result<(), String> {
     {
         use std::os::unix::fs::PermissionsExt;
         fs::set_permissions(directory, fs::Permissions::from_mode(0o700))
-            .map_err(|_| "Could not make the trial folder private.")?;
+            .map_err(|_| "Could not set access permissions for the test folder.")?;
     }
     let stamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map_err(|_| "Could not timestamp the observation.")?
+        .map_err(|_| "Could not record the test time.")?
         .as_nanos();
     let temporary = directory.join(format!(".status-{}-{stamp}.partial", std::process::id()));
     let mut options = fs::OpenOptions::new();
@@ -565,12 +565,12 @@ fn write_status(directory: &Path, bytes: &[u8]) -> Result<(), String> {
     crate::host_storage::private_file_options(&mut options);
     let mut file = options
         .open(&temporary)
-        .map_err(|_| "Could not save the local startup observation.")?;
+        .map_err(|_| "Could not save the startup test result.")?;
     file.write_all(bytes)
         .and_then(|_| file.sync_all())
-        .map_err(|_| "Could not finish saving the startup observation.")?;
+        .map_err(|_| "Could not finish saving the startup test result.")?;
     fs::rename(&temporary, directory.join("status.json"))
-        .map_err(|_| "Could not finalize the startup observation.")?;
+        .map_err(|_| "Could not finish saving the startup test result.")?;
     crate::host_storage::sync_directory(directory)?;
     Ok(())
 }

@@ -58,7 +58,7 @@ fn validate(role: Role, p: &[u8]) -> Result<(), String> {
 }
 fn validate_vectors(p: &[u8]) -> Result<(), String> {
     if p.len() != 0x6c000 {
-        return Err("Factory backup has incomplete coverage.".into());
+        return Err("The factory backup is missing firmware data.".into());
     }
     let sp = word(p, 0x26000);
     let pc = word(p, 0x26004);
@@ -69,7 +69,7 @@ fn validate_vectors(p: &[u8]) -> Result<(), String> {
         && (0x27000..0x65000).contains(&(pc & !1)))
         || word(p, 0x26200) == 0x87eeb07c
     {
-        return Err("Factory application vectors or recovery marker are invalid.".into());
+        return Err("The factory backup contains invalid startup or recovery data.".into());
     }
     Ok(())
 }
@@ -102,7 +102,7 @@ fn encode(p: &[u8], family: u32) -> Vec<u8> {
 fn private_root(root: &Path) -> Result<(), String> {
     match fs::symlink_metadata(root) {
         Ok(m) if !m.is_dir() || m.file_type().is_symlink() => {
-            return Err("Factory backup folder must be a real private directory.".into());
+            return Err("The factory backup folder cannot be a link to another folder.".into());
         }
         Ok(_) => {}
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
@@ -124,7 +124,7 @@ fn local_archive(path: &Path) -> Result<Vec<u8>, String> {
         .file_type()
         .is_file()
     {
-        return Err("Factory backup must be a regular file.".into());
+        return Err("The factory backup must be a file, not a link or folder.".into());
     }
     device::read_bounded(path, LIMIT)
 }
@@ -133,7 +133,7 @@ fn save_original(root: &Path, path: &Path, archive: &[u8]) -> Result<(), String>
         ".{}.partial",
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .map_err(|_| "Could not timestamp factory backup.")?
+            .map_err(|_| "Could not record the factory backup time.")?
             .as_nanos()
     ));
     let result = (|| {
@@ -215,7 +215,7 @@ impl FactoryRelease {
             "schema": 1, "role": name(role), "origin": "correlated-factory-recovery",
             "archive_sha256": hash(archive)
         }))
-        .map_err(|_| "Could not encode the factory backup record.".into())
+        .map_err(|_| "Could not save the factory backup record.".into())
     }
     pub(crate) fn record_capture(folder: &Path, role: Role, archive: &[u8]) -> Result<(), String> {
         save_original(
@@ -226,7 +226,7 @@ impl FactoryRelease {
     }
     fn recorded_image(role: Role, archive: &[u8], proof: &Path) -> Result<FactoryImage, String> {
         if !fs::symlink_metadata(proof)
-            .map_err(|_| "Factory backup capture record is unavailable.")?
+            .map_err(|_| "The factory backup record is unavailable.")?
             .file_type()
             .is_file()
         {
@@ -240,7 +240,7 @@ impl FactoryRelease {
             || metadata["origin"].as_str() != Some("correlated-factory-recovery")
             || metadata["archive_sha256"].as_str() != Some(hash(archive).as_str())
         {
-            return Err("Factory backup no longer matches its capture record.".into());
+            return Err("The factory backup has changed since it was saved.".into());
         }
         FactoryImage::from_checked(role, payload(archive)?, true)
     }
@@ -391,7 +391,9 @@ impl FactoryRelease {
                 || a != 0x27000 + i * 256
                 || a + 256 > 0x65000
             {
-                return Err("Factory UF2 has unexpected coverage or family.".into());
+                return Err(
+                    "The factory UF2 file has missing data or is for a different chip.".into(),
+                );
             }
             seen[i] = true;
             bytes[a - 0x1000..a - 0x1000 + 256].copy_from_slice(&b[32..288]);

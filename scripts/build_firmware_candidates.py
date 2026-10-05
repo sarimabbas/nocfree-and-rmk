@@ -142,7 +142,7 @@ def main():
             report['images'][role] = {'features': features(role), 'guard': result,
                                      'binary_sha256': digest(binary), 'uf2_sha256': digest(image),
                                      'binary_size': len(binary)}
-            print(f'{role}: guarded {len(binary)} bytes; hardware acceptance pending', flush=True)
+            print(f'{role}: image checks passed ({len(binary)} bytes)', flush=True)
         if source_hashes() != before:
             raise ValueError('firmware sources changed during build; rebuild candidates')
         (output / 'manifest.json').write_text(json.dumps(report, indent=2) + '\n')

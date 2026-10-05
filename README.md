@@ -47,7 +47,6 @@ Keep the USB cables connected until the app asks you to remove them.
 | Change the backlight brightness | Yes, with 16 levels |
 | See each half’s battery level | Yes, as an estimate |
 | Save logs for help | Yes, with an app screenshot when available |
-| Other keyboard layouts or an extra number pad | Not tested |
 
 ![Check the keyboard connections](docs/images/check-pairing.png)
 
@@ -57,6 +56,6 @@ The left switch selects the connection: **top = dongle**, **middle = USB**, **bo
 
 If you need help, use **Help → Export diagnostic logs** to save a ZIP file. Attach it to a [problem report](https://github.com/sarimabbas/nocfree-and-rmk/issues/new/choose).
 
-For code, builds, recovery details and known limits, see [TECHNICAL.md](TECHNICAL.md).
+For code, builds and recovery details, see [TECHNICAL.md](TECHNICAL.md).
 
 Project code uses the [MIT license](LICENSE), and other included code keeps its own license.

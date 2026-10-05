@@ -6,7 +6,7 @@ NocFree RMK Companion and its pinned bundled RMK firmware. License declarations 
 
 Target: `aarch64-apple-darwin, x86_64-unknown-linux-gnu, x86_64-pc-windows-msvc (union of supported resolved target graphs)`.
 
-Cargo.lock SHA-256: `53ca88f9d9d15203464dbb0d9aca209d5212521dd522f8bb6a64c0150390ee6e`.
+Cargo.lock SHA-256: `fb911d54ac0aef890b7be07b994113a952a35f6eb94a842576abfbdd49a0cd77`.
 
 ### accesskit 0.24.1
 

@@ -25,13 +25,13 @@ impl Target {
         }
         match mode {
             Mode::Wired => {
-                "Connect left USB and move its switch to WIRED. Keep right ON with USB unplugged. Unplug the dongle and disconnect direct Bluetooth, then click Next."
+                "Connect the left USB cable and move its switch to middle WIRED. Keep the right half ON with USB unplugged. Unplug the dongle and disconnect the keyboard in Bluetooth settings. Then click Next."
             }
             Mode::Bluetooth => {
-                "Unplug both halves and the dongle. Move left to Bluetooth, keep right ON and connect NocFree in Bluetooth settings, then click Next."
+                "Unplug both USB cables and the dongle. Move the left switch to bottom Bluetooth and keep the right half ON. Connect NocFree in Bluetooth settings, then click Next."
             }
             Mode::Dongle => {
-                "Unplug both halves. Connect the dongle, move left to DONGLE and keep right ON. Disconnect direct Bluetooth, then click Next."
+                "Unplug both USB cables. Plug in the dongle and move the left switch to top DONGLE. Keep the right half ON. Disconnect the keyboard in Bluetooth settings, then click Next."
             }
         }
     }
@@ -134,13 +134,13 @@ impl Mode {
     pub(crate) fn install_instruction(self) -> &'static str {
         match self {
             Self::Wired => {
-                "Connect left USB and move its switch to WIRED. Keep right ON with USB unplugged."
+                "Connect the left USB cable and move its switch to middle WIRED. Keep the right half ON with USB unplugged."
             }
             Self::Bluetooth => {
-                "Unplug both halves and the dongle. Move left to Bluetooth and keep right ON. Connect NocFree RMK in Bluetooth settings. If it is not listed, hold Fn + 1 for five seconds, then connect."
+                "Unplug both USB cables and the dongle. Move the left switch to bottom Bluetooth and keep the right half ON. Connect NocFree RMK in Bluetooth settings. If it is not listed, hold Fn + 1 for five seconds, then connect."
             }
             Self::Dongle => {
-                "Unplug both halves. Connect the dongle, move left to DONGLE and keep right ON."
+                "Unplug both USB cables. Plug in the dongle and move the left switch to top DONGLE. Keep the right half ON."
             }
         }
     }

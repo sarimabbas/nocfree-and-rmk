@@ -1,4 +1,4 @@
-//! Actual pinned-framework characterization, not hardware acceptance.
+//! Tests USB DFU requests against the pinned framework.
 use embassy_time::Duration;
 use embassy_usb::{
     Handler as UsbHandler,

@@ -362,7 +362,7 @@ pub(crate) fn read_bounded(path: &Path, maximum: usize) -> Result<Vec<u8>, Strin
         .read_to_end(&mut bytes)
         .map_err(|error| recovery_read_error(&error))?;
     if bytes.len() > maximum {
-        return Err("Recovery file exceeds the expected readback size.".into());
+        return Err("The recovery file is larger than expected.".into());
     }
     Ok(bytes)
 }
@@ -439,7 +439,7 @@ pub(crate) fn inspect_archive(data: &[u8]) -> Result<String, String> {
     use sha2::{Digest, Sha256};
     const COUNT: usize = (0x6d000 - 0x1000) / 256;
     if data.len() != COUNT * 512 {
-        return Err("Readback coverage is incomplete; nothing was saved.".into());
+        return Err("The firmware copy is incomplete. Nothing was saved.".into());
     }
     let mut indexes = vec![false; COUNT];
     let mut addresses = vec![false; COUNT];

@@ -1,7 +1,5 @@
 # Source and attribution
 
-This project uses RMK as a pinned dependency under its MIT OR Apache-2.0 license; dependency notices remain in their original distributions. Our source is MIT licensed.
+Project code uses the MIT license. RMK uses MIT OR Apache-2.0. See the included third-party notices for other code.
 
-Pin information, expander order and ANSI layout mapping were derived from the MIT-licensed community support material in [NocFreeKB/NocFree-and-zmk](https://github.com/NocFreeKB/NocFree-and-zmk). That repository's hardware and factory-firmware exclusions remain applicable; this project does not redistribute factory firmware, recovery executables, schematics or PCB designs.
-
-Factory software and private backups are not included.
+Pin information, expander order and the ANSI layout mapping come from the MIT-licensed [NocFreeKB/NocFree-and-zmk](https://github.com/NocFreeKB/NocFree-and-zmk) project.

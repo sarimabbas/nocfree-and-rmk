@@ -25,27 +25,25 @@ impl Procedure {
         match self {
             Self::Reconnect => match role {
                 Role::Left => {
-                    "Disconnect the other parts from USB. Unplug the left USB cable, then reconnect it to the same port."
+                    "Unplug the other parts from USB. Unplug the left half, then reconnect it to the same USB port."
                 }
                 Role::Right => {
-                    "Keep the left half connected by USB in WIRED. Unplug only the right USB cable, then reconnect it to the same port."
+                    "Keep the left half in WIRED mode with USB connected. Unplug the right half, then reconnect it to the same USB port."
                 }
                 Role::Receiver => {
-                    "Unplug both halves and the dongle for five seconds. Reconnect only the dongle to the same port; leave left USB unplugged."
+                    "Unplug both halves and the dongle. Wait five seconds, then reconnect only the dongle to the same USB port."
                 }
             },
             Self::FactoryLeft => {
-                "Factory firmware: keep USB connected and the switch in WIRED. Hold Fn + 5 for five seconds, then release."
+                "Keep the left half in WIRED mode with USB connected. Hold Fn + 5 for five seconds, then release both keys."
             }
             Self::FactoryRight => {
-                "Factory firmware: keep the paired factory left half connected by USB in WIRED. Turn right ON and keep its USB connected. Hold Fn + the main-row 0 key for five seconds, then release."
+                "Keep the paired left half on factory firmware, in WIRED mode with USB connected. Turn the right half ON and connect its USB cable. Hold Fn + 0 on the number row for five seconds, then release both keys."
             }
             Self::FactoryReceiver => {
-                "Factory firmware: keep only the dongle connected by USB. Move its paired factory left half to top DONGLE, with left USB unplugged, and hold Fn + 6 for five seconds. This requires the factory Fn-layer 6 key mapped to DongleDFU."
+                "Keep only the dongle connected by USB. Use the paired left half with factory firmware and move its switch to top DONGLE. Hold Fn + 6 on the left half for five seconds, then release both keys."
             }
-            Self::RuntimeApp => {
-                "RMK firmware: keep USB connected. We’re opening its recovery drive automatically."
-            }
+            Self::RuntimeApp => "Keep USB connected while the app opens the recovery drive.",
         }
     }
 }

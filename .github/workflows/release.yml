@@ -12,7 +12,7 @@ on:
         required: true
         type: string
       firmware_zip_sha256:
-        description: Reviewed SHA256 of the staged firmware ZIP
+        description: SHA256 of the firmware ZIP
         required: true
         type: string
 
@@ -97,12 +97,11 @@ jobs:
           mkdir -p "$RUNNER_TEMP/release-input"
           ditto -c -k --keepParent "dist/NocFree RMK Companion.app" "$RUNNER_TEMP/release-input/nocfree-rmk-companion-unsigned.zip"
           cat > "$RUNNER_TEMP/release-input/${VERSION}.md" <<'NOTES'
-          Manage your NocFree keyboard with Companion.
+          Save your keyboard software, install RMK, change keys and check each connection mode.
 
-          Downloads: macOS Apple Silicon, Windows x86-64, and Linux x86-64.
-          The macOS app is signed and notarized.
-          See README.md for features and TECHNICAL.md for platform requirements.
-          Export logs from Help and attach the ZIP to your issue if you need support.
+          Download the app for Mac with Apple Silicon, Windows or Linux. On Mac and Windows, open the ZIP file. On Linux, extract the archive and follow README.txt.
+
+          For help, select Help → Export diagnostic logs and attach the ZIP file to a GitHub issue.
           NOTES
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

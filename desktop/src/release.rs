@@ -118,12 +118,12 @@ impl FirmwareRelease {
     pub fn load_from(dir: &Path) -> Result<Self, String> {
         let bytes = read_file(dir, "manifest.json", 32768)?;
         if digest(&bytes) != MANIFEST_SHA256 {
-            return Err("Unrecognized firmware release manifest".into());
+            return Err("The firmware list is not recognized".into());
         }
         let manifest: Manifest =
-            serde_json::from_slice(&bytes).map_err(|_| "Invalid firmware release manifest")?;
+            serde_json::from_slice(&bytes).map_err(|_| "The firmware list is damaged")?;
         if manifest.schema != 1 || manifest.images.len() != 3 {
-            return Err("Unsupported firmware release schema".into());
+            return Err("Companion cannot read this firmware list format".into());
         }
         let mut images = Vec::new();
         for (metadata, role) in
@@ -141,7 +141,7 @@ impl FirmwareRelease {
                 || metadata.uf2 != format!("{name}.uf2")
                 || metadata.binary != format!("{name}.bin")
             {
-                return Err("Firmware role mismatch".into());
+                return Err("The firmware file is for a different keyboard part".into());
             }
             let uf2 = read_file(dir, &metadata.uf2, MAX_FILE)?;
             let binary = read_file(dir, &metadata.binary, MAX_FILE)?;
@@ -157,7 +157,7 @@ impl FirmwareRelease {
                 || proof.binary_size() != metadata.binary_size
                 || proof.family_id() != metadata.family_id
             {
-                return Err("Firmware bounds mismatch".into());
+                return Err("The firmware file has an unexpected size or address range".into());
             }
             images.push(ReleaseImage {
                 metadata,

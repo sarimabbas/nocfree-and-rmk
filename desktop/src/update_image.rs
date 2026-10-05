@@ -69,23 +69,29 @@ pub enum ValidationError {
 impl fmt::Display for ValidationError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
-            Self::Blocks => "UF2 must contain complete 512-byte blocks within the image limit",
-            Self::Magic => "invalid UF2 magic",
-            Self::Family => "requires the nRF52833 application family and ordinary flags",
-            Self::Alignment => "requires aligned 256-byte payloads",
-            Self::Numbering => "invalid block numbering",
-            Self::ProtectedMemory => "image would touch protected or unverified memory",
-            Self::Coverage => "requires unique contiguous payloads at the policy origin",
-            Self::Binary => "requires an aligned BIN covering the policy-required fields",
-            Self::ExactMatch => {
-                "UF2 must match exact BIN with only policy-aligned final FF padding"
+            Self::Blocks => "The UF2 file is incomplete or too large.",
+            Self::Magic => "The UF2 file header is invalid.",
+            Self::Family => "The firmware file is not a supported nRF52833 application.",
+            Self::Alignment => {
+                "The firmware file contains data blocks with invalid sizes or addresses."
             }
-            Self::StackPointer => "invalid application stack pointer",
-            Self::ResetVector => "reset vector must be Thumb code within exact BIN coverage",
-            Self::RecoveryMarker => "requires recovery marker at 0x1200",
-            Self::StartupReserve => "startup reserve at 0x1200 must be erased",
-            Self::ReceiverMarker => "dongle must not contain the recovery-first marker",
-            Self::OldSoftDevice => "old S140 magic must be absent at 0x3004",
+            Self::Numbering => "The firmware file has invalid block numbers.",
+            Self::ProtectedMemory => {
+                "The firmware file would write outside the supported application area."
+            }
+            Self::Coverage => "The firmware file has missing, repeated, or misplaced data blocks.",
+            Self::Binary => "The BIN file is missing required application data.",
+            Self::ExactMatch => "The UF2 data does not match the BIN file.",
+            Self::StackPointer => "The firmware file has an invalid startup stack address.",
+            Self::ResetVector => "The firmware file has an invalid startup code address.",
+            Self::RecoveryMarker => {
+                "The firmware file is missing required recovery data at 0x1200."
+            }
+            Self::StartupReserve => {
+                "The firmware file contains data in the reserved startup area at 0x1200."
+            }
+            Self::ReceiverMarker => "The dongle firmware file contains keyboard recovery data.",
+            Self::OldSoftDevice => "The firmware file contains old S140 data at 0x3004.",
         })
     }
 }

@@ -42,7 +42,7 @@ impl Binding {
                 .all(|c| c.is_ascii_alphanumeric() || matches!(c, b'-' | b'_'))
         {
             return Err(
-                "The checkpoint binding is incomplete or does not match the reviewed image.".into(),
+                "The saved installation record is incomplete or does not match the selected firmware.".into(),
             );
         }
         Ok(Self {
@@ -123,13 +123,15 @@ impl Journal {
     }
     fn create_at(directory: &Path, binding: Binding) -> Result<Self, String> {
         fs::create_dir(directory).map_err(|_| {
-            "A checkpoint already exists or host storage is unavailable.".to_string()
+            "An installation record already exists, or Companion cannot use the storage folder."
+                .to_string()
         })?;
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            fs::set_permissions(directory, fs::Permissions::from_mode(0o700))
-                .map_err(|_| "Could not protect the host checkpoint.".to_string())?;
+            fs::set_permissions(directory, fs::Permissions::from_mode(0o700)).map_err(|_| {
+                "Could not set access permissions for the installation record.".to_string()
+            })?;
         }
         let record = Record {
             schema: 1,
@@ -141,7 +143,7 @@ impl Journal {
         sync_directory(
             directory
                 .parent()
-                .ok_or("Checkpoint requires a parent directory.")?,
+                .ok_or("The installation record folder has no parent folder.")?,
         )?;
         Ok(Self {
             directory: directory.into(),
@@ -157,7 +159,7 @@ impl Journal {
         let record = read_latest(directory)?;
         if &record.binding != expected {
             return Err(
-                "The checkpoint belongs to a different session, device, backup, or image.".into(),
+                "The saved record belongs to a different installation, part, backup, or firmware file.".into(),
             );
         }
         let mut journal = Self {
@@ -179,7 +181,7 @@ impl Journal {
     /// perform a transfer. Must be persisted before any future backend starts.
     pub fn record_transfer_intent(&mut self, approved: &Binding) -> Result<(), String> {
         if approved != &self.record.binding {
-            return Err("Approval no longer matches the checkpoint.".into());
+            return Err("The selected installation does not match the saved record.".into());
         }
         self.advance(State::TransferStarted)
     }
@@ -190,17 +192,17 @@ impl Journal {
     // exists. A caller-provided boolean or checksum must not impersonate it.
     fn advance(&mut self, state: State) -> Result<(), String> {
         if !allowed(self.record.state, state) {
-            return Err("The checkpoint cannot make this transition.".into());
+            return Err("The saved installation is not ready for this step.".into());
         }
         if read_latest(&self.directory)? != self.record {
-            return Err("The checkpoint changed; reload it before continuing.".into());
+            return Err("The installation record changed. Load it again before continuing.".into());
         }
         let next = Record {
             sequence: self
                 .record
                 .sequence
                 .checked_add(1)
-                .ok_or("Checkpoint sequence exhausted.")?,
+                .ok_or("The installation record has too many entries.")?,
             state,
             ..self.record.clone()
         };
@@ -219,16 +221,17 @@ fn allowed(from: State, to: State) -> bool {
 }
 fn append(directory: &Path, record: &Record) -> Result<(), String> {
     check_directory(directory)?;
-    let bytes = serde_json::to_vec(record).map_err(|_| "Could not encode checkpoint.")?;
+    let bytes =
+        serde_json::to_vec(record).map_err(|_| "Could not save the installation record.")?;
     let mut options = fs::OpenOptions::new();
     options.write(true).create_new(true);
     crate::host_storage::private_file_options(&mut options);
     let mut file = options
         .open(directory.join(format!("{:08}.json", record.sequence)))
-        .map_err(|_| "Checkpoint conflicts with another operation.")?;
+        .map_err(|_| "Another operation is using this installation record.")?;
     file.write_all(&bytes)
         .and_then(|_| file.sync_all())
-        .map_err(|_| "Checkpoint persistence failed; reconciliation is required.")?;
+        .map_err(|_| "Could not save installation progress. Check the firmware on the part before continuing.")?;
     sync_directory(directory)
 }
 fn sync_directory(directory: &Path) -> Result<(), String> {
@@ -237,35 +240,36 @@ fn sync_directory(directory: &Path) -> Result<(), String> {
 fn read_latest(directory: &Path) -> Result<Record, String> {
     check_directory(directory)?;
     let mut files = fs::read_dir(directory)
-        .map_err(|_| "Could not read checkpoint.")?
+        .map_err(|_| "Could not read the installation record.")?
         .map(|entry| entry.map(|entry| entry.path()))
         .collect::<Result<Vec<_>, _>>()
-        .map_err(|_| "Checkpoint directory changed.")?;
+        .map_err(|_| "The installation record folder changed.")?;
     files.sort();
     if files.is_empty() || files.len() > 5 {
-        return Err("Checkpoint history is invalid.".into());
+        return Err("The saved installation history is damaged.".into());
     }
     let mut previous: Option<Record> = None;
     for (sequence, path) in files.into_iter().enumerate() {
         if path.file_name().and_then(|name| name.to_str())
             != Some(format!("{sequence:08}.json").as_str())
             || !fs::symlink_metadata(&path)
-                .map_err(|_| "Checkpoint file is unavailable.")?
+                .map_err(|_| "The installation record file is unavailable.")?
                 .file_type()
                 .is_file()
         {
-            return Err("Unexpected checkpoint file.".into());
+            return Err("The installation record folder contains an unexpected file.".into());
         }
-        let file = fs::File::open(&path).map_err(|_| "Could not read checkpoint file.")?;
+        let file =
+            fs::File::open(&path).map_err(|_| "Could not read the installation record file.")?;
         let mut bytes = Vec::new();
         file.take(4097)
             .read_to_end(&mut bytes)
-            .map_err(|_| "Could not read checkpoint file.")?;
+            .map_err(|_| "Could not read the installation record file.")?;
         if bytes.len() > 4096 {
-            return Err("Checkpoint file is too large.".into());
+            return Err("The installation record file is too large.".into());
         }
         let record: Record = serde_json::from_slice(&bytes)
-            .map_err(|_| "Checkpoint is incomplete; manual reconciliation is required.")?;
+            .map_err(|_| "The installation record is incomplete. Check the firmware on the part before continuing.")?;
         if record.schema != 1
             || record.sequence as usize != sequence
             || !valid_digest(&record.binding.image_sha256)
@@ -279,26 +283,29 @@ fn read_latest(directory: &Path) -> Result<Record, String> {
                 .bytes()
                 .all(|c| c.is_ascii_alphanumeric() || matches!(c, b'-' | b'_'))
         {
-            return Err("Checkpoint schema or binding is invalid.".into());
+            return Err(
+                "The installation record has an invalid format or does not identify the firmware."
+                    .into(),
+            );
         }
         match &previous {
             None if record.state != State::Prepared => {
-                return Err("Checkpoint does not start with preparation.".into());
+                return Err("The installation record is missing its first step.".into());
             }
             Some(last) if last.binding != record.binding || !allowed(last.state, record.state) => {
-                return Err("Checkpoint history is inconsistent.".into());
+                return Err("The saved installation steps do not match.".into());
             }
             _ => {}
         }
         previous = Some(record);
     }
-    previous.ok_or("Checkpoint is empty.".into())
+    previous.ok_or("The installation record is empty.".into())
 }
 fn check_directory(path: &Path) -> Result<(), String> {
     let metadata =
-        fs::symlink_metadata(path).map_err(|_| "Checkpoint directory is unavailable.")?;
+        fs::symlink_metadata(path).map_err(|_| "The installation record folder is unavailable.")?;
     if !metadata.is_dir() || metadata.file_type().is_symlink() {
-        return Err("Checkpoint directory must be private host storage.".into());
+        return Err("Use a folder on your computer for the installation record.".into());
     }
     Ok(())
 }

@@ -815,9 +815,25 @@ impl Companion {
             let result = cx
                 .background_executor()
                 .spawn(async move {
-                    let mut release = if selected.is_none() && !supplied { FactoryRelease::discover()? } else { match existing { Some(r) => r, None => FactoryRelease::discover()? } };
+                    let mut release = if selected.is_none() && !supplied {
+                        FactoryRelease::discover()?
+                    } else {
+                        match existing {
+                            Some(r) => r,
+                            None => FactoryRelease::discover()?,
+                        }
+                    };
                     if let Some((role, path)) = selected {
-                        if !supplied && std::fs::metadata(&path).map_err(|_| "Could not read factory backup.")?.len() != 1728 * 512 { return Err("Choose a complete saved factory backup, or select Supply UF2 files.".into()); }
+                        if !supplied
+                            && std::fs::metadata(&path)
+                                .map_err(|_| "Could not read factory backup.")?
+                                .len()
+                                != 1728 * 512
+                        {
+                            return Err(
+                                "Choose a complete factory backup or use Choose UF2 files.".into(),
+                            );
+                        }
                         release.import(role, &path)?;
                     }
                     Ok::<_, String>(release)
@@ -830,9 +846,11 @@ impl Companion {
                 match result {
                     Ok(release) if this.factory_source.ticket() == source_ticket => {
                         this.factory_release = Some(release);
-                        if let Some((role, path)) = accepted { this.factory_source.accept(source_ticket, role, path); }
-                    },
-                    Ok(_) => {},
+                        if let Some((role, path)) = accepted {
+                            this.factory_source.accept(source_ticket, role, path);
+                        }
+                    }
+                    Ok(_) => {}
                     Err(error) => this.operation.fail(error),
                 }
                 cx.notify();
@@ -886,7 +904,7 @@ impl Companion {
             ),
             (
                 crate::factory_source::Source::Supplied,
-                "Supply UF2 files",
+                "Choose UF2 files",
                 "factory-supply-files",
             ),
         ] {
@@ -929,7 +947,7 @@ impl Companion {
                     .file(role)
                     .and_then(|p| p.file_name())
                     .map(|name| name.to_string_lossy().into_owned())
-                    .unwrap_or_else(|| "Choose or drop a UF2".into())
+                    .unwrap_or_else(|| "Choose or drop a UF2 file".into())
             } else if ready {
                 "Factory backup ready".into()
             } else {
@@ -979,7 +997,7 @@ impl Companion {
                     ),
             );
         }
-        let mut body = div().flex().flex_col().gap(px(24.)).child(div().text_center().font_weight(FontWeight::MEDIUM).child(self.navigation.scope().map_or("", Scope::label))).child(choices).child(div().text_center().text_color(cx.theme().muted_foreground).child(if supplied { "Choose one factory UF2 for each part. Your saved factory backup supplies anything else needed." } else { "Restore your saved factory firmware. Your current RMK firmware will be backed up first." })).child(cards);
+        let mut body = div().flex().flex_col().gap(px(24.)).child(div().text_center().font_weight(FontWeight::MEDIUM).child(self.navigation.scope().map_or("", Scope::label))).child(choices).child(div().text_center().text_color(cx.theme().muted_foreground).child(if supplied { "Choose one factory UF2 file for each part. The app uses your saved backup for the remaining data." } else { "Restore your saved factory firmware. Your current RMK firmware will be backed up first." })).child(cards);
         if self.operation.busy() {
             body = body.child(waiting_indicator("Checking factory backups…", cx));
         }
@@ -1060,18 +1078,18 @@ impl Companion {
                         identification_disconnect_instruction(role, self.scope_presence())
                     }
                     Identification::Connect(RecoveryRole::Left) => {
-                        "Reconnect the left half’s USB cable and put its switch in middle WIRED. Leave other USB cables as they are.".into()
+                        "Reconnect the left USB cable and move its switch to middle WIRED. Leave the other USB cables as they are.".into()
                     }
                     Identification::Connect(RecoveryRole::Receiver) => {
-                        "Reconnect the dongle. Leave other USB cables as they are.".into()
+                        "Reconnect the dongle. Leave the other USB cables as they are.".into()
                     }
-                    Identification::Complete(_) => "USB connection identified.".into(),
+                    Identification::Complete(_) => "This part is identified.".into(),
                     _ => "Connect the selected part by USB.".into(),
                 };
                 return JourneyScreen {
                     body: recovery_guide_status(
                         Some(role),
-                        "Identify USB connection",
+                        "Identify this part",
                         message,
                         if ready {
                             None
@@ -1171,11 +1189,11 @@ impl Companion {
                     div()
                         .text_center()
                         .text_color(cx.theme().muted_foreground)
-                        .child("Restore the selected parts. Whole-keyboard restoration also checks typing."),
+                        .child("Restore the selected parts. Select all three parts to check typing after the restore."),
                 )
             }),
             Page::Backups | Page::Home => {
-                scope_guide(scope, "Save a copy of the selected firmware locally.", cx)
+                scope_guide(scope, "Save the selected firmware on this computer.", cx)
             }
             Page::Recovery => scope_guide(
                 scope,
@@ -1194,7 +1212,7 @@ impl Companion {
                 if scope == Scope::Whole {
                     "Install RMK on your dongle and both halves, then check pairing and typing. Your current firmware will be backed up automatically."
                 } else {
-                    "Install RMK on the selected parts and save their current firmware. Whole-keyboard installation also checks pairing and typing."
+                    "Save the current firmware and install RMK on the selected parts. Select all three parts to check pairing and typing after installation."
                 },
                 cx,
             ),
@@ -1553,14 +1571,14 @@ impl Companion {
                 .scope()
                 .is_some_and(|scope| scope.single().is_none())
             {
-                "Your selected firmware copies are saved".to_owned()
+                "Your backups are saved".to_owned()
             } else {
-                "Your firmware copy is saved".to_owned()
+                "Your backup is saved".to_owned()
             }
         } else if self.backup_state.state() == BackupState::Complete {
             "Preparing the next part".to_owned()
         } else if self.backup_state.failed() {
-            "Let’s reconnect".to_owned()
+            "Reconnect this part".to_owned()
         } else if self.operation.busy() {
             "Saving a copy…".to_owned()
         } else {
@@ -1568,7 +1586,7 @@ impl Companion {
                 .map_or_else(|| "Preparing your backup".into(), |v| v.title)
         };
         let instruction = if complete {
-            "Your firmware is saved locally.".to_owned()
+            "Your firmware is saved on this computer.".to_owned()
         } else if self.backup_state.failed() {
             self.operation.error().cloned().unwrap_or_default()
         } else if self.operation.busy() {
@@ -1674,11 +1692,12 @@ impl Companion {
         };
         let mut card = div()
             .flex_1()
+            .min_w_0()
             .flex()
             .flex_col()
             .items_center()
             .gap(px(16.))
-            .child(img(peripheral_image(role)).w(px(140.)).h(px(110.)))
+            .child(img(peripheral_image(role)).w(px(110.)).h(px(110.)))
             .child(
                 Checkbox::new(id)
                     .label(label)
@@ -1712,6 +1731,7 @@ impl Companion {
         }
         div()
             .flex_1()
+            .min_w_0()
             .border_1()
             .border_color(if checked {
                 cx.theme().primary
@@ -1719,7 +1739,7 @@ impl Companion {
                 cx.theme().border
             })
             .rounded(px(10.))
-            .p(px(18.))
+            .p(px(12.))
             .child(card)
     }
     fn peripheral_picker(&self, instruction: &'static str, cx: &mut Context<Self>) -> gpui::Div {
@@ -1854,7 +1874,7 @@ impl Companion {
                 recovery_guide_status(
                     Some(role),
                     "Recovery drive is ready",
-                    "The recovery drive is open. Your firmware hasn’t been changed.",
+                    "The recovery drive is open.",
                     None,
                     true,
                     cx,
@@ -1890,7 +1910,7 @@ impl Companion {
                 }),
             ),
             RecoveryState::Failed(role, error) => (
-                recovery_guide(Some(role), "Let’s try again", error.clone(), None, cx),
+                recovery_guide(Some(role), "Try again", error.clone(), None, cx),
                 Some(
                     button("retry-recovery", "Next").on_click(cx.listener(|this, _, _, cx| {
                         if this.firmware_page() {
@@ -2133,7 +2153,7 @@ impl Companion {
                     if input.read(cx).value().as_ref() != expected {
                         input.update(cx, |state, cx| state.set_value(expected, window, cx));
                     }
-                    body = body.child(instruction_line("Type qwert on the left, `space`, hold left Shift for right HJKL, release Shift, then `space` and right h.", self.install.as_ref().is_some_and(InstallMachine::can_next), cx))
+                    body = body.child(instruction_line("Type qwert on the left half, then press `space`. Hold left Shift while you type HJKL on the right half. Release Shift, press `space`, then type h on the right half.", self.install.as_ref().is_some_and(InstallMachine::can_next), cx))
                         .child(Input::new(input));
                 } else {
                     // A lost route invalidates the old confirmation and its widget together.
@@ -2180,15 +2200,15 @@ impl Companion {
                         .scope()
                         .is_some_and(|scope| scope.single().is_some())
                     {
-                        "The selected part’s firmware is verified and it has returned to normal operation."
+                        "Firmware installed. This part is ready to use."
                     } else if self.navigation.scope() != Some(Scope::Whole) {
-                        "The selected parts’ firmware is verified and they have returned to normal operation."
+                        "Firmware installed. The selected parts are ready to use."
                     } else if self.factory_pairing_check_active() {
-                        "Factory dongle typing check passed for both halves."
+                        "Both halves passed the dongle typing test."
                     } else if self.navigation.page() == Page::Restore {
-                        "Factory firmware is restored. Wired, Bluetooth and dongle typing checks are complete."
+                        "Factory firmware restored. All three typing tests passed."
                     } else {
-                        "RMK is installed. Pairing, wired, Bluetooth and dongle typing checks are complete."
+                        "RMK installed. Pairing and all three typing tests passed."
                     },
                     None,
                     cx,
@@ -2205,7 +2225,7 @@ impl Companion {
                 )),
             },
             InstallStage::Failed(error) => JourneyScreen {
-                body: recovery_guide(None, "Let’s try again", error, None, cx),
+                body: recovery_guide(None, "Try again", error, None, cx),
                 actions: Some(self.footer(None, cx)),
             },
             InstallStage::Cancelled => self.setup_screen(cx),
@@ -2338,17 +2358,14 @@ impl Companion {
                 Some("Waiting for the keyboard…"),
             ),
             PairingState::TurnOnRight => (
-                "Turn the right half ON and press any key to wake it. Keep it near the left half; they connect automatically.",
+                "Turn the right half ON and press any key to wake it. Keep it near the left half while they connect.",
                 Some("Waiting for the right half…"),
             ),
             PairingState::SwitchMode => (
                 "Move the left switch to the top Dongle position. Keep USB connected.",
                 Some("Waiting for Dongle mode…"),
             ),
-            PairingState::Ready => (
-                "Press Next to pair these two devices. Your other Bluetooth pairings stay unchanged.",
-                None,
-            ),
+            PairingState::Ready => ("Click Next to pair the keyboard with the dongle.", None),
             PairingState::Pairing => (
                 "Keep both USB connections in place.",
                 Some("Pairing your dongle…"),
@@ -2359,14 +2376,14 @@ impl Companion {
                     .as_ref()
                     .is_some_and(|o| o.dongle.is_some())
                 {
-                    "Pairing check passed for both halves and your dongle."
+                    "Both halves and the dongle are connected."
                 } else {
-                    "Pairing check passed for both keyboard halves."
+                    "Both halves are connected."
                 },
                 None,
             ),
             PairingState::Failed(error) => (error.as_str(), None),
-            PairingState::Cancelled => ("Pairing is closed.", None),
+            PairingState::Cancelled => ("Pairing stopped.", None),
         };
         let artwork = div()
             .flex()
@@ -2661,7 +2678,7 @@ impl Companion {
             return JourneyScreen {
                 body: recovery_guide(
                     self.firmware_view().as_ref().map(|v| v.role),
-                    "Let’s reconnect",
+                    "Reconnect this part",
                     error.clone(),
                     None,
                     cx,
@@ -2699,7 +2716,7 @@ impl Companion {
                 body: recovery_guide(
                     None,
                     "Preparing your firmware",
-                    "Finding the verified release for your keyboard.",
+                    "Loading the firmware for your keyboard.",
                     Some(waiting_indicator("Checking firmware…", cx).into_any_element()),
                     cx,
                 ),
