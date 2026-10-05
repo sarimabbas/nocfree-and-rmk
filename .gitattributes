@@ -1,3 +1,5 @@
+*.lock text eol=lf
+*.toml text eol=lf
 desktop/THIRD_PARTY_NOTICES.md -whitespace
-docs/notices/texts/* -whitespace
+docs/notices/texts/* -text -whitespace
 *.png binary
