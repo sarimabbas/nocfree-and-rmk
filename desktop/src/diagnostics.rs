@@ -172,13 +172,21 @@ pub fn initialize() -> Result<PathBuf, String> {
     }
     let home = std::env::var_os("HOME").ok_or("Could not locate the diagnostics folder.")?;
     let root = PathBuf::from(home).join("Library/Logs/NocFree RMK Companion");
+    let logger = start_logger(root.clone())?;
+    install_logger(logger);
+    Ok(root)
+}
+fn start_logger(root: PathBuf) -> Result<Logger, String> {
     private_directory(&root)?;
-    let logger = Logger { root: root.clone() };
-    if root.join(MARKER).exists() {
+    let logger = Logger { root };
+    if logger.root.join(MARKER).exists() {
         logger.write(record(Category::App, Event::PreviousUncleanExit))?;
     }
-    private_write(&root.join(MARKER), b"running\n")?;
+    private_write(&logger.root.join(MARKER), b"running\n")?;
     logger.write(record(Category::App, Event::Startup))?;
+    Ok(logger)
+}
+fn install_logger(logger: Logger) {
     let _ = LOGGER.set(Mutex::new(logger));
     // Panic payloads and source paths may contain private data. Log neither.
     std::panic::set_hook(Box::new(|_| {
@@ -189,7 +197,9 @@ pub fn initialize() -> Result<PathBuf, String> {
             let _ = logger.write(record(Category::App, Event::Panic));
         }
     }));
-    Ok(root)
+}
+fn finish_logger(logger: &Logger) {
+    let _ = fs::remove_file(logger.root.join(MARKER));
 }
 pub fn event(category: Category, event: Event) {
     if let Some(logger) = LOGGER.get()
@@ -238,7 +248,7 @@ pub fn shutdown() {
     if let Some(logger) = LOGGER.get()
         && let Ok(logger) = logger.lock()
     {
-        let _ = fs::remove_file(logger.root.join(MARKER));
+        finish_logger(&logger);
     }
 }
 pub fn open_logs() -> Result<(), String> {
@@ -371,6 +381,94 @@ mod tests {
                 .unwrap()
                 .as_nanos()
         ))
+    }
+    fn events(root: &Path) -> Vec<Event> {
+        fs::read_to_string(root.join("companion-0.jsonl"))
+            .unwrap()
+            .lines()
+            .map(|line| serde_json::from_str::<Record>(line).unwrap().event)
+            .collect()
+    }
+    #[test]
+    fn startup_marker_distinguishes_unclean_exit_from_clean_shutdown() {
+        let root = temporary();
+        let first = start_logger(root.clone()).unwrap();
+        assert!(root.join(MARKER).exists());
+        assert!(matches!(events(&root).as_slice(), [Event::Startup]));
+        // An abruptly ended process does not execute its shutdown helper.
+        drop(first);
+        let restarted = start_logger(root.clone()).unwrap();
+        assert!(matches!(
+            events(&root).as_slice(),
+            [Event::Startup, Event::PreviousUncleanExit, Event::Startup]
+        ));
+        finish_logger(&restarted);
+        assert!(!root.join(MARKER).exists());
+        let clean = start_logger(root.clone()).unwrap();
+        assert!(matches!(
+            events(&root).as_slice(),
+            [
+                Event::Startup,
+                Event::PreviousUncleanExit,
+                Event::Startup,
+                Event::Startup
+            ]
+        ));
+        finish_logger(&clean);
+        fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn panic_child_process() {
+        // Only the isolated parent test supplies this path; never repurpose HOME.
+        let Some(root) = std::env::var_os("NOCFREE_DIAGNOSTICS_PANIC_TEST_ROOT") else {
+            return;
+        };
+        install_logger(start_logger(PathBuf::from(root)).unwrap());
+        panic!("PRIVATE PANIC PAYLOAD AND IDENTIFIER");
+    }
+    #[test]
+    fn actual_panic_hook_retains_restart_evidence_without_exporting_payload() {
+        let root = temporary();
+        let child = Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "diagnostics::tests::panic_child_process",
+                "--nocapture",
+            ])
+            .env("NOCFREE_DIAGNOSTICS_PANIC_TEST_ROOT", &root)
+            .output()
+            .unwrap();
+        assert!(!child.status.success());
+        assert!(root.join(MARKER).exists());
+        assert!(matches!(
+            events(&root).as_slice(),
+            [Event::Startup, Event::Panic]
+        ));
+        let logger = start_logger(root.clone()).unwrap();
+        assert!(matches!(
+            events(&root).as_slice(),
+            [
+                Event::Startup,
+                Event::Panic,
+                Event::PreviousUncleanExit,
+                Event::Startup
+            ]
+        ));
+        let destination = temporary();
+        export_with(&logger, &destination, |staging, archive| {
+            let log = fs::read_to_string(staging.join("companion-0.jsonl")).unwrap();
+            assert!(log.contains("panic"));
+            assert!(log.contains("previous_unclean_exit"));
+            assert!(!log.contains("PRIVATE"));
+            assert!(!log.contains(&root.display().to_string()));
+            assert!(!staging.join(MARKER).exists());
+            fs::write(archive, b"reviewed-export-fixture").unwrap();
+            Ok(())
+        })
+        .unwrap();
+        finish_logger(&logger);
+        fs::remove_dir_all(destination).unwrap();
+        fs::remove_dir_all(root).unwrap();
     }
     #[test]
     fn component_and_mode_are_fixed_enums_and_old_snapshots_still_load() {

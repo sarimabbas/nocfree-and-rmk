@@ -28,12 +28,31 @@ The workflow runs only from `main`, rejects an existing version tag, and require
 - `APPLE_API_PRIVATE_KEY_P8`: base64 App Store Connect API private key.
 - `APPLE_API_KEY_ID` and `APPLE_API_ISSUER_ID`.
 
-It follows [Vinny's release workflow](https://github.com/sarimabbas/vinny/blob/main/.github/workflows/release.yml): build without signing credentials, import into an ephemeral signing keychain only after environment approval, sign with hardened runtime/timestamp, submit to Apple, staple, verify signatures/Gatekeeper, and produce ZIP plus SHA256. Cleanup runs even on failure. The final GitHub release is a **draft**; no automatic publication or Homebrew mutation occurs.
+It follows [Vinny's release workflow](https://github.com/sarimabbas/vinny/blob/main/.github/workflows/release.yml): build without signing credentials, import into an ephemeral signing keychain in the main-restricted release job, sign with hardened runtime/timestamp, submit to Apple, staple, verify signatures/Gatekeeper, and produce ZIP plus SHA256. Cleanup runs even on failure. The final GitHub release is a **draft**; no automatic publication or Homebrew mutation occurs.
 
 Start **Draft macOS release** only after the staging asset and environment secrets exist. Review the draft artifact on a fresh Mac, including removable-volume permission refusal/retry and factory/RMK journeys. Publish manually only after acceptance. Do not replace published archives or rewrite release tags.
 
 ## Current blockers
 
-No signing/notary secrets were configured in the repository when this workflow was prepared; environment secrets have not been provisioned by this change. The reviewed firmware staging asset also needs preparation/upload. Signing and notarization have not been exercised here.
+Read-only audit on 2026-10-04 found zero valid local code-signing identities (`security find-identity -v -p codesigning`), zero NocFree repository secrets. The `release` environment has now been created with custom deployment policies permitting only the `main` branch; API readback confirmed that exact single branch policy and zero environment secrets. Required-reviewer approval is not configured; this setup added no reviewers or other principals and changed no repository-wide protections. Vinny's separate `release` environment contains the five required Apple certificate/notary secret names; their values cannot be read back from GitHub or automatically reused by this repository. No credentials were exported and no keychain or secret settings were changed. Signing/notarization rehearsal is therefore blocked on provisioning a valid Developer ID identity or this repository's protected release secrets.
 
-The bundle includes the project MIT license and `desktop/THIRD_PARTY_NOTICES.md`, generated from the locked macOS dependency graph by `scripts/companion_notices.py`. The committed file is the desktop license inventory; the builder generates available full license/notice texts into the app bundle and explicitly marks crates whose published packages omit license texts. Bundled firmware uses separate pinned RMK/Embassy dependency graphs, including different RIGHT and LEFT/dongle revisions; those notices require a separate inventory. Resolve those marked upstream notices and audit embedded assets/firmware licensing as a mandatory prepublication gate; this inventory is not a completed legal audit.
+The reviewed firmware ZIP is prepared locally at `dist/companion-firmware.zip` with SHA256 `64508bd93f437cf67e7ffe5ab385be5203fd30fdc75401e9984223275e96a3cf` (1,323,451 bytes), alongside its `.sha256` file. The private-evidence packager and Companion's pinned package guard both passed. It has not been uploaded. Its hash binds these exact ZIP bytes; recreating it with another ZIP implementation can change the ZIP hash without changing the firmware.
+
+To unblock the workflow, a maintainer must supply the five secrets in the main-restricted `release` environment from their encrypted source backups and upload the reviewed ZIP to a same-repository staging release. Then start **Draft macOS release** from `main` with the Cargo version, staging tag and reviewed ZIP hash. Secret provisioning and upload remain separate from this preparation; no tags, uploads or releases were created here.
+
+The bundle includes the project MIT license and full `THIRD_PARTY_NOTICES.md`, generated offline by `scripts/companion_notices.py`. The reviewed source inventory now covers the desktop graph and both exact bundled firmware source graphs, including the different RIGHT RMK revision. Hash-named upstream notice texts are cached under `docs/notices/texts/`; source revisions and package checksums are recorded in `inventory.json`. The committed `desktop/THIRD_PARTY_NOTICES.md` is only the catalog; the builder includes the full text appendix.
+
+Twelve source-text gaps remain explicitly listed in the catalog and [notice capture documentation](notices/README.md). Draft builds remain allowed. Before public publication, run the strict check on a newly generated full notice file:
+
+```sh
+python3 scripts/companion_notices.py /tmp/NocFree-Third-Party-Notices.md
+python3 scripts/companion_notices.py /tmp/NocFree-Third-Party-Notices.md --strict --check
+```
+
+The strict command currently fails on those twelve gaps; resolve them from immutable upstream sources and review the applicable desktop, asset and firmware redistribution terms before publishing. Merely including SPDX declarations or passing image guards does not complete the notice audit.
+
+## Maintaining the notices snapshot
+
+The generator deliberately fails after any desktop Cargo.lock/Cargo.toml change or a bundled firmware source/RMK pin change. Do not bypass this guard during a version bump. Follow [the capture procedure](notices/README.md) in a temporary source checkout: resolve locked metadata for Apple Silicon, capture the selected dependency closure and package archive/VCS provenance, collect source notices from exact immutable revisions, and update the reviewed inventory and cached text hashes. For changed bundled firmware pins, repeat against each exact pinned source commit and `thumbv7em-none-eabihf` graph; the renderer does not need those historical checkouts in CI.
+
+An app-version-only Cargo.toml update can keep the existing dependency texts when a fresh locked metadata comparison confirms the dependency graph is unchanged. Review that comparison, then update the recorded desktop manifest hash; dependency changes require recapture rather than only replacing the hash. Regenerate the catalog with `--inventory`, run `--inventory --check`, the offline notice tests, and the full strict publication check. Commit the inventory, text changes and regenerated catalog together. No private evidence, build products or machine-specific paths belong in this snapshot.
