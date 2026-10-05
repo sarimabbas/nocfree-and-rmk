@@ -31,10 +31,9 @@ pub fn read() -> Vec<Observation> {
         };
         let mut observations = Vec::new();
         for device in devices {
-            #[cfg(target_os = "macos")]
-            let location = u64::from(device.location_id());
-            #[cfg(not(target_os = "macos"))]
-            let location = 0;
+            let Some(location) = crate::device::usb_location(&device) else {
+                continue;
+            };
             let role = [Role::Left, Role::Right, Role::Receiver]
                 .into_iter()
                 .find(|role| {

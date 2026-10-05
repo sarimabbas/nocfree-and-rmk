@@ -1,0 +1,15 @@
+name: Suggest a change
+description: Describe a useful improvement.
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem would this solve?
+    validations:
+      required: true
+  - type: textarea
+    id: change
+    attributes:
+      label: What would you like to happen?
+    validations:
+      required: true

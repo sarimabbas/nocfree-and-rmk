@@ -222,11 +222,7 @@ fn append(directory: &Path, record: &Record) -> Result<(), String> {
     let bytes = serde_json::to_vec(record).map_err(|_| "Could not encode checkpoint.")?;
     let mut options = fs::OpenOptions::new();
     options.write(true).create_new(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
-    }
+    crate::host_storage::private_file_options(&mut options);
     let mut file = options
         .open(directory.join(format!("{:08}.json", record.sequence)))
         .map_err(|_| "Checkpoint conflicts with another operation.")?;
@@ -236,9 +232,7 @@ fn append(directory: &Path, record: &Record) -> Result<(), String> {
     sync_directory(directory)
 }
 fn sync_directory(directory: &Path) -> Result<(), String> {
-    fs::File::open(directory)
-        .and_then(|file| file.sync_all())
-        .map_err(|_| "Could not durably save the checkpoint directory.".into())
+    crate::host_storage::sync_directory(directory)
 }
 fn read_latest(directory: &Path) -> Result<Record, String> {
     check_directory(directory)?;
@@ -310,11 +304,7 @@ fn check_directory(path: &Path) -> Result<(), String> {
 }
 fn host_directory(binding: &Binding) -> Result<PathBuf, String> {
     // No caller-provided destination path or mounted-device backend.
-    let home = std::env::var_os("HOME").ok_or("Host home directory is unavailable.")?;
-    let base = PathBuf::from(home).join("Library/Application Support");
-    check_directory(&base)?;
-    let application = base.join("NocFree Companion");
-    ensure_private_directory(&application)?;
+    let application = crate::host_storage::application_root()?;
     let root = application.join("update-checkpoints");
     ensure_private_directory(&root)?;
     Ok(root.join(&binding.session))

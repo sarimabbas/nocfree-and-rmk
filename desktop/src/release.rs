@@ -93,10 +93,12 @@ impl FirmwareRelease {
     /// the generated, ignored dist directory; both routes require identical pinned bytes.
     pub fn bundled() -> Result<Self, String> {
         let executable = std::env::current_exe().map_err(|_| "Could not locate Companion")?;
-        let resources = executable
-            .parent()
-            .and_then(Path::parent)
-            .map(|contents| contents.join("Resources/Firmware"))
+        #[cfg(target_os = "macos")]
+        let resources = executable.parent().and_then(Path::parent);
+        #[cfg(not(target_os = "macos"))]
+        let resources = executable.parent();
+        let resources = resources
+            .map(|directory| directory.join("Resources/Firmware"))
             .ok_or("Could not locate Companion resources")?;
         if resources.exists() {
             return Self::load_from(&resources);

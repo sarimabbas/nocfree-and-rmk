@@ -24,11 +24,15 @@ fn bytes(hex: &str) -> Vec<u8> {
 
 #[test]
 fn migration_policy_matches_canonical_synthetic_corpus() {
-    let output = Command::new("python3")
-        .current_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/.."))
-        .args([
-            "-c",
-            r#"
+    let output = Command::new(if cfg!(target_os = "windows") {
+        "python"
+    } else {
+        "python3"
+    })
+    .current_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/.."))
+    .args([
+        "-c",
+        r#"
 import importlib.util, json, struct
 spec = importlib.util.spec_from_file_location('fixtures', 'tests/test_migration_guard.py')
 f = importlib.util.module_from_spec(spec)
@@ -73,9 +77,9 @@ altered[-512+32] = 0
 add('padding-corrupt', altered, binary)
 print(json.dumps(cases))
 "#,
-        ])
-        .output()
-        .expect("Python 3 is required for canonical guard equivalence tests");
+    ])
+    .output()
+    .expect("Python 3 is required for canonical guard equivalence tests");
     assert!(
         output.status.success(),
         "{}",
@@ -152,7 +156,7 @@ fn startup_and_receiver_policies_match_canonical_guards() {
         #[serde(flatten)]
         case: Case,
     }
-    let output = Command::new("python3")
+    let output = Command::new(if cfg!(target_os = "windows") { "python" } else { "python3" })
         .current_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/.."))
         .args(["-c", r#"
 import binascii, hashlib, io, json, struct, zipfile

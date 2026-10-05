@@ -1,0 +1,42 @@
+name: Report a problem
+description: Something failed, froze or did not work as expected.
+title: "[Bug]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        In Companion, select **Help → Export diagnostic logs**. Open the ZIP and review its screenshot before sharing it. Remove private information. Do not attach firmware backups or passwords.
+  - type: input
+    id: version
+    attributes:
+      label: Companion version
+      placeholder: "0.1.2"
+    validations:
+      required: true
+  - type: input
+    id: computer
+    attributes:
+      label: Computer and operating system
+      placeholder: "Apple Silicon Mac, macOS 15 / Windows 11 / Ubuntu 24.04"
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: What did you do?
+      description: Include the app screen, switch positions, and which USB cables were connected.
+    validations:
+      required: true
+  - type: textarea
+    id: result
+    attributes:
+      label: What happened? What did you expect?
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Exported logs
+      description: Drag the reviewed diagnostic ZIP here. If export failed, explain what happened and add a screenshot with private details removed.
+    validations:
+      required: true

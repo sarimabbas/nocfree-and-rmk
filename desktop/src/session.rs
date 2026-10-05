@@ -543,9 +543,7 @@ impl Session {
         }
     }
     pub fn save_backup(&mut self) -> Result<PathBuf, String> {
-        let home = std::env::var_os("HOME")
-            .ok_or("Could not locate your private application support folder.")?;
-        let root = PathBuf::from(home).join("Library/Application Support/NocFree Companion");
+        let root = crate::host_storage::application_root()?;
         let folder = self.save_with(&root, device::discover, |path| {
             device::read_bounded(path, 1728 * 512)
         })?;
@@ -677,11 +675,7 @@ fn atomic_file(folder: &Path, name: &str, bytes: &[u8]) -> Result<(), String> {
     let temporary = folder.join(format!(".{name}.partial"));
     let mut options = fs::OpenOptions::new();
     options.write(true).create_new(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
-    }
+    crate::host_storage::private_file_options(&mut options);
     let mut file = options
         .open(&temporary)
         .map_err(|_| "Could not create a private backup file.")?;
@@ -691,9 +685,7 @@ fn atomic_file(folder: &Path, name: &str, bytes: &[u8]) -> Result<(), String> {
             |_| "Could not finish saving backup files; the folder may contain incomplete files.",
         )?;
     fs::rename(temporary, folder.join(name)).map_err(|_| "Could not finalize backup file.")?;
-    fs::File::open(folder)
-        .and_then(|directory| directory.sync_all())
-        .map_err(|_| "Could not flush the backup directory.")?;
+    crate::host_storage::sync_directory(folder)?;
     Ok(())
 }
 

@@ -10,6 +10,7 @@ pub mod update_image;
 mod backup_flow;
 pub mod device;
 pub mod home;
+mod host_storage;
 pub mod journey;
 pub mod session;
 

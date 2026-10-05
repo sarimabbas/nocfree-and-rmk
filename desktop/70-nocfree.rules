@@ -1,0 +1,10 @@
+# Local desktop-session access only; do not run Companion as root.
+SUBSYSTEM=="usb", ATTR{idVendor}=="4c4b", ATTR{idProduct}=="4643", TAG+="uaccess"
+SUBSYSTEM=="usb", ATTR{idVendor}=="4c4b", ATTR{idProduct}=="4671", TAG+="uaccess"
+SUBSYSTEM=="usb", ATTR{idVendor}=="4c4b", ATTR{idProduct}=="4644", TAG+="uaccess"
+SUBSYSTEM=="usb", ATTR{idVendor}=="239a", ATTR{idProduct}=="0029", TAG+="uaccess"
+SUBSYSTEM=="usb", ATTR{idVendor}=="239a", ATTR{idProduct}=="80d8", TAG+="uaccess"
+SUBSYSTEM=="usb", ATTR{idVendor}=="2886", ATTR{idProduct}=="8029", TAG+="uaccess"
+SUBSYSTEM=="hidraw", ATTRS{idVendor}=="4c4b", ATTRS{idProduct}=="4643", TAG+="uaccess"
+SUBSYSTEM=="hidraw", ATTRS{idVendor}=="4c4b", ATTRS{idProduct}=="4671", TAG+="uaccess"
+SUBSYSTEM=="hidraw", ATTRS{idVendor}=="4c4b", ATTRS{idProduct}=="4644", TAG+="uaccess"

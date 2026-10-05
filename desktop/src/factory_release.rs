@@ -139,11 +139,7 @@ fn save_original(root: &Path, path: &Path, archive: &[u8]) -> Result<(), String>
     let result = (|| {
         let mut options = fs::OpenOptions::new();
         options.write(true).create_new(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            options.mode(0o600);
-        }
+        crate::host_storage::private_file_options(&mut options);
         let mut f = options
             .open(&temporary)
             .map_err(|_| "Could not create the private factory backup.")?;
@@ -153,9 +149,7 @@ fn save_original(root: &Path, path: &Path, archive: &[u8]) -> Result<(), String>
         // Atomic no-replace publication: a concurrent first original wins.
         fs::hard_link(&temporary, path)
             .map_err(|_| "The first factory backup already exists or could not be saved.")?;
-        fs::File::open(root)
-            .and_then(|f| f.sync_all())
-            .map_err(|_| "Could not make the factory backup durable.")?;
+        crate::host_storage::sync_directory(root)?;
         Ok(())
     })();
     let _ = fs::remove_file(&temporary);
@@ -257,9 +251,7 @@ impl FactoryRelease {
             .find(|r| validate(*r, &p).is_ok())
     }
     pub fn discover() -> Result<Self, String> {
-        let root =
-            PathBuf::from(std::env::var_os("HOME").ok_or("Local backup folder is unavailable.")?)
-                .join("Library/Application Support/NocFree Companion/factory-originals");
+        let root = crate::host_storage::application_root()?.join("factory-originals");
         Self::at(root)
     }
     pub(crate) fn at(root: PathBuf) -> Result<Self, String> {

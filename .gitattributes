@@ -1,0 +1,3 @@
+desktop/THIRD_PARTY_NOTICES.md -whitespace
+docs/notices/texts/* -whitespace
+*.png binary

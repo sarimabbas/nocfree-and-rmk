@@ -221,7 +221,7 @@ async fn main(spawner: Spawner) {
             let active_low = cfg!(feature = "backlight-active-low");
             // P0.20 is vendor-published. Polarity remains an explicit trial choice.
             // Factory applications request 400 Hz: 8 MHz / 20000, up counting.
-            // See docs/research/backlight-pwm-diagnosis.md; physical output is unmeasured.
+            // See TECHNICAL.md power and lighting notes; current savings need measurement.
             let mut config = SimpleConfig::default();
             config.prescaler = Prescaler::Div2;
             config.max_duty = 20000;

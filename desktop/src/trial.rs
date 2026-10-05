@@ -538,8 +538,7 @@ impl Trial {
     }
 }
 fn directory() -> Result<PathBuf, String> {
-    let home = std::env::var_os("HOME").ok_or("Could not find the local startup trial folder.")?;
-    Ok(PathBuf::from(home).join("Library/Application Support/NocFree Companion/startup-trial"))
+    Ok(crate::host_storage::application_root()?.join("startup-trial"))
 }
 fn read_request(directory: &Path) -> Result<Request, String> {
     let bytes = device::read_bounded(&directory.join("request.json"), 8192)?;

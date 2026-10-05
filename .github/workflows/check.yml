@@ -13,6 +13,8 @@ jobs:
         layout: [reclaimed-softdevice, recovery-first]
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
       - name: Install Rust target and formatter
         run: rustup target add thumbv7em-none-eabihf && rustup component add rustfmt
       - name: Install Arm compiler and newlib
@@ -35,6 +37,8 @@ jobs:
         polarity: [low, high]
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
       - name: Install Rust target and formatter
         run: rustup target add thumbv7em-none-eabihf && rustup component add rustfmt
       - name: Install Arm compiler and newlib
@@ -48,6 +52,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
       - name: Install Rust target and formatter
         run: rustup target add thumbv7em-none-eabihf && rustup component add rustfmt
       - name: Install Arm compiler and newlib
@@ -65,9 +71,23 @@ jobs:
           done
 
   companion:
-    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-26, ubuntu-24.04, windows-2025]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Install Linux desktop dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential clang cmake pkg-config libfontconfig1-dev libfreetype-dev libwayland-dev libxkbcommon-dev libxkbcommon-x11-dev libxcb1-dev libxcb-xkb-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libssl-dev libudev-dev libvulkan-dev zip
       - name: Install pinned desktop toolchain
         working-directory: desktop
         run: rustup show active-toolchain
@@ -78,8 +98,8 @@ jobs:
           cargo clippy --locked --all-targets -- -D warnings
           cargo fmt --check
       - name: Public synthetic image and package guards
-        run: python3 -m unittest discover -s tests -v
+        run: python -m unittest discover -s tests -v
       - name: Vial preset guards
-        run: python3 firmware/presets/test_presets.py
+        run: python firmware/presets/test_presets.py
       - name: Companion packaging and notice guards
-        run: python3 -m unittest discover -s scripts -p 'test_companion_*.py' -v
+        run: python -m unittest discover -s scripts -p 'test_companion_*.py' -v

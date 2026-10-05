@@ -123,7 +123,7 @@ fn configure_menus(cx: &mut App) {
             "Version {}\nInstall RMK, restore your saved firmware, and check your keyboard.\n\nLocal diagnostic logs contain app states and operation progress. Logs omit keyboard input and firmware contents. Exporting logs also attaches an app-window screenshot, which can include visible typing and paths. Review the ZIP before sharing.", env!("CARGO_PKG_VERSION")));
     });
     cx.on_action(|_: &Help, cx| {
-        cx.open_url("https://github.com/sarimabbas/nocfree-and-rmk/blob/main/desktop/README.md")
+        cx.open_url("https://github.com/sarimabbas/nocfree-and-rmk/blob/main/README.md")
     });
     cx.on_action(|_: &ReportIssue, cx| {
         cx.open_url("https://github.com/sarimabbas/nocfree-and-rmk/issues/new")
@@ -153,11 +153,8 @@ fn configure_menus(cx: &mut App) {
                     .await;
                 cx.update(|cx| match result {
                     Ok(path) => {
-                        let result = std::process::Command::new("/usr/bin/open")
-                            .arg("-R")
-                            .arg(&path)
-                            .status();
-                        if !result.is_ok_and(|status| status.success()) {
+                        let result = diagnostics::reveal_archive(&path);
+                        if result.is_err() {
                             message(
                                 cx,
                                 "Logs exported",

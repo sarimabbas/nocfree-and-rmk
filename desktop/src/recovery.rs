@@ -32,9 +32,6 @@ fn run_with(
     progress: std::sync::mpsc::Sender<Procedure>,
     archive_only: bool,
 ) -> Result<Session, String> {
-    if !cfg!(target_os = "macos") {
-        return Err("Recovery mode currently supports macOS only.".into());
-    }
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -72,8 +69,7 @@ fn run_with(
                     }
                     let request=ArmedRequest::arm(role,&target).map_err(str::to_owned)?;
                     if cancelled.load(Ordering::Relaxed) { return Err("Recovery cancelled.".into()); }
-                    #[cfg(target_os="macos")]
-                    { requested_location=Some(u64::from(target.location_id())); }
+                    requested_location=device::usb_location(&target);
                     requested_at=Some(Instant::now());
                     let _ = progress.send(Procedure::RuntimeApp);
                     // A successful reset may disconnect before acknowledgement.

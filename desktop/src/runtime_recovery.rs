@@ -141,8 +141,7 @@ pub struct ArmedRequest {
     connection: DeviceId,
     armed_at: Instant,
     interface: u8,
-    #[cfg(target_os = "macos")]
-    location: u32,
+    location: u64,
 }
 
 impl ArmedRequest {
@@ -155,8 +154,8 @@ impl ArmedRequest {
             connection: selected.id(),
             armed_at: Instant::now(),
             interface,
-            #[cfg(target_os = "macos")]
-            location: selected.location_id(),
+            location: crate::device::usb_location(selected)
+                .ok_or("Could not identify the physical USB port.")?,
         })
     }
 
@@ -179,8 +178,7 @@ impl ArmedRequest {
                 return Err("The USB connection changed or is ambiguous. Select the device again.");
             }
             if cancelled.load(Ordering::Relaxed) { return Err("Recovery cancelled."); }
-            #[cfg(target_os = "macos")]
-            if endpoint.location_id() != self.location { return Err("The USB port changed."); }
+            if crate::device::usb_location(&endpoint) != Some(self.location) { return Err("The USB port changed."); }
             let device = endpoint.open().await.map_err(|_| "Could not open the selected recovery interface.")?;
             if cancelled.load(Ordering::Relaxed) { return Err("Recovery cancelled."); }
             let interface = device.claim_interface(self.interface).await.map_err(|_| "Could not claim the selected recovery interface.")?;
@@ -191,8 +189,7 @@ impl ArmedRequest {
             if fresh.next().is_some() || current.id() != self.connection || dfu_interface(self.role, &current) != Some(self.interface) {
                 return Err("The USB connection changed before recovery.");
             }
-            #[cfg(target_os = "macos")]
-            if current.location_id() != self.location { return Err("The USB port changed."); }
+            if crate::device::usb_location(&current) != Some(self.location) { return Err("The USB port changed."); }
             request_allowed(cancelled, self.armed_at)?;
             attempted.store(true,Ordering::Release);
             interface.control_out(detach_request(self.interface), Duration::from_secs(2)).await

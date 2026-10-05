@@ -22,10 +22,12 @@ struct History {
 static LOCK: Mutex<()> = Mutex::new(());
 fn path() -> Option<PathBuf> {
     Some(
-        PathBuf::from(std::env::var_os("HOME")?)
-            .join("Library/Application Support/NocFree Companion/status.json"),
+        crate::host_storage::application_root()
+            .ok()?
+            .join("status.json"),
     )
 }
+
 fn load() -> History {
     let read = || -> Option<History> {
         let mut bytes = Vec::new();
@@ -99,13 +101,7 @@ pub(crate) fn confirm(role: Role, location: u64) {
         return;
     };
     let mut matches = devices.filter(|d| {
-        #[cfg(target_os = "macos")]
-        let same_port = u64::from(d.location_id()) == location;
-        #[cfg(not(target_os = "macos"))]
-        let same_port = {
-            let _ = location;
-            false
-        };
+        let same_port = crate::device::usb_location(d) == Some(location);
         same_port
             && d.vendor_id() == 0x239a
             && d.product_id() == 0x0029
@@ -171,10 +167,7 @@ pub(crate) fn recovery_locations() -> [Option<u64>; 3] {
                 && d.product_string() == Some("NocFree &")
         })
         .filter_map(|d| {
-            #[cfg(target_os = "macos")]
-            let location = u64::from(d.location_id());
-            #[cfg(not(target_os = "macos"))]
-            let location = 0;
+            let location = crate::device::usb_location(&d)?;
             Some((location, d.serial_number()?.to_owned()))
         })
         .collect::<Vec<_>>();

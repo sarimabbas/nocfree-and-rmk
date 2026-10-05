@@ -58,12 +58,12 @@ fn hid_matches(info: &HidInfo, role: Role) -> bool {
     )
 }
 
-fn physical_key(device: &DeviceInfo) -> (nusb::DeviceId, Option<Role>, u32) {
-    #[cfg(target_os = "macos")]
-    let location = device.location_id();
-    #[cfg(not(target_os = "macos"))]
-    let location = 0;
-    (device.id(), role(device), location)
+fn physical_key(device: &DeviceInfo) -> (nusb::DeviceId, Option<Role>, Option<u64>) {
+    (
+        device.id(),
+        role(device),
+        crate::device::usb_location(device),
+    )
 }
 
 fn select<T>(devices: impl IntoIterator<Item = (Role, T)>) -> Result<T, String> {

@@ -13,6 +13,7 @@ const MAX_BYTES: u64 = 256 * 1024;
 const FILES: usize = 4;
 const MARKER: &str = "running";
 // ditto normally includes AppleDouble metadata. Export only the curated file bytes.
+#[cfg(target_os = "macos")]
 const ARCHIVE_OPTIONS: [&str; 6] = [
     "-c",
     "-k",
@@ -170,11 +171,81 @@ pub fn initialize() -> Result<PathBuf, String> {
             .map(|l| l.root.clone())
             .map_err(|_| "Diagnostics are unavailable.".into());
     }
-    let home = std::env::var_os("HOME").ok_or("Could not locate the diagnostics folder.")?;
-    let root = PathBuf::from(home).join("Library/Logs/NocFree RMK Companion");
+    let root = diagnostics_directory()?;
     let logger = start_logger(root.clone())?;
     install_logger(logger);
     Ok(root)
+}
+fn diagnostics_directory() -> Result<PathBuf, String> {
+    #[cfg(target_os = "windows")]
+    let root = std::env::var_os("LOCALAPPDATA")
+        .map(|p| PathBuf::from(p).join("NocFree RMK Companion/Logs"));
+    #[cfg(target_os = "macos")]
+    let root = std::env::var_os("HOME")
+        .map(|p| PathBuf::from(p).join("Library/Logs/NocFree RMK Companion"));
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    let root = std::env::var_os("XDG_STATE_HOME")
+        .filter(|p| Path::new(p).is_absolute())
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|p| PathBuf::from(p).join(".local/state")))
+        .map(|p| p.join("nocfree-rmk-companion"));
+    root.ok_or_else(|| "Could not locate the diagnostics folder.".into())
+}
+/// Open a folder with the platform's file manager, without passing through a shell.
+fn open_folder(path: &Path) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    let program = "/usr/bin/open";
+    #[cfg(target_os = "windows")]
+    let program = "explorer.exe";
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    let program = "xdg-open";
+    Command::new(program)
+        .arg(path)
+        .status()
+        .ok()
+        .filter(|s| s.success())
+        .map(|_| ())
+        .ok_or_else(|| "Could not open the diagnostics folder.".into())
+}
+pub fn reveal_archive(path: &Path) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        Command::new("/usr/bin/open")
+            .arg("-R")
+            .arg(path)
+            .status()
+            .ok()
+            .filter(|s| s.success())
+            .map(|_| ())
+            .ok_or_else(|| "Could not show the support bundle.".into())
+    }
+    #[cfg(not(target_os = "macos"))]
+    open_folder(path.parent().ok_or("Support folder unavailable.")?)
+}
+fn archive_support(source: &Path, destination: &Path) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    let result = Command::new("/usr/bin/ditto")
+        .args(ARCHIVE_OPTIONS)
+        .arg(source)
+        .arg(destination)
+        .status();
+    #[cfg(target_os = "windows")]
+    let result = Command::new("powershell.exe")
+        .args(["-NoProfile", "-NonInteractive", "-Command", "Compress-Archive -LiteralPath $env:NOCFREE_SUPPORT_CONTENTS -DestinationPath $env:NOCFREE_SUPPORT_ARCHIVE -ErrorAction Stop"])
+        .env("NOCFREE_SUPPORT_CONTENTS", source)
+        .env("NOCFREE_SUPPORT_ARCHIVE", destination).status();
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    let result = Command::new("zip")
+        .args(["-q", "-r"])
+        .arg(destination)
+        .arg("contents")
+        .current_dir(source.parent().ok_or("Support folder unavailable.")?)
+        .status();
+    result
+        .ok()
+        .filter(|s| s.success())
+        .map(|_| ())
+        .ok_or_else(|| "Could not create the support bundle.".into())
 }
 fn start_logger(root: PathBuf) -> Result<Logger, String> {
     private_directory(&root)?;
@@ -257,13 +328,7 @@ pub fn open_logs() -> Result<(), String> {
         .ok_or("Diagnostics are unavailable.")?
         .lock()
         .map_err(|_| "Diagnostics are unavailable.")?;
-    Command::new("/usr/bin/open")
-        .arg(&logger.root)
-        .status()
-        .ok()
-        .filter(|s| s.success())
-        .map(|_| ())
-        .ok_or("Could not open the diagnostics folder.".into())
+    open_folder(&logger.root)
 }
 #[cfg(test)]
 fn export_with(
@@ -319,6 +384,7 @@ fn export_with_screenshot(
             }
             private_write(&staging.join(format!("companion-{index}.jsonl")), &safe)?;
         }
+        #[cfg(target_os = "macos")]
         let os_version = Command::new("/usr/bin/sw_vers")
             .arg("-productVersion")
             .output()
@@ -327,6 +393,8 @@ fn export_with_screenshot(
             .and_then(|o| String::from_utf8(o.stdout).ok())
             .map(|v| v.trim().to_owned())
             .filter(|v| v.len() < 32 && v.bytes().all(|b| b.is_ascii_digit() || b == b'.'));
+        #[cfg(not(target_os = "macos"))]
+        let os_version: Option<String> = None;
         let screenshot_status = match screenshot {
             Ok(bytes)
                 if bytes.starts_with(b"\x89PNG\r\n\x1a\n") && bytes.len() <= 16 * 1024 * 1024 =>
@@ -377,17 +445,7 @@ pub fn export_logs(screenshot: Result<Vec<u8>, String>) -> Result<PathBuf, Strin
     if destination.exists() {
         return Err("A support export already exists. Try again in a moment.".into());
     }
-    export_with_screenshot(&logger, &destination, screenshot, |source, destination| {
-        Command::new("/usr/bin/ditto")
-            .args(ARCHIVE_OPTIONS)
-            .arg(source)
-            .arg(destination)
-            .status()
-            .ok()
-            .filter(|s| s.success())
-            .map(|_| ())
-            .ok_or("Could not create the support bundle.".into())
-    })
+    export_with_screenshot(&logger, &destination, screenshot, archive_support)
 }
 
 #[cfg(test)]
@@ -526,6 +584,20 @@ mod tests {
         }
         fs::remove_dir_all(root).unwrap();
     }
+    #[test]
+    fn native_archive_command_exports_logs_and_removes_staging() {
+        let root = temporary();
+        private_directory(&root).unwrap();
+        let logger = Logger { root: root.clone() };
+        logger.write(record(Category::App, Event::Startup)).unwrap();
+        let destination = temporary();
+        let bundle = export_with(&logger, &destination, archive_support).unwrap();
+        assert!(fs::read(&bundle).unwrap().starts_with(b"PK"));
+        assert!(!destination.join("contents").exists());
+        fs::remove_dir_all(root).unwrap();
+        fs::remove_dir_all(destination).unwrap();
+    }
+    #[cfg(target_os = "macos")]
     #[test]
     fn native_export_creates_a_private_archive_with_bounded_logs() {
         let root = temporary();

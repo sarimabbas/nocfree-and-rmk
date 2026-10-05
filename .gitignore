@@ -4,3 +4,8 @@ target/
 __pycache__/
 *.pyc
 .DS_Store
+
+# Local editor and build state
+/.cache/
+/.venv/
+*.log

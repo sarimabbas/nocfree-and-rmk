@@ -1,59 +1,58 @@
-# NocFree AND + RMK
+# NocFree RMK Companion
 
-## Public preview
+Install RMK on your NocFree AND keyboard.
 
-[NocFree RMK Companion 0.1.1 for Apple Silicon](https://github.com/sarimabbas/nocfree-and-rmk/releases/tag/v0.1.1) guides firmware backup, RMK installation, factory restoration, recovery and pairing checks. It includes the exact hardware-readback-verified 0.1.1 application images. Back up your keyboard’s original firmware before installing; factory images are not distributed.
+Save the keyboard’s original software. Install RMK. Change keys. Check that both halves work. Return to the original software when you want.
 
-See [release notes and known limitations](docs/release-notes/0.1.1.md), [the Companion guide](desktop/README.md) and [TECHNICAL.md](TECHNICAL.md). This is an ANSI NocFree AND preview tested on the maintainer’s Apple Silicon Mac; other revisions and older macOS versions need separate acceptance.
+![Choose the keyboard parts to update](docs/images/install-rmk.png)
 
-## Earlier bring-up notes
+## Download
 
-An experimental Rust port for the **ANSI NocFree AND**, using current RMK and a conventional left-central/right-peripheral split. **Basic split typing now works through USB, direct Bluetooth and the original receiver reflashed with RMK on macOS.** Cross-half Shift and owner-assisted Bluetooth/receiver reconnection checks passed. These are functional observations; disconnect/release recovery, simultaneous input, measured wake latency and the full feature set remain unverified.
+| Computer | App |
+| --- | --- |
+| Mac with Apple Silicon | [Download for Mac](https://github.com/sarimabbas/nocfree-and-rmk/releases/download/v0.1.2/nocfree-rmk-companion-0.1.2-macos-arm64.zip) |
+| Windows, 64-bit | [Download for Windows](https://github.com/sarimabbas/nocfree-and-rmk/releases/download/v0.1.2/nocfree-rmk-companion-0.1.2-windows-x86_64.zip) |
+| Linux, 64-bit | [Download for Linux](https://github.com/sarimabbas/nocfree-and-rmk/releases/download/v0.1.2/nocfree-rmk-companion-0.1.2-linux-x86_64.tar.gz) |
 
-The earlier [Mac USB diagnostics](docs/mac-mode.md) and factory backups remain available privately. The full half images replace S140 with the current radio stack while preserving the existing bootloader; the receiver preserves its resident S140. See the [left trial](docs/research/full-left-trial-candidate.md), [right trial](docs/research/full-right-trial-candidate.md) and [receiver observations](docs/research/receiver-rmk-plan.md). The optional [framework backlight extension](docs/research/backlight-implementation.md) passed owner checks on both halves: off control, visible dimming, synchronized tap-and-hold ramping, stop on release and typing during a hold. A slight right-side lighting delay was reported; right-restart brightness synchronization and saved brightness across a left restart passed owner checks.
+Use the file for your computer. Mac uses a ZIP file. Open it, then move **NocFree RMK Companion** to **Applications**.
 
-The target is USB or Bluetooth HID from the left half, Bluetooth split communication from the right, separate battery reporting, and a reflashed RMK Bluetooth-to-USB receiver. The factory receiver protocol is proprietary; an unchanged receiver is incompatible with this design. Host behavior still needs macOS, Windows and Linux testing.
+Windows: open the ZIP file, keep all its files together, then open **nocfree-companion.exe**. Linux: open the archive and follow the included **README.txt**.
 
-The nRF52833 boards read switches through PCA9555 I²C expanders. One small scanner hides that wiring; RMK owns debounce, key behavior, persistent bonds and transports. Three role-specific builds avoid compiling receiver behavior into the right half. We have not adopted an unconventional cross-half processing protocol.
+This is an early release for the ANSI NocFree AND. The keyboard and app have been tested on Mac. Windows and Linux need more testing.
 
-## Earlier evidence
+## Start here
 
-- The full left RMK image passed stable expected USB enumeration, owner-confirmed basic left-key typing, independent recovery and exact application/tail readback. The protected gap is unchanged; the recorded initialization affects only approved settings storage.
-- The full right RMK image passed independent recovery and exact application/tail readback. The protected gap is unchanged. Independent review decoded valid schema and peer-address records in the approved settings region.
-- With the right USB cable unplugged, the owner typed `hjkl` using only the right half. Read-only inventory confirmed the full left USB device was present and the right USB device absent. The owner also held left Shift while typing right-side `HJKL`, confirming that cross-half modifier path. These establish basic split input and one modifier combination; they are not latency, loss-free, exhaustive mapping or authenticated-bonding acceptance.
-- Installed firmware roles: full RMK left USB/Bluetooth coordinator, right BLE split peripheral, and RMK receiver. The right intentionally has no runtime USB keyboard or CDC interface. Both halves share the left's keymap. The left runs the owner-tested 400 Hz active-high lighting image with tap-and-hold controls; the right runs the matching lighting image. Both-half brightness and typing during a hold passed owner checks.
-- The pinned build harness passes host safety/scanner checks and all six role/keymap cross-builds in the explicit `reclaimed-softdevice` layout. Cross-builds do not establish hardware behavior. The separate factory-preserving left build still exceeds its protected linker budget.
-- The original factory backups and previous diagnostic recovery/restoration evidence remain private. Readable UF2 coverage excludes the MBR, bootloader and UICR; it is not a complete-chip backup. Full migration images require separate device-specific approval and guards.
-- Direct Bluetooth pairing, saved reconnection and receiver-dependent typing passed owner-assisted macOS checks. Receiver application readback and working-app update entry passed; independent recovery from a broken receiver application is not proven. Exhaustive profile switching, battery calibration, physical mode switches and Windows/Linux behavior remain pending. See [split architecture](docs/research/split-architecture.md), [receiver results](docs/research/receiver-rmk-plan.md) and [transport reliability](docs/research/transport-reliability.md).
+1. Connect both keyboard halves and the dongle to your computer with USB.
+2. Open Companion. Select **Backup firmware**. Keep the backup files.
+3. Select **Install RMK**. Follow each screen. Click **Next** when you are ready.
 
-“No missed keystrokes or input lag” remains an acceptance requirement. RMK currently has six-key ordinary rollover, and split disconnect/reconnect delivery needs deliberate testing. Source compilation and mock tests do not establish physical latency or loss-free operation.
+Keep the USB cables connected until the app asks you to remove them.
 
-Physical mode-switch routing and temporary connection indicators passed owner-assisted checks on macOS. Factory web configuration and optional numpad support are pending. Both battery estimates are implemented but uncalibrated. This is not factory feature parity.
+## What works
 
-## Build, research and recovery
+| Feature | Support |
+| --- | --- |
+| Save the original keyboard software | Yes, each half and the dongle |
+| Install RMK | Yes |
+| Return to the original software | Yes, with your saved backup |
+| Type with a USB cable | Yes |
+| Type with Bluetooth | Yes |
+| Type with the dongle | Yes, after RMK is installed on the dongle |
+| Check both halves and all three connection modes | Yes, with guided typing tests |
+| Change keys | Yes |
+| Change the backlight brightness | Yes, with 16 levels |
+| See each half’s battery level | Yes, as an estimate |
+| Save logs for help | Yes, with an app screenshot when available |
+| Other keyboard layouts or an extra number pad | Not tested |
 
-- [Native macOS Companion and guided firmware journeys](desktop/README.md)
-- [Guided GPUI/gpuikit installer proposal](docs/research/guided-installer-app.md)
-- [Runtime/HAL observations and exact factory restoration](docs/research/runtime-hal-trial.md)
-- [Left migration recovery, failed startup and exact factory restoration](docs/research/left-migration-trial.md)
-- [Repeatable build harness](docs/building.md)
-- [Tested update foundation and current device state](docs/recovery-probe.md)
-- [Right-only USB typing candidate and trial checklist](docs/input-probe.md)
-- [Build results and rejected size experiments](docs/build-results.md)
-- [Architecture](docs/architecture.md)
-- [Staged implementation and owner-assisted bring-up plan](docs/implementation-plan.md)
-- [Pinned RMK transport reliability review](docs/research/transport-reliability.md)
-- [Hardware and factory image evidence](docs/research/hardware.md)
-- [RMK compatibility, battery and transport research](docs/research/rmk.md)
-- [Measured RMK size comparisons](docs/research/size-options.md)
-- [Community and NocFree ZMK comparison](docs/research/community-size.md)
-- [Guarded flashing and recovery plan](docs/flashing.md)
-- [Offline image-safety review](docs/research/overnight-safety-review.md)
-- [Explicit migration safety evidence](docs/research/migration-safety.md)
-- [Recovery-first foundation and rollback choices](docs/research/update-foundation.md)
-- [Observed device behavior](docs/device-observations.md)
-- [Physical acceptance requirements](docs/acceptance.md)
+![Check the keyboard connections](docs/images/check-pairing.png)
 
-Factory firmware and recovery executables stay outside this public repository. Preserve the original recovery ZIP locally. Never flash an oversized diagnostic build, overwrite factory low flash, or replace the bootloader without a verified backup and independent recovery plan.
+The left switch selects the connection: **top = dongle**, **middle = USB**, **bottom = Bluetooth**. A USB cable can charge a half while it uses a wireless connection.
 
-The Companion whole-keyboard Install RMK journey passed an owner-assisted macOS walkthrough with role-specific readback, normal startup, pairing, and wired/Bluetooth/dongle typing. Repeated factory/RMK round trips, interruption handling and public signed distribution remain separate acceptance gates. See the [macOS release guide](docs/release.md).
+## Need help?
+
+Open **Help → Export diagnostic logs**. Check the ZIP file and its screenshot before you share it. [Report a problem](https://github.com/sarimabbas/nocfree-and-rmk/issues/new/choose) and attach the ZIP file. Companion does not send it for you.
+
+For code, builds, recovery details and known limits, see [TECHNICAL.md](TECHNICAL.md).
+
+This is a community project. It is not made or supported by NocFree. Project code uses the [MIT license](LICENSE). Other included code keeps its own license.
