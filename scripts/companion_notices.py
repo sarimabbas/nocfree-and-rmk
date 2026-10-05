@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Render audited, hash-pinned desktop and firmware notices without network access."""
+"""Generate licenses and credits for the app and keyboard firmware."""
 import argparse
 import ast
 import hashlib
@@ -84,7 +84,7 @@ def load_inventory(root):
 
 
 def render(inventory, texts, inventory_only=False):
-    parts = ['# Third-party notices\n\nNocFree RMK Companion and its pinned bundled RMK firmware. License declarations below are upstream package metadata; full source notice texts are reproduced in the appendix. This conservative resolved dependency inventory includes build tools and optional firmware dependencies, and does not claim that every listed crate is linked into every image. Project-owned code is covered by the repository LICENSE and NOTICE.md. Factory firmware and factory bootloaders are not distributed.\n']
+    parts = ['# Licenses and credits\n\nPin information, expander order and the ANSI layout mapping come from the MIT-licensed [NocFreeKB/NocFree-and-zmk](https://github.com/NocFreeKB/NocFree-and-zmk) project.\n']
     groups = [('Desktop', inventory['desktop'])]
     for graph in inventory['firmware']['graphs']:
         roles = sorted(role.replace('receiver', 'dongle') for role, pin in inventory['firmware']['roles'].items() if pin['source_commit'] == graph['source_commit'])
@@ -92,17 +92,10 @@ def render(inventory, texts, inventory_only=False):
     gaps = set()
     for title, group in groups:
         parts.append(f'\n## {title}\n\n')
-        if 'source_commit' in group:
-            parts.append(f'Source commit: `{group["source_commit"]}`. RMK revision: `{group["rmk_revision"]}`. Target: `{inventory["firmware"]["target"]}`. Features: {inventory["firmware"]["features"]}.\n\n')
-        else:
-            parts.append(f'Target: `{group["target"]}`.\n\n')
-        parts.append(f'Cargo.lock SHA-256: `{group["cargo_lock_sha256"]}`.\n')
         for package in sorted(group['packages'], key=lambda p: (p['name'], p['version'], p['source'])):
             parts.append(f'\n### {package["name"]} {package["version"]}\n\nDeclared license: {package["license"]}\n\nSource: `{package["source"]}`\n\n')
-            if package.get('notice_context'):
-                parts.append(package['notice_context'] + '\n\n')
             if evidence := package.get('license_evidence'):
-                parts.append(f'Selected license: {evidence["selected_license"]}. Upstream omission: {evidence["upstream_omission"]}.\n\n')
+                parts.append(f'Selected license: {evidence["selected_license"]}.\n\n')
             for notice in package['texts']:
                 link = f'../docs/notices/texts/{notice["sha256"]}.txt' if inventory_only else f'#notice-{notice["sha256"]}'
                 parts.append(f'- {notice["origin"]} — [full text]({link})\n')
@@ -125,7 +118,7 @@ def render(inventory, texts, inventory_only=False):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('output', nargs='?', type=Path, default=ROOT / 'desktop/THIRD_PARTY_NOTICES.md', help='Output Markdown path (default: desktop/THIRD_PARTY_NOTICES.md)')
+    parser.add_argument('output', nargs='?', type=Path, default=ROOT / 'dist/THIRD_PARTY_NOTICES.md', help='Output Markdown path (default: dist/THIRD_PARTY_NOTICES.md)')
     parser.add_argument('-i', '--inventory', action='store_true', help='Omit the full text appendix')
     parser.add_argument('-c', '--check', action='store_true', help='Check output is current without modifying it')
     parser.add_argument('-s', '--strict', action='store_true', help='Fail if any source notice text remains unresolved (publication check)')
@@ -142,6 +135,7 @@ def main(argv=None):
             if not args.output.exists() or args.output.read_text(encoding='utf-8') != output:
                 raise ValueError('Notices output is out of date; regenerate it')
         else:
+            args.output.parent.mkdir(parents=True, exist_ok=True)
             args.output.write_text(output, encoding='utf-8')
         print(f'{len(texts)} full notice texts; {len(gaps)} unresolved source-text gaps', file=sys.stderr)
         return 0

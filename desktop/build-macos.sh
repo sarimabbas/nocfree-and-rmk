@@ -44,7 +44,6 @@ for size in 16 32 128 256 512; do
 done
 /usr/bin/iconutil -c icns "$icon_work/Companion.iconset" -o "$bundle/Contents/Resources/Companion.icns"
 cp ../LICENSE "$bundle/Contents/Resources/LICENSE.txt"
-cp ../NOTICE.md "$bundle/Contents/Resources/NOTICE.md"
 python3 ../scripts/companion_notices.py "$bundle/Contents/Resources/THIRD_PARTY_NOTICES.md"
 mkdir -p "$bundle/Contents/Resources/Firmware"
 for file in manifest.json left.uf2 left.bin right.uf2 right.bin receiver.uf2 receiver.bin; do

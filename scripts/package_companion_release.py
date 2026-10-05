@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Package the fixed, hardware-readback-verified local release. Never accesses devices."""
+"""Package firmware files from checked device records."""
 import argparse
 import hashlib
 import json

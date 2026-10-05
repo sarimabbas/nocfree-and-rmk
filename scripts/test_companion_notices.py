@@ -105,10 +105,20 @@ class NoticesTests(unittest.TestCase):
             self.assertEqual(notices.main([str(output), '--inventory', '--check']), 0)
             self.assertNotIn('Full source notice texts', output.read_text(encoding='utf-8'))
 
-    def test_committed_inventory_matches_current_pins_and_catalog(self):
+    def test_committed_inventory_matches_current_pins_and_source_texts(self):
         inventory, texts = notices.load_inventory(notices.ROOT)
-        catalog, _ = notices.render(inventory, texts, inventory_only=True)
-        self.assertEqual((notices.ROOT / 'desktop/THIRD_PARTY_NOTICES.md').read_text(encoding='utf-8'), catalog)
+        full, gaps = notices.render(inventory, texts)
+        self.assertFalse(gaps)
+        for sha, value in texts.items():
+            self.assertIn(f'<a id="notice-{sha}"></a>', full)
+            self.assertIn(value.rstrip(), full)
+        self.assertIn('NocFreeKB/NocFree-and-zmk', full)
+
+    def test_default_output_creates_dist_directory(self):
+        with patch.object(notices, 'ROOT', self.root):
+            self.assertEqual(notices.main(['--strict']), 0)
+            self.assertTrue((self.root / 'dist/THIRD_PARTY_NOTICES.md').is_file())
+            self.assertEqual(notices.main(['--strict', '--check']), 0)
 
     def test_supplementary_terms_need_original_declaration_and_exact_terms(self):
         actual, _ = notices.load_inventory(notices.ROOT)
@@ -121,8 +131,9 @@ class NoticesTests(unittest.TestCase):
         inventory, texts = notices.load_inventory(self.root)
         full, gaps = notices.render(inventory, texts)
         self.assertFalse(gaps)
-        self.assertIn('Upstream omission:', full)
-        self.assertIn('placeholders are template text', full)
+        self.assertIn(f'Selected license: {package["license_evidence"]["selected_license"]}', full)
+        for notice in package['texts']:
+            self.assertIn(texts[notice['sha256']].rstrip(), full)
         for mutate, expected in [
             (lambda p: p['license_evidence'].update(selected_license='Unknown'), 'audited SPDX'),
             (lambda p: p['license_evidence']['terms'].update(sha256='0' * 64), 'audited SPDX'),

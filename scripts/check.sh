@@ -3,8 +3,6 @@
 set -eu
 layout_features=""
 backlight_features=""
-shim_features=""
-rescue_features=""
 runtime_features=""
 # With no options, check the supported production layout and verified polarity.
 if [ "$#" -eq 0 ]; then
@@ -15,19 +13,17 @@ fi
 for option in "$@"; do
     case "$option" in
         --reclaimed-softdevice) layout_features="$layout_features,reclaimed-softdevice" ;;
-        --usb-recovery-first) layout_features="$layout_features,usb-recovery-first" ;;
         --backlight-active-low) backlight_features="$backlight_features,backlight-active-low" ;;
         --backlight-active-high) backlight_features="$backlight_features,backlight-active-high" ;;
-        --application-recovery-shim) shim_features=",application-recovery-shim" ;;
-        --usb-rescue-startup) rescue_features=",usb-rescue-startup" ;;
         --runtime-recovery) runtime_features=",runtime-recovery" ;;
-        *) echo "Usage: $0 [--reclaimed-softdevice] [--usb-recovery-first] [--backlight-active-low|--backlight-active-high] [--application-recovery-shim] [--usb-rescue-startup] [--runtime-recovery]" >&2; exit 2 ;;
+        *) echo "Usage: $0 [--reclaimed-softdevice] [--backlight-active-low|--backlight-active-high] [--runtime-recovery]" >&2; exit 2 ;;
     esac
 done
 cd "$(dirname "$0")/.."
-./experiments/held-key-recovery/check.sh
-./experiments/application-recovery-shim/check.sh
-cargo test --locked --manifest-path experiments/usb-startup-recovery/Cargo.toml
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT HUP INT TERM
+rustc --test --edition=2024 tests/watchdog_recovery.rs -o "$work/watchdog-tests"
+"$work/watchdog-tests"
 python3 -m unittest discover -s tests -v
 cargo test --locked --manifest-path crates/nocfree-input/Cargo.toml
 cargo fmt --manifest-path crates/nocfree-input/Cargo.toml -- --check
@@ -38,35 +34,14 @@ cargo fmt --manifest-path firmware/Cargo.toml -- --check
     for keymap_features in "" ",mac-keymap"; do
         for role in left right receiver; do
             role_backlight_features="$backlight_features"
-            role_shim_features="$shim_features"
             role_layout_features="$layout_features"
             # Receiver has no keyboard backlight and needs no lighting feature/schema change.
-            if [ "$role" = receiver ]; then role_backlight_features=""; role_shim_features=""; fi
+            if [ "$role" = receiver ]; then role_backlight_features=""; fi
             # Production runtime recovery retains the receiver's resident S140.
             if [ "$role" = receiver ] && [ -n "$runtime_features" ]; then role_layout_features=""; fi
             cargo build --locked --release --bin nocfree-rmk --target thumbv7em-none-eabihf \
-                --no-default-features --features "defmt-logging,$role$role_layout_features$keymap_features$role_backlight_features$role_shim_features$rescue_features$runtime_features" || failed=1
+                --no-default-features --features "defmt-logging,$role$role_layout_features$keymap_features$role_backlight_features$runtime_features" || failed=1
         done
-    done
-    cargo build --locked --release --bin recovery-probe --target thumbv7em-none-eabihf \
-        --no-default-features --features defmt-logging,right,recovery-probe,usb-recovery-first || failed=1
-    for inspect_role in left right; do
-        cargo build --locked --release --bin bootloader-inspect --target thumbv7em-none-eabihf \
-            --no-default-features --features "defmt-logging,$inspect_role,bootloader-inspect" || failed=1
-    done
-    for probe_role in left right; do
-        for keymap_features in "" ",mac-keymap"; do
-            cargo build --locked --release --bin input-probe --target thumbv7em-none-eabihf \
-                --no-default-features --features "defmt-logging,$probe_role,input-probe,usb-recovery-first$keymap_features" || failed=1
-        done
-    done
-    cargo build --locked --release --bin recovery-probe --target thumbv7em-none-eabihf \
-        --no-default-features --features defmt-logging,left,migration-probe || failed=1
-    cargo build --locked --release --bin recovery-probe --target thumbv7em-none-eabihf \
-        --no-default-features --features defmt-logging,left,migration-entry-probe || failed=1
-    for stage in runtime hal hal-serial usb-build-serial hal-neutral usb-enabled-serial usb-configured-serial usb-reset-serial usb-addressed-serial; do
-        cargo build --locked --release --bin recovery-probe --target thumbv7em-none-eabihf \
-            --no-default-features --features "defmt-logging,left,migration-$stage-probe" || failed=1
     done
     exit "$failed"
 )

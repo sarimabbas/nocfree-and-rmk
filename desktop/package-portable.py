@@ -38,7 +38,7 @@ def main():
     (resources / 'Firmware').mkdir()
     for firmware_name in ('manifest.json', 'left.uf2', 'left.bin', 'right.uf2', 'right.bin', 'receiver.uf2', 'receiver.bin'):
         shutil.copy2(firmware / firmware_name, resources / 'Firmware' / firmware_name)
-    for source, target in [('LICENSE', 'LICENSE.txt'), ('NOTICE.md', 'NOTICE.md')]:
+    for source, target in [('LICENSE', 'LICENSE.txt')]:
         shutil.copy2(ROOT / source, resources / target)
     subprocess.run(['python3' if system == 'linux' else 'python',
                     str(ROOT / 'scripts/companion_notices.py'),

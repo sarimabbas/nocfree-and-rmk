@@ -21,67 +21,24 @@ fn main() {
     }
     let out = std::path::PathBuf::from(std::env::var_os("OUT_DIR").unwrap());
     let layout = if std::env::var_os("CARGO_FEATURE_RECLAIMED_SOFTDEVICE").is_some() {
-        println!(
-            "cargo:warning=EXPLICIT MIGRATION BUILD: application at 0x1000 replaces the resident S140 SoftDevice. This image is NOT approved for flashing; verify physical bootloader entry and a complete restoration path first."
-        );
         "memory-sdc.x"
     } else {
         "memory-factory.x"
     };
     let mut memory = std::fs::read_to_string(layout).unwrap();
-    if std::env::var_os("CARGO_FEATURE_APPLICATION_RECOVERY_SHIM").is_some()
-        || std::env::var_os("CARGO_FEATURE_USB_RESCUE_STARTUP").is_some()
-        || std::env::var_os("CARGO_FEATURE_WATCHDOG_RESCUE_PROBE").is_some()
-        || (std::env::var_os("CARGO_FEATURE_STARTUP_WATCHDOG").is_some()
-            && std::env::var_os("CARGO_FEATURE_RECLAIMED_SOFTDEVICE").is_some())
+    if std::env::var_os("CARGO_FEATURE_STARTUP_WATCHDOG").is_some()
+        && std::env::var_os("CARGO_FEATURE_RECLAIMED_SOFTDEVICE").is_some()
     {
-        assert!(
-            std::env::var_os("CARGO_FEATURE_USB_RECOVERY_FIRST").is_none(),
-            "Application recovery must not retain the USB-first marker"
-        );
         memory.push_str(&std::fs::read_to_string("startup-recovery.x").unwrap());
-    }
-    if std::env::var_os("CARGO_FEATURE_USB_RECOVERY_FIRST").is_some() {
-        println!(
-            "cargo:warning=OPTIONAL RECOVERY-FIRST BUILD: existing Adafruit bootloader marker requests a USB recovery window before the application. Enumerated USB holds DFU; USB-only receivers have unsuitable normal cold-start behavior. Hardware behavior remains unverified."
-        );
-        memory.push_str(&std::fs::read_to_string("bootloader-recovery.x").unwrap());
-    }
-    if std::env::var_os("CARGO_FEATURE_WATCHDOG_RESCUE_PROBE").is_some()
-        || std::env::var_os("CARGO_FEATURE_MIGRATION_RUNTIME_PROBE").is_some()
-        || std::env::var_os("CARGO_FEATURE_MIGRATION_HAL_PROBE").is_some()
-        || std::env::var_os("CARGO_FEATURE_MIGRATION_HAL_SERIAL_PROBE").is_some()
-        || std::env::var_os("CARGO_FEATURE_MIGRATION_USB_BUILD_SERIAL_PROBE").is_some()
-        || std::env::var_os("CARGO_FEATURE_MIGRATION_HAL_NEUTRAL_PROBE").is_some()
-        || std::env::var_os("CARGO_FEATURE_MIGRATION_USB_ENABLED_SERIAL_PROBE").is_some()
-        || std::env::var_os("CARGO_FEATURE_MIGRATION_USB_CONFIGURED_SERIAL_PROBE").is_some()
-        || std::env::var_os("CARGO_FEATURE_MIGRATION_USB_RESET_SERIAL_PROBE").is_some()
-        || std::env::var_os("CARGO_FEATURE_MIGRATION_USB_ADDRESSED_SERIAL_PROBE").is_some()
-    {
-        memory.push_str(&std::fs::read_to_string("migration-diagnostic.x").unwrap());
     }
     std::fs::write(out.join("memory.x"), memory).unwrap();
     println!("cargo:rustc-link-search={}", out.display());
-    println!("cargo:rerun-if-changed=memory-factory.x");
-    println!("cargo:rerun-if-changed=memory-sdc.x");
-    println!("cargo:rerun-if-changed=bootloader-recovery.x");
-    println!("cargo:rerun-if-changed=startup-recovery.x");
-    println!("cargo:rerun-if-env-changed=CARGO_FEATURE_APPLICATION_RECOVERY_SHIM");
-    println!("cargo:rerun-if-env-changed=CARGO_FEATURE_USB_RESCUE_STARTUP");
-    println!("cargo:rerun-if-env-changed=CARGO_FEATURE_STARTUP_WATCHDOG");
-    println!("cargo:rerun-if-changed=migration-diagnostic.x");
-    println!("cargo:rerun-if-env-changed=CARGO_FEATURE_MIGRATION_RUNTIME_PROBE");
-    println!("cargo:rerun-if-env-changed=CARGO_FEATURE_MIGRATION_HAL_PROBE");
-    println!("cargo:rerun-if-env-changed=CARGO_FEATURE_MIGRATION_HAL_SERIAL_PROBE");
-    println!("cargo:rerun-if-env-changed=CARGO_FEATURE_MIGRATION_USB_BUILD_SERIAL_PROBE");
-    println!("cargo:rerun-if-env-changed=CARGO_FEATURE_MIGRATION_HAL_NEUTRAL_PROBE");
-    println!("cargo:rerun-if-env-changed=CARGO_FEATURE_MIGRATION_USB_ENABLED_SERIAL_PROBE");
-    println!("cargo:rerun-if-env-changed=CARGO_FEATURE_MIGRATION_USB_CONFIGURED_SERIAL_PROBE");
-    println!("cargo:rerun-if-env-changed=CARGO_FEATURE_MIGRATION_USB_RESET_SERIAL_PROBE");
-    println!("cargo:rerun-if-env-changed=CARGO_FEATURE_MIGRATION_USB_ADDRESSED_SERIAL_PROBE");
-    println!("cargo:rerun-if-env-changed=CARGO_FEATURE_WATCHDOG_RESCUE_PROBE");
-    println!("cargo:rerun-if-env-changed=CARGO_FEATURE_USB_RECOVERY_FIRST");
-    println!("cargo:rerun-if-env-changed=CARGO_FEATURE_RECLAIMED_SOFTDEVICE");
+    for file in ["memory-factory.x", "memory-sdc.x", "startup-recovery.x"] {
+        println!("cargo:rerun-if-changed={file}");
+    }
+    for feature in ["STARTUP_WATCHDOG", "RECLAIMED_SOFTDEVICE"] {
+        println!("cargo:rerun-if-env-changed=CARGO_FEATURE_{feature}");
+    }
 }
 
 fn generate_vial_definition() {

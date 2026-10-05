@@ -10,7 +10,6 @@ body:
     id: version
     attributes:
       label: Companion version
-      placeholder: "0.1.2"
     validations:
       required: true
   - type: input

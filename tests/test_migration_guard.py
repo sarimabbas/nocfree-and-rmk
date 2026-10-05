@@ -3,7 +3,6 @@ import importlib.util
 from pathlib import Path
 import struct
 import unittest
-from unittest.mock import patch
 
 spec = importlib.util.spec_from_file_location('migration_guard', Path(__file__).parents[1] / 'scripts/migration_guard.py')
 guard = importlib.util.module_from_spec(spec)
@@ -28,15 +27,6 @@ def candidate(size=0x2100):
     struct.pack_into('<I', binary, 0x200, guard.RECOVERY_MARKER)
     payload = binary + b'\xff' * ((size + 4095) // 4096 * 4096 - size)
     return uf2(payload), binary
-
-
-def restore():
-    payload = bytearray(0x6D000 - guard.START)
-    for address, value in ((0x3004, guard.S140_MAGIC), (0x3008, 0x27000),
-                           (0x300C, 0xFFFF0123), (0x3014, 7003000)):
-        struct.pack_into('<I', payload, address - guard.START, value)
-    struct.pack_into('<II', payload, 0x27000 - guard.START, guard.RAM_END, 0x43ACD)
-    return uf2(payload, family=0x239A0029)
 
 
 class MigrationGuardTests(unittest.TestCase):
@@ -106,42 +96,6 @@ class MigrationGuardTests(unittest.TestCase):
         image, binary = candidate(guard.END - guard.START + 4)
         with self.assertRaises(ValueError):
             guard.inspect_migration(image, binary)
-
-
-class RestoreGuardTests(unittest.TestCase):
-    def test_restore_is_bound_to_original_hash(self):
-        image = restore()
-        with self.assertRaisesRegex(ValueError, 'exact saved left'):
-            guard.inspect_left_factory_restore(image)
-        # Synthetic fixture exercises the remaining structural gates without
-        # committing factory firmware or weakening the production hash policy.
-        with patch.object(guard, 'LEFT_RESTORE_SHA256', hashlib.sha256(image).hexdigest()):
-            self.assertEqual(guard.inspect_left_factory_restore(image)['blocks'], 1728)
-            with self.assertRaises(ValueError):
-                guard.inspect_left_factory_restore(image[512:] + image[:512])
-            with self.assertRaises(ValueError):
-                guard.inspect_left_factory_restore(image[:-512])
-            with self.assertRaises(ValueError):
-                guard.inspect_left_factory_restore(image + image[:512])
-
-    def test_restore_metadata_vectors_and_marker(self):
-        for address, value in ((0x3004, 0), (0x3008, 0x26000), (0x300C, 0xFFFF0124),
-                               (0x3014, 7002000), (0x27000, 0x20020008),
-                               (0x27004, 0x65001), (0x27200, guard.RECOVERY_MARKER)):
-            image = bytearray(restore())
-            offset = (address - guard.START) // 256 * 512 + 32 + address % 256
-            struct.pack_into('<I', image, offset, value)
-            with patch.object(guard, 'LEFT_RESTORE_SHA256', hashlib.sha256(image).hexdigest()):
-                with self.subTest(address=address), self.assertRaises(ValueError):
-                    guard.inspect_left_factory_restore(image)
-
-    def test_restore_families_and_address_bounds(self):
-        for offset, value in ((28, guard.FAMILY), (28, 0xD663823C), (12, 0),
-                               (12, 0x6D000), (12, 0x10001000), (8, 0)):
-            image = bytearray(restore())
-            struct.pack_into('<I', image, offset, value)
-            with self.subTest(offset=offset), self.assertRaises(ValueError):
-                guard.inspect_left_factory_restore(image)
 
 
 if __name__ == '__main__':

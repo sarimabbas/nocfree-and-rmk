@@ -1,8 +1,6 @@
 # NocFree RMK Companion
 
-Install RMK on your NocFree AND keyboard.
-
-Companion helps you save your keyboard’s original software, install RMK, and change keys. It guides you through checks for both halves and all three connection modes. You can return to the original software with your saved backup.
+Companion helps you save the original software on your NocFree AND keyboard, install RMK, and change keys. It guides you through checks for both halves and all three connection modes. You can return to the original software with your saved backup.
 
 ![Choose the keyboard parts to update](docs/images/install-rmk.png)
 
@@ -16,7 +14,7 @@ Companion helps you save your keyboard’s original software, install RMK, and c
 
 On Mac, open the ZIP file and move **NocFree RMK Companion** to **Applications**.
 
-Windows: open the ZIP file, keep all its files together, then open **nocfree-companion.exe**. Linux: open the archive and follow the included **README.txt**.
+On Windows, open the ZIP file, keep all its files together, then open **nocfree-companion.exe**. On Linux, open the archive and follow the included **README.txt**.
 
 On Mac, you can also use Homebrew:
 
@@ -55,7 +53,3 @@ The left switch selects the connection: **top = dongle**, **middle = USB**, **bo
 ## Need help?
 
 If you need help, use **Help → Export diagnostic logs** to save a ZIP file. Attach it to a [problem report](https://github.com/sarimabbas/nocfree-and-rmk/issues/new/choose).
-
-For code, builds and recovery details, see [TECHNICAL.md](TECHNICAL.md).
-
-Project code uses the [MIT license](LICENSE), and other included code keeps its own license.

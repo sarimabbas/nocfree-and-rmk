@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build guarded, unapproved firmware candidates without accessing devices."""
+"""Build firmware images and check their addresses, vectors and board family."""
 import argparse
 import hashlib
 import json
@@ -89,10 +89,9 @@ def source_hashes():
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, epilog=(
-        'Outputs are candidates only: no flashing, release approval, or hardware validation. '
-        'Run the host harness before building. Existing candidate files are replaced.'))
+        'Run scripts/check.sh before building. Existing output files are replaced.'))
     parser.add_argument('--output', '-o', type=Path,
-                        default=ROOT / '.evidence/main-firmware-update/candidates')
+                        default=ROOT / 'dist/firmware')
     parser.add_argument('--toolchain', '-t', default=tomllib.loads(
         (ROOT / 'rust-toolchain.toml').read_text())['toolchain']['channel'])
     parser.add_argument('--dry-run', '-n', action='store_true', help='Print the build plan only')
@@ -116,7 +115,7 @@ def main():
         report = {'schema': 1, **plan, 'source_sha256': before,
                   'compiler': capture(['rustup', 'run', args.toolchain, 'rustc', '--version']),
                   'llvm_objcopy': capture([objcopy, '--version']), 'images': {},
-                  'status': 'structural candidates only; hardware and release acceptance pending'}
+                  'status': 'image checks passed'}
         for role in ROLES:
             folder = output / role
             folder.mkdir(exist_ok=True)

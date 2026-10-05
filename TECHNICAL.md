@@ -1,12 +1,8 @@
 # Technical guide
 
-This guide explains the keyboard firmware, Companion app, recovery steps and build commands.
-
 ## Keyboard setup
 
 The keyboard images use the ANSI NocFree AND layout. The right half sends keys to the left half. The left half sends them to the computer through USB, Bluetooth or the dongle. Install RMK on the dongle to use it with the RMK keyboard firmware.
-
-Open work is tracked in [GitHub issues](https://github.com/sarimabbas/nocfree-and-rmk/issues).
 
 ## Architecture and source map
 
@@ -20,7 +16,7 @@ Companion → local USB recovery request → selected part’s factory bootloade
 Companion/Vial → left USB, or dongle relay → left configuration
 ```
 
-RMK owns key actions, debounce, transports, Bluetooth profiles, storage and lighting synchronization. Custom board code adapts the PCA9555 expanders, physical mode switch, battery ADC and startup recovery. Keep changes at those seams.
+RMK owns key actions, debounce, transports, Bluetooth profiles, storage and lighting synchronization. Custom board code adapts the PCA9555 expanders, physical mode switch, battery ADC and startup recovery. Keep changes at those seams; do not duplicate framework behavior.
 
 | Concern | Source |
 | --- | --- |
@@ -138,11 +134,13 @@ On macOS, with a validated release firmware package in `dist/companion-firmware/
 
 Download `companion-firmware.zip` from the firmware release and use `scripts/unpack_companion_release.py` to extract it for app builds. `scripts/package_companion_release.py` creates firmware packages from images and device test records.
 
-Firmware roles are `left`, `right`, `receiver`; select exactly one. Production halves use the explicit `reclaimed-softdevice` layout with runtime recovery. The receiver preserves resident S140. Role builds share an output name, so use separate target directories or save each ELF before another build. Read the checked-in feature definitions before selecting a diagnostic feature.
+Firmware roles are `left`, `right`, `receiver`; select exactly one. Production halves use the explicit `reclaimed-softdevice` layout with runtime recovery. The receiver preserves resident S140. Role builds share an output name, so use separate target directories or save each ELF before another build. The optional CDC logger can report raw battery ADC samples.
 
 Run `scripts/image_guard.py` for receiver images and the UF2/BIN-bound checks in `scripts/migration_guard.py` for lower-layout halves. These tools check image addresses, vectors and board family. Match the role, build features and image to the selected board before installation.
 
-Before transport or scanner changes, run the repeatable host harness and cross-build all supported roles. Test disconnect and key release, simultaneous input, wake on the first key, recovery entry and all connection modes on the keyboard.
+Before transport or scanner changes, run the host harness and cross-build all supported roles. Test disconnect and key release, simultaneous input, wake on the first key, recovery entry and all connection modes on the keyboard. Record build results separately from device tests. Use primary sources for pin, memory and radio claims, and distinguish assumptions from device observations.
+
+For automated work, do not flash, erase, unlock, change bootloaders, write UICR or run `probe-rs recover`. Images must pass the address, vector and family checks and have device-specific bootloader evidence and a tested recovery route. Do not add a generic `cargo run` flash runner.
 
 ## USB protocol reference
 
@@ -162,19 +160,22 @@ If the app hangs, force quit it, reopen it and export logs. If it cannot reopen 
 
 Include the app version, OS, affected part, switch positions, USB connections, exact steps and whether recovery still works. An issue needs the exported logs or an explanation of why export failed.
 
-## Release and license maintenance
+## Contributions
 
-Project code is MIT. Dependencies, fonts, icons and bundled SDK code keep their own licenses. Preserve `LICENSE`, `NOTICE.md`, `desktop/THIRD_PARTY_NOTICES.md`, `docs/notices/inventory.json` and the hashed source texts under `docs/notices/texts/`.
+Keep changes focused and include the reason and test results in the pull request. Discuss larger changes in an issue first. Use independent implementation and review passes for substantial changes, with clear file ownership. Commit reviewed changes with concise Conventional Commit messages. Keep factory firmware, recovery executables, credentials, local device identifiers and generated binaries out of Git.
+
+Report security flaws through [GitHub private vulnerability reporting](https://github.com/sarimabbas/nocfree-and-rmk/security/advisories/new), with the affected version and steps to reproduce the problem.
+
+## Releases and licenses
+
+Project code is MIT; RMK uses MIT OR Apache-2.0. Pin information, expander order and the ANSI layout mapping come from the MIT-licensed [NocFreeKB/NocFree-and-zmk](https://github.com/NocFreeKB/NocFree-and-zmk) project. Dependencies, fonts, icons and bundled SDK code keep their own licenses. The app packages include `LICENSE` and third-party licenses generated from `docs/notices/inventory.json` and the source texts in `docs/notices/texts/`.
 
 ```sh
-python3 scripts/companion_notices.py --inventory --check
 python3 scripts/companion_notices.py /tmp/NocFree-Third-Party-Notices.md
 python3 scripts/companion_notices.py /tmp/NocFree-Third-Party-Notices.md --strict --check
 ```
 
-The full generated appendix belongs in distributed app archives. Strict validation rejects missing or changed recorded text and stale source graph hashes. Version-only manifest updates still require a locked graph comparison before refreshing the inventory hash. Dependency or firmware-pin changes require recapture and review against exact immutable source versions.
-
-When an upstream archive omits a license file, the inventory stores the original license declaration and available copyright headers. It records standard SPDX terms separately.
+The notice generator checks the recorded source hashes and license texts. Update the inventory when dependencies or bundled firmware change.
 
 Release jobs build the app first. A protected job signs the build with a temporary keychain in the main-branch release environment. Verify the archive checksums, bundled firmware manifest and license notices. On macOS, also check the Developer ID signature, notarization ticket and Gatekeeper result.
 

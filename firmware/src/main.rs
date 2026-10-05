@@ -6,27 +6,10 @@ mod watchdog_recovery;
     feature = "startup-watchdog",
     any(
         all(not(feature = "receiver"), not(feature = "reclaimed-softdevice")),
-        all(feature = "right", not(feature = "runtime-recovery")),
-        feature = "usb-rescue-startup",
-        feature = "application-recovery-shim",
-        feature = "usb-recovery-first",
-        feature = "watchdog-rescue-probe"
+        all(feature = "right", not(feature = "runtime-recovery"))
     )
 ))]
-compile_error!("Startup watchdog requires the role layout without another startup recovery hook");
-#[cfg(feature = "watchdog-rescue-probe")]
-compile_error!("Build the dedicated watchdog-rescue-probe binary for the hang proof");
-#[cfg(feature = "application-recovery-shim")]
-mod startup_recovery;
-#[cfg(feature = "usb-rescue-startup")]
-mod usb_rescue;
-#[cfg(feature = "usb-rescue-diagnostic")]
-mod usb_rescue_trace;
-#[cfg(all(
-    feature = "usb-rescue-diagnostic",
-    feature = "startup-recovery-diagnostic"
-))]
-compile_error!("Select only one startup manufacturer diagnostic");
+compile_error!("Startup watchdog requires the production role layout");
 #[cfg(not(any(feature = "left", feature = "right", feature = "receiver")))]
 compile_error!("Select exactly one role: left, right, receiver");
 #[cfg(any(
@@ -91,12 +74,8 @@ fn ble_addr() -> [u8; 6] {
 }
 #[embassy_executor::main]
 async fn main(spawner: Spawner) {
-    #[cfg(feature = "usb-rescue-diagnostic")]
-    usb_rescue_trace::initialize(usb_rescue::diagnostic_snapshot());
     #[allow(unused_mut)]
     let mut p = embassy_nrf::init(embassy_nrf::config::Config::default());
-    #[cfg(feature = "usb-rescue-startup")]
-    usb_rescue::run(p.USBD.reborrow(), Irqs).await;
     #[cfg(feature = "startup-watchdog")]
     let mut watchdog_runner = rmk::watchdog::Nrf52Watchdog::default_runner(p.WDT);
     let mpsl_p =
@@ -173,26 +152,7 @@ async fn main(spawner: Spawner) {
     let driver = Driver::new(p.USBD, Irqs, HardwareVbusDetect::new(Irqs));
     #[cfg(any(not(feature = "right"), feature = "runtime-recovery"))]
     let device_config = rmk::config::DeviceConfig {
-        manufacturer: {
-            #[cfg(feature = "usb-rescue-diagnostic")]
-            {
-                usb_rescue_trace::manufacturer()
-            }
-            #[cfg(all(
-                feature = "startup-recovery-diagnostic",
-                not(feature = "usb-rescue-diagnostic")
-            ))]
-            {
-                startup_recovery::diagnostic_manufacturer()
-            }
-            #[cfg(not(any(
-                feature = "startup-recovery-diagnostic",
-                feature = "usb-rescue-diagnostic"
-            )))]
-            {
-                concat!("NocFree RMK;fw=", env!("CARGO_PKG_VERSION"))
-            }
-        },
+        manufacturer: concat!("NocFree RMK;fw=", env!("CARGO_PKG_VERSION")),
         product_name: if cfg!(feature = "receiver") {
             "NocFree RMK Receiver"
         } else if cfg!(feature = "right") {
@@ -219,9 +179,8 @@ async fn main(spawner: Spawner) {
                 pwm::{DutyCycle, Prescaler, SimpleConfig, SimplePwm},
             };
             let active_low = cfg!(feature = "backlight-active-low");
-            // P0.20 is vendor-published. Polarity remains an explicit trial choice.
+            // P0.20 is the backlight pin in the vendor board mapping.
             // Factory applications request 400 Hz: 8 MHz / 20000, up counting.
-            // See TECHNICAL.md power and lighting notes; current savings need measurement.
             let mut config = SimpleConfig::default();
             config.prescaler = Prescaler::Div2;
             config.max_duty = 20000;

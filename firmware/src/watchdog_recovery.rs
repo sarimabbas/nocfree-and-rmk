@@ -19,12 +19,6 @@ pub fn request_after_watchdog(registers: &mut impl Registers) -> bool {
     registers.write(GPREGRET, 0x57);
     true
 }
-/// No feeds: this proof deliberately lets a startup hang expire.
-/// Never attempt to reconfigure a watchdog inherited from an earlier stage.
-#[cfg(any(feature = "watchdog-rescue-probe", test))]
-pub fn arm_probe(registers: &mut impl Registers) {
-    arm(registers, 65_536);
-}
 /// Match RMK Nrf52Watchdog::default_runner exactly, so Embassy can adopt it.
 #[cfg(any(feature = "startup-watchdog", test))]
 pub fn arm_startup(registers: &mut impl Registers) {
@@ -102,20 +96,20 @@ mod tests {
         );
     }
     #[test]
-    fn proof_never_feeds_or_reconfigures_a_running_watchdog() {
+    fn startup_does_not_reconfigure_a_running_watchdog() {
         let mut registers = Fake {
             reason: 0x10005,
             running: 0,
             writes: vec![],
         };
         assert!(!request_after_watchdog(&mut registers));
-        arm_probe(&mut registers);
+        arm_startup(&mut registers);
         assert_eq!(
             registers.writes,
             [
                 (RESETREAS, RESETPIN),
                 (WDT + 0x308, 1),
-                (WDT + 0x504, 65_536),
+                (WDT + 0x504, 327_680),
                 (WDT + 0x508, 1),
                 (WDT + 0x50c, 1),
                 (WDT, 1)
@@ -124,7 +118,7 @@ mod tests {
         assert_eq!(registers.reason, 0x10004);
         registers.running = 1;
         registers.writes.clear();
-        arm_probe(&mut registers);
+        arm_startup(&mut registers);
         assert_eq!(registers.writes, [(RESETREAS, RESETPIN)]);
     }
 }
