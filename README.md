@@ -30,7 +30,7 @@ brew install --cask sarimabbas/tap/nocfree-rmk-companion
 
 Before it replaces the software on a part, Companion saves a backup automatically. Keep the USB cables connected until the app asks you to remove them.
 
-## What works
+## Features
 
 - [x] Install RMK (you can restore to original back up as well)
 - [x] Wired/USB mode 
@@ -44,11 +44,11 @@ Before it replaces the software on a part, Companion saves a backup automaticall
 
 The left switch selects the connection: **top = dongle**, **middle = USB**, **bottom = Bluetooth**. A USB cable can charge a half while it uses a wireless connection.
 
-## Compare the projects
+## Comparison to other firmware
 
-Choose the project that fits how you want to set up and change your keyboard.
+All options are good!
 
-| Feature | RMK Companion | [NocFree Rust](https://github.com/jhkim0218/Nocfree-and-ZMK-rust) | [Community ZMK port](https://github.com/NocFreeKB/NocFree-and-zmk) |
+| Feature | RMK Companion | [Nocfree-and-ZMK-rust](https://github.com/jhkim0218/Nocfree-and-ZMK-rust) | [NocFree-and-zmk](https://github.com/NocFreeKB/NocFree-and-zmk) |
 | --- | --- | --- | --- |
 | Installation | Guided app for Mac, Windows and Linux | Download firmware and follow the recovery guide | Build firmware on GitHub or your computer, then install it |
 | USB and Bluetooth typing | Yes | Yes | Yes |
@@ -56,8 +56,6 @@ Choose the project that fits how you want to set up and change your keyboard.
 | Change keys | Vial | NocFree Link | Edit the keymap file and rebuild |
 | Backlight brightness | 16 levels | Off and five brightness levels | Not included |
 | Keyboard layouts | ANSI | ANSI and KR; ISO and JIS test builds | ANSI |
-
-Sources: [Rust project guide](https://github.com/jhkim0218/Nocfree-and-ZMK-rust#implemented-features), [ZMK project guide](https://github.com/NocFreeKB/NocFree-and-zmk#9-community-zmk-module-in-this-repository) and [ZMK setup instructions](https://github.com/NocFreeKB/NocFree-and-zmk/blob/main/docs/build.md). Compared on 5 October 2026.
 
 ## Need help?
 
