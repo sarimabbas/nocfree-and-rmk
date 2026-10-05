@@ -5,8 +5,19 @@ updates:
     schedule:
       interval: monthly
     open-pull-requests-limit: 3
+    ignore:
+      - dependency-name: rynk
+      - dependency-name: rynk-usb
   - package-ecosystem: cargo
     directory: /firmware
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 3
+    ignore:
+      - dependency-name: rmk
+      - dependency-name: embassy-nrf
+  - package-ecosystem: cargo
+    directory: /crates/nocfree-input
     schedule:
       interval: monthly
     open-pull-requests-limit: 3
@@ -14,6 +25,7 @@ updates:
     directory: /
     schedule:
       interval: monthly
+    open-pull-requests-limit: 3
     groups:
       actions:
         patterns: ["*"]

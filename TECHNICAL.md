@@ -37,6 +37,8 @@ RMK owns key actions, debounce, transports, Bluetooth profiles, storage and ligh
 
 Each Cargo manifest and lockfile fixes the dependency versions. The firmware and desktop use separate Rust toolchains.
 
+Dependabot checks all three Cargo projects and GitHub Actions monthly. Security updates are enabled. Renovate updates both Rust toolchains together each month. All updates need review. Update the license inventory when desktop dependencies change. Changes to the pinned RMK, Rynk and Embassy forks are manual because they must stay in sync with the firmware.
+
 ## Board reference
 
 These GPIO mappings come from the [vendor porting guide](https://github.com/NocFreeKB/NocFree-and-zmk/blob/8bc5f6fe4531cadc62dc39aa92750fba90e009c4/README.md#4-pins-required-for-zmk-porting). The table uses Nordic GPIO names.
