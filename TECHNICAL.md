@@ -119,7 +119,11 @@ Install Rust through rustup and use the checked-in toolchains. Firmware also nee
 ./scripts/check.sh
 ```
 
-This runs host checks and firmware cross-builds without accessing a device. For the desktop:
+This runs host checks and firmware cross-builds without accessing a device.
+
+CI runs host tests once and selects firmware or desktop jobs from the changed files. Rust dependencies are cached, and newer commits cancel older runs for the same branch or pull request. Published releases and manual CI runs check everything. The required `CI` check fails if a selected job fails or does not run. Use `./scripts/check.sh --host-only` for local host checks; `--build-only` skips host checks when building a specific firmware configuration.
+
+For the desktop:
 
 ```sh
 cd desktop
