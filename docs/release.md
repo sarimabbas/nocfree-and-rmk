@@ -17,7 +17,7 @@ shasum -a 256 dist/companion-firmware.zip
 
 Review the output package and checksum. Store this ZIP as the `companion-firmware.zip` asset of a **same-repository staging release**; uploading it is a separate maintainer action. Do not upload the private evidence, factory originals, recovery executables, or device identifiers. The workflow requires the staging release tag and the reviewed ZIP SHA256. Its extractor accepts exactly seven root files with bounded sizes, rejects traversal/duplicates/extra files, and refuses an existing destination. The app's `--check-firmware` then verifies the pinned manifest and the exact role-specific UF2/BIN image guards. Merely passing those structural checks is not hardware validation.
 
-The current fixed firmware remains `0.1.0-local.2`; its evidence limitations are in [companion-firmware-release.md](research/companion-firmware-release.md). Updating it requires a separately reviewed package and updating the Rust manifest pin, not changing a workflow input alone.
+The reviewed bundled firmware is `0.1.1`, release `nocfree-a717808eec6f8dfe`. All three application images have exact installed readback verification and current-image Companion recovery observations. Source is `fb45eecef29f2a2883f44cd6e28843798238d0a7`, with RMK `89fead1de856132911ec685313fa88cda0652bac`. See [acceptance scope](research/main-firmware-update.md).
 
 ## Signing and draft release
 
@@ -32,24 +32,22 @@ It follows [Vinny's release workflow](https://github.com/sarimabbas/vinny/blob/m
 
 Start **Draft macOS release** only after the staging asset and environment secrets exist. Review the draft artifact on a fresh Mac, including removable-volume permission refusal/retry and factory/RMK journeys. Publish manually only after acceptance. Do not replace published archives or rewrite release tags.
 
-## Current blockers
+## Public preview status
 
-Read-only audit on 2026-10-04 found zero valid local code-signing identities (`security find-identity -v -p codesigning`), zero NocFree repository secrets. The `release` environment has now been created with custom deployment policies permitting only the `main` branch; API readback confirmed that exact single branch policy and zero environment secrets. Required-reviewer approval is not configured; this setup added no reviewers or other principals and changed no repository-wide protections. Vinny's separate `release` environment contains the five required Apple certificate/notary secret names; their values cannot be read back from GitHub or automatically reused by this repository. No credentials were exported and no keychain or secret settings were changed. Signing/notarization rehearsal is therefore blocked on provisioning a valid Developer ID identity or this repository's protected release secrets.
+The first release is an Apple Silicon public preview. The release notes distinguish owner observations from measured latency/power, document the upstream split-BLE held-key disconnect limitation, provisional battery calibration, ANSI acceptance scope and older/clean-Mac testing limits. Those limits do not claim a separately completed compatibility or endurance test.
 
-The reviewed firmware ZIP is prepared locally at `dist/companion-firmware.zip` with SHA256 `64508bd93f437cf67e7ffe5ab385be5203fd30fdc75401e9984223275e96a3cf` (1,323,451 bytes), alongside its `.sha256` file. The private-evidence packager and Companion's pinned package guard both passed. It has not been uploaded. Its hash binds these exact ZIP bytes; recreating it with another ZIP implementation can change the ZIP hash without changing the firmware.
+The reviewed firmware ZIP is `dist/companion-firmware.zip`, SHA256 `5b921799000a861afb74c4e1f3fa0ca7423002299f34741d16807b653f20e09c` (1,311,135 bytes). Its exact seven-file extraction and Companion manifest/image guards passed. Only these public application images and manifest belong in staging; private evidence and factory originals stay local.
 
-To unblock the workflow, a maintainer must supply the five secrets in the main-restricted `release` environment from their encrypted source backups and upload the reviewed ZIP to a same-repository staging release. Then start **Draft macOS release** from `main` with the Cargo version, staging tag and reviewed ZIP hash. Secret provisioning and upload remain separate from this preparation; no tags, uploads or releases were created here.
+Signing credentials are provisioned from the owner’s Bitwarden vault into the repository’s main-restricted `release` environment. The workflow validates the offline publication notices, builds against the pinned firmware, signs and notarizes, staples and checks Gatekeeper, then creates a draft prerelease. A maintainer reviews the resulting archive before publishing it. No published archive or release tag may be replaced.
 
-The bundle includes the project MIT license and full `THIRD_PARTY_NOTICES.md`, generated offline by `scripts/companion_notices.py`. The reviewed source inventory now covers the desktop graph and both exact bundled firmware source graphs, including the different RIGHT RMK revision. Hash-named upstream notice texts are cached under `docs/notices/texts/`; source revisions and package checksums are recorded in `inventory.json`. The committed `desktop/THIRD_PARTY_NOTICES.md` is only the catalog; the builder includes the full text appendix.
-
-Twelve source-text gaps remain explicitly listed in the catalog and [notice capture documentation](notices/README.md). Draft builds remain allowed. Before public publication, run the strict check on a newly generated full notice file:
+The bundle includes the project MIT license, NOTICE.md and full third-party notice appendix. Generate and check it before publication:
 
 ```sh
 python3 scripts/companion_notices.py /tmp/NocFree-Third-Party-Notices.md
 python3 scripts/companion_notices.py /tmp/NocFree-Third-Party-Notices.md --strict --check
 ```
 
-The strict command currently fails on those twelve gaps; resolve them from immutable upstream sources and review the applicable desktop, asset and firmware redistribution terms before publishing. Merely including SPDX declarations or passing image guards does not complete the notice audit.
+The source acquisition and upstream-omission policy is documented in [notice capture documentation](notices/README.md). A successful check verifies the recorded source/text inventory; it does not manufacture missing upstream copyright statements.
 
 ## Maintaining the notices snapshot
 

@@ -110,6 +110,33 @@ class NoticesTests(unittest.TestCase):
         catalog, _ = notices.render(inventory, texts, inventory_only=True)
         self.assertEqual((notices.ROOT / 'desktop/THIRD_PARTY_NOTICES.md').read_text(), catalog)
 
+    def test_supplementary_terms_need_original_declaration_and_exact_terms(self):
+        actual, _ = notices.load_inventory(notices.ROOT)
+        package = next(p for p in actual['desktop']['packages'] if p.get('license_evidence'))
+        self.inventory['desktop']['packages'] = [copy.deepcopy(package)]
+        for notice in package['texts']:
+            source = notices.ROOT / 'docs/notices' / notice['file']
+            (self.root / 'docs/notices' / notice['file']).write_bytes(source.read_bytes())
+        self.save()
+        inventory, texts = notices.load_inventory(self.root)
+        full, gaps = notices.render(inventory, texts)
+        self.assertFalse(gaps)
+        self.assertIn('Upstream omission:', full)
+        self.assertIn('placeholders are template text', full)
+        for mutate, expected in [
+            (lambda p: p['license_evidence'].update(selected_license='Unknown'), 'audited SPDX'),
+            (lambda p: p['license_evidence']['terms'].update(sha256='0' * 64), 'audited SPDX'),
+            (lambda p: p['license_evidence'].pop('upstream_omission'), 'explicit upstream omission'),
+            (lambda p: p['texts'].pop(0), 'preserved declaration'),
+            (lambda p: p.update(license='Apache-2.0'), 'declared by the published package'),
+        ]:
+            with self.subTest(expected=expected):
+                self.inventory['desktop']['packages'] = [copy.deepcopy(package)]
+                mutate(self.inventory['desktop']['packages'][0])
+                self.save()
+                with self.assertRaisesRegex(ValueError, expected):
+                    notices.load_inventory(self.root)
+
 
 if __name__ == '__main__':
     unittest.main()

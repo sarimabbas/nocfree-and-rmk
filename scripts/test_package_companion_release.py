@@ -38,7 +38,7 @@ class ReleaseTests(unittest.TestCase):
     def test_exact_readbacks_and_repeatable_manifest(self):
         first = release.package(self.root, check_only=True)
         self.assertEqual(first, release.package(self.root, self.root / 'release'))
-        self.assertEqual(first[1], 'f2b333a0060fe2771bbabe16eda08ee976e4a186e482674297dab26110ed1f20')
+        self.assertEqual(first[1], 'e9da15aebe486cb879eb62c65628d85d12b33ca587cbb32564c17a0b824d70af')
         self.assertEqual(len(list((self.root / 'release').iterdir())), 7)
 
     def test_bad_schema_and_missing_preservation(self):
@@ -49,7 +49,7 @@ class ReleaseTests(unittest.TestCase):
             with self.assertRaises(ValueError): release.package(self.root, check_only=True)
             path.write_bytes(before)
 
-    def test_review_and_retained_recovery_are_required_and_storage_reset_is_explicit(self):
+    def test_review_and_current_image_recovery_are_required_and_storage_reset_is_explicit(self):
         for role, spec in release.ROLES.items():
             review_path = self.root / '.evidence' / spec[5]
             original = review_path.read_bytes()
@@ -67,8 +67,29 @@ class ReleaseTests(unittest.TestCase):
         manifest = json.loads((self.root / 'release/manifest.json').read_text())
         for image in manifest['images']:
             self.assertFalse(image['storage_preserved'])
-            self.assertFalse(image['current_image_runtime_recovery'])
-            self.assertEqual(image['recovery_evidence'], 'retained_role_specific_route_unchanged')
+            self.assertTrue(image['current_image_runtime_recovery'])
+            self.assertEqual(image['recovery_evidence'], 'current_image_companion_runtime_recovery_observed')
+
+    def test_recovery_observation_and_baseline_must_bind_exact_archives(self):
+        for role, spec in release.ROLES.items():
+            for path, field in [
+                (self.root / '.evidence' / spec[6], 'candidate_sha256'),
+                (self.root / '.evidence' / spec[6], 'installed_readback_sha256'),
+                (self.root / '.evidence' / spec[6], 'role'),
+            ]:
+                original = path.read_bytes()
+                proof = json.loads(original)
+                proof[field] = 'incorrect'
+                path.write_text(json.dumps(proof))
+                with self.assertRaises(ValueError): release.package(self.root, check_only=True)
+                path.write_bytes(original)
+            path = self.root / '.evidence' / spec[5]
+            original = path.read_bytes()
+            proof = json.loads(original)
+            proof['baselines'][role] = '0' * 64
+            path.write_text(json.dumps(proof))
+            with self.assertRaises(ValueError): release.package(self.root, check_only=True)
+            path.write_bytes(original)
 
     def test_dongle_protected_prefix_cannot_change_behind_true_boolean_proofs(self):
         path = self.root / '.evidence' / release.ROLES['receiver'][0] / 'installed-CURRENT.UF2'

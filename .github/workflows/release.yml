@@ -75,18 +75,31 @@ jobs:
           gh release download "$FIRMWARE_TAG" --repo "$GITHUB_REPOSITORY" --pattern companion-firmware.zip --dir "$RUNNER_TEMP/firmware-input"
           python3 scripts/unpack_companion_release.py --input "$RUNNER_TEMP/firmware-input/companion-firmware.zip" --sha256 "$FIRMWARE_SHA256" --output dist/companion-firmware
 
+      - name: Validate publication notices and release notes
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          python3 scripts/companion_notices.py "$RUNNER_TEMP/THIRD_PARTY_NOTICES.md"
+          python3 scripts/companion_notices.py "$RUNNER_TEMP/THIRD_PARTY_NOTICES.md" --strict --check
+          test -s "docs/release-notes/${VERSION}.md"
+
       - name: Build unsigned app with pinned firmware guard
         env:
           BUILD_NUMBER: ${{ github.run_number }}
         run: ./desktop/package-macos.sh
 
       - name: Pack unsigned app
-        run: ditto -c -k --keepParent "dist/NocFree RMK Companion.app" "$RUNNER_TEMP/nocfree-rmk-companion-unsigned.zip"
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/release-input"
+          ditto -c -k --keepParent "dist/NocFree RMK Companion.app" "$RUNNER_TEMP/release-input/nocfree-rmk-companion-unsigned.zip"
+          cp "docs/release-notes/${VERSION}.md" "$RUNNER_TEMP/release-input/${VERSION}.md"
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: nocfree-rmk-companion-unsigned-${{ steps.version.outputs.version }}
-          path: ${{ runner.temp }}/nocfree-rmk-companion-unsigned.zip
+          path: ${{ runner.temp }}/release-input/
           if-no-files-found: error
           retention-days: 1
 
@@ -196,6 +209,6 @@ jobs:
             --repo "$GITHUB_REPOSITORY" \
             --target "$GITHUB_SHA" \
             --title "NocFree RMK Companion ${VERSION}" \
-            --generate-notes --draft \
-            --notes "Draft only: complete fresh-Mac journey acceptance and the desktop/embedded-firmware license-notice audit in docs/release.md before publication."
+            --draft --prerelease \
+            --notes-file "$RUNNER_TEMP/input/${VERSION}.md"
 

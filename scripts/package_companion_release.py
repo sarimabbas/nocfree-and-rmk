@@ -11,12 +11,12 @@ sys.path.insert(0, str(ROOT / 'scripts'))
 from migration_guard import inspect_application_shim
 from image_guard import inspect as inspect_receiver
 
-VERSION = '0.1.0-local.2'
-# This is an explicit reviewed allowlist, not a glob of whatever was most recently built.
+VERSION = '0.1.1'
+# Explicit reviewed allowlist; never select whichever image was most recently built.
 ROLES = {
-    'left': ('dongle-pairing/live-candidates/left', '85628cb1cf03487c75828b28ac46071c363efbce7fac73867aa01306106b8111', '4a6128fc7fdb264dde3f1d0ab2b391ddf0a1cea15acddfcbbdef7759aa8f6a48', '94f83b59617b9323bbc484d2440b487848291422', '0afc58c9db423313faa0c47021fc7957f4416a11', 'dongle-pairing/operator-review.json', 'physical-mode-battery/calibration-left/acceptance-checkpoint.json'),
-    'right': ('lighting-state-fix/live-candidates/right', 'af47b51428f00c54c16dfd157d46fc7b4bb062b98b6ecd4a626d05511c377d31', 'a8db6c2d190de01b0244ded2fd02e85306d1df1462b13727fd0f8794f1026b35', '1acd812a82e0ae3e99a1d498af52c0e1f37fa916', '33214e095a86e21bac6184ab9e4d3565ba72a849', 'lighting-state-fix/operator-right-review.json', 'vial-battery-review/right-trial/runtime-recovery-observation.json'),
-    'receiver': ('dongle-pairing/live-candidates/receiver', '7199961f706f3b074d03a076944768099b0c47e74b875dce1c7f8b8e4d7bac83', '470e5b718edae54740fc682c0ce28f96c211ac06f0d6afc73e90f3e6c705b438', '94f83b59617b9323bbc484d2440b487848291422', '0afc58c9db423313faa0c47021fc7957f4416a11', 'dongle-pairing/operator-review.json', 'vial-battery-review/receiver-trial/runtime-recovery-observation.json'),
+    'left': ('main-firmware-update/candidates/left', 'c72333620a85e76323225d0d97eb96f69c3448f7102ccfdade8918d5c148bdfb', '9450c8151c2d72107cb42d09aa4c589e6b578faa85a7c1958313d08b52717598', 'fb45eecef29f2a2883f44cd6e28843798238d0a7', '89fead1de856132911ec685313fa88cda0652bac', 'main-firmware-update/operator-review-original-left.json', 'main-firmware-update/candidates/left/runtime-recovery-observation.json'),
+    'right': ('main-firmware-update/candidates/right', 'ce2de33edfcf8f3c896aba71a0a70c77df268628bbbf1599018d3955233a2bc1', '035da3c8b97ec623305db4b10ffa535eacf8ec12f90097c336b14ca0fe934474', 'fb45eecef29f2a2883f44cd6e28843798238d0a7', '89fead1de856132911ec685313fa88cda0652bac', 'main-firmware-update/operator-review.json', 'main-firmware-update/candidates/right/runtime-recovery-observation.json'),
+    'receiver': ('main-firmware-update/candidates/receiver', '3e26410a96d69017bc2ff7c23a45e45a06ad4f93fea6e3c5cd7719dbec7a7c49', '57d62baa2571327505dba502580a8dacc1e7af7b60cfb7c3cdf7345f229c6ccd', 'fb45eecef29f2a2883f44cd6e28843798238d0a7', '89fead1de856132911ec685313fa88cda0652bac', 'main-firmware-update/operator-review.json', 'main-firmware-update/candidates/receiver/runtime-recovery-observation.json'),
 }
 
 
@@ -43,6 +43,8 @@ def verified_pair(root, role, spec):
         raise ValueError(f'{role}: missing hash-bound role-specific review')
     if baseline.get('schema') != 1 or baseline.get('role') != role or baseline.get('candidate_sha256') != uf2_hash or baseline.get('binary_sha256') != bin_hash or baseline.get('operator_sha256') != review.get('operator_sha256'):
         raise ValueError(f'{role}: review does not bind the candidate and original backup')
+    if review.get('baselines', {}).get(role) != digest((base / 'baseline.json').read_bytes()):
+        raise ValueError(f'{role}: review does not bind this baseline record')
     before = (base / 'before-CURRENT.UF2').read_bytes()
     installed = (base / 'installed-CURRENT.UF2').read_bytes()
     if digest(before) != baseline.get('baseline_sha256'):
@@ -68,16 +70,18 @@ def verified_pair(root, role, spec):
     if observed.get('storage_equal') is not storage_preserved:
         raise ValueError(f'{role}: storage observation differs from archived bytes')
     recovery = read_json(root / '.evidence' / recovery_path)
-    recovery_key = {'left': 'companion_runtime_recovery_observed', 'right': 'companion_runtime_recovery_pass', 'receiver': 'actual_companion_receiver_recovery'}[role]
-    if recovery.get('schema') != 1 or recovery.get(recovery_key) is not True:
-        raise ValueError(f'{role}: retained role-specific recovery route unproven')
+    if (recovery.get('schema') != 1 or recovery.get('role') != role
+            or recovery.get('current_image_runtime_recovery') is not True
+            or recovery.get('candidate_sha256') != uf2_hash
+            or recovery.get('installed_readback_sha256') != digest(installed)):
+        raise ValueError(f'{role}: current-image recovery observation is missing or unbound')
     metadata = dict(role=role, layout='ansi', keymap='mac', uf2=f'{role}.uf2', binary=f'{role}.bin', uf2_sha256=uf2_hash, binary_sha256=bin_hash,
                     origin=start, end_exclusive=start + len(padded), binary_size=len(binary),
                     policy='receiver_protected' if role == 'receiver' else f'{role}_startup',
                     source_commit=commit, rmk_revision=revision,
                     battery_calibration='provisional_150_100' if role != 'receiver' else 'none',
                     storage_revision=revision, storage_preserved=storage_preserved,
-                    recovery_evidence='retained_role_specific_route_unchanged', current_image_runtime_recovery=False,
+                    recovery_evidence='current_image_companion_runtime_recovery_observed', current_image_runtime_recovery=True,
                     bootloader='0.9.2-39-g0147d71', board_id='NocFree &', family_id=0x621e937a,
                     softdevice='S140 7.3.0' if role == 'receiver' else 'reclaimed')
     return metadata, uf2, binary

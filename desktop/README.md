@@ -38,9 +38,9 @@ cargo clippy --locked --all-targets -- -D warnings
 cargo fmt --check
 ```
 
-The default local build is ad-hoc signed. Apple Silicon Developer ID signing, notarization and draft releases are prepared in [the release guide](../docs/release.md); credentials and a signing rehearsal remain outstanding. Intel/Windows/Linux acceptance remains separate work.
+The default local build is ad-hoc signed. Apple Silicon Developer ID signing, notarization and draft releases are prepared in [the release guide](../docs/release.md); credentials are provisioned in the protected GitHub release environment. Intel/Windows/Linux acceptance remains separate work.
 
-## Owner acceptance before release
+## Continuing compatibility acceptance
 
 Host tests and a macOS build do not establish a physical roundtrip. Test factory → RMK → factory → RMK with the complete current journeys, partial scopes, relaunch during interrupted work, removable-volume denial/regrant, pairing, first-key wake and all three typing modes. Runtime recovery of each shipped image, including dongle crash recovery, is a separate hardware gate. Never substitute a descriptor match, saved backup or cross-build for those observations.
 
@@ -52,4 +52,4 @@ If Companion hangs, force quit it, reopen it, and export the retained logs. If i
 
 Logs rotate across four files capped at 256 KiB each under `~/Library/Logs/NocFree RMK Companion/`. They record app version, fixed journey states, component and test mode, operation start/completion/failure, USB connection changes and a 30-second heartbeat. Typed input, firmware contents, device identifiers, raw error messages and panic payloads are excluded. An unclean-exit marker is reported on the next launch. A panic hook records a fixed event when possible; native crashes and abrupt termination may leave only the preceding events. A heartbeat gap is diagnostic evidence, not automatic detection or recovery from a hang. Export excludes unrelated files and the running marker. The screenshot is captured only when exporting and may contain visible typing or other information in the app window. If capture is unavailable, logs still export and context.json records that status.
 
-Before public distribution, complete a fresh factory → RMK → factory → RMK round trip, refusal/retry of volume permission, cancellation and interruption checks, current-image independent recovery acceptance, and signed/notarized installation on another Mac. See [release gates](../docs/release.md) for credential, firmware package and license-notice requirements.
+The public preview documents its acceptance limits. Continue testing repeated factory → RMK → factory → RMK round trips, refusal/retry of volume permission, cancellation and interruption, and signed/notarized installation on another Mac before claiming broad compatibility. See [release gates](../docs/release.md) for credential, firmware package and license-notice requirements.

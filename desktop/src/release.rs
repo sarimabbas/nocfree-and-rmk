@@ -11,7 +11,7 @@ use sha2::{Digest, Sha256};
 use std::path::PathBuf;
 use std::path::{Component, Path};
 
-const MANIFEST_SHA256: &str = "f2b333a0060fe2771bbabe16eda08ee976e4a186e482674297dab26110ed1f20";
+const MANIFEST_SHA256: &str = "e9da15aebe486cb879eb62c65628d85d12b33ca587cbb32564c17a0b824d70af";
 const MAX_FILE: u64 = 1024 * 1024;
 
 #[derive(Clone, Debug, Deserialize)]

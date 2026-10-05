@@ -7,9 +7,14 @@ import json
 from pathlib import Path
 import re
 import sys
+import tomllib
 
 ROOT = Path(__file__).resolve().parents[1]
 HASH = re.compile(r"[0-9a-f]{64}\Z")
+SUPPLEMENTARY_TERMS = {
+    'MIT': 'b05785f9f18e6716bab63424b11454513b9943a222595b70411009202fc592b5',
+    'Apache-2.0': '074e6e32c86a4c0ef8b3ed25b721ca23aca83df277cd88106ef7177c354615ff',
+}
 
 
 def digest(data):
@@ -62,6 +67,18 @@ def load_inventory(root):
                 if digest(data) != sha:
                     raise ValueError(f'Notice text checksum mismatch: {sha}')
                 texts[sha] = data.decode('utf-8').replace('\r\n', '\n').replace('\r', '\n')
+            if evidence := package.get('license_evidence'):
+                selected = evidence['selected_license']
+                if selected not in SUPPLEMENTARY_TERMS or evidence['terms']['sha256'] != SUPPLEMENTARY_TERMS[selected]:
+                    raise ValueError('Supplementary license terms must match the audited SPDX text')
+                if not evidence.get('upstream_omission') or not package.get('published_archive_sha256'):
+                    raise ValueError('Supplementary terms require explicit upstream omission and archive provenance')
+                if any(evidence[key] not in package['texts'] for key in ['declaration', 'terms']):
+                    raise ValueError('Supplementary terms require preserved declaration and license text')
+                declaration = tomllib.loads(texts[evidence['declaration']['sha256']])['package']['license']
+                choices = re.split(r'\s+OR\s+|\s*/\s*', declaration)
+                if selected not in choices or declaration != package['license']:
+                    raise ValueError('Selected supplementary license must be declared by the published package')
     return inventory, texts
 
 
@@ -81,6 +98,10 @@ def render(inventory, texts, inventory_only=False):
         parts.append(f'Cargo.lock SHA-256: `{group["cargo_lock_sha256"]}`.\n')
         for package in sorted(group['packages'], key=lambda p: (p['name'], p['version'], p['source'])):
             parts.append(f'\n### {package["name"]} {package["version"]}\n\nDeclared license: {package["license"]}\n\nSource: `{package["source"]}`\n\n')
+            if package.get('notice_context'):
+                parts.append(package['notice_context'] + '\n\n')
+            if evidence := package.get('license_evidence'):
+                parts.append(f'Selected license: {evidence["selected_license"]}. Upstream omission: {evidence["upstream_omission"]}.\n\n')
             for notice in package['texts']:
                 link = f'../docs/notices/texts/{notice["sha256"]}.txt' if inventory_only else f'#notice-{notice["sha256"]}'
                 parts.append(f'- {notice["origin"]} — [full text]({link})\n')

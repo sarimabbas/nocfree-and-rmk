@@ -1,5 +1,13 @@
 # NocFree AND + RMK
 
+## Public preview
+
+[NocFree RMK Companion 0.1.1 for Apple Silicon](https://github.com/sarimabbas/nocfree-and-rmk/releases/tag/v0.1.1) guides firmware backup, RMK installation, factory restoration, recovery and pairing checks. It includes the exact hardware-readback-verified 0.1.1 application images. Back up your keyboard’s original firmware before installing; factory images are not distributed.
+
+See [release notes and known limitations](docs/release-notes/0.1.1.md), [the Companion guide](desktop/README.md) and [TECHNICAL.md](TECHNICAL.md). This is an ANSI NocFree AND preview tested on the maintainer’s Apple Silicon Mac; other revisions and older macOS versions need separate acceptance.
+
+## Earlier bring-up notes
+
 An experimental Rust port for the **ANSI NocFree AND**, using current RMK and a conventional left-central/right-peripheral split. **Basic split typing now works through USB, direct Bluetooth and the original receiver reflashed with RMK on macOS.** Cross-half Shift and owner-assisted Bluetooth/receiver reconnection checks passed. These are functional observations; disconnect/release recovery, simultaneous input, measured wake latency and the full feature set remain unverified.
 
 The earlier [Mac USB diagnostics](docs/mac-mode.md) and factory backups remain available privately. The full half images replace S140 with the current radio stack while preserving the existing bootloader; the receiver preserves its resident S140. See the [left trial](docs/research/full-left-trial-candidate.md), [right trial](docs/research/full-right-trial-candidate.md) and [receiver observations](docs/research/receiver-rmk-plan.md). The optional [framework backlight extension](docs/research/backlight-implementation.md) passed owner checks on both halves: off control, visible dimming, synchronized tap-and-hold ramping, stop on release and typing during a hold. A slight right-side lighting delay was reported; right-restart brightness synchronization and saved brightness across a left restart passed owner checks.
@@ -8,7 +16,7 @@ The target is USB or Bluetooth HID from the left half, Bluetooth split communica
 
 The nRF52833 boards read switches through PCA9555 I²C expanders. One small scanner hides that wiring; RMK owns debounce, key behavior, persistent bonds and transports. Three role-specific builds avoid compiling receiver behavior into the right half. We have not adopted an unconventional cross-half processing protocol.
 
-## Current evidence
+## Earlier evidence
 
 - The full left RMK image passed stable expected USB enumeration, owner-confirmed basic left-key typing, independent recovery and exact application/tail readback. The protected gap is unchanged; the recorded initialization affects only approved settings storage.
 - The full right RMK image passed independent recovery and exact application/tail readback. The protected gap is unchanged. Independent review decoded valid schema and peer-address records in the approved settings region.
