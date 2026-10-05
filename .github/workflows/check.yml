@@ -79,5 +79,7 @@ jobs:
           cargo fmt --check
       - name: Public synthetic image and package guards
         run: python3 -m unittest discover -s tests -v
+      - name: Vial preset guards
+        run: python3 firmware/presets/test_presets.py
       - name: Companion packaging and notice guards
         run: python3 -m unittest discover -s scripts -p 'test_companion_*.py' -v
