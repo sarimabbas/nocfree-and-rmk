@@ -19,6 +19,8 @@ The scanner, default keys, split dimensions and Vial definition share one compil
 
 The mappings in `crates/nocfree-input/src/layout/` use the MIT-licensed [layout definitions from jhkim0218](https://github.com/jhkim0218/Nocfree-and-ZMK-rust/tree/5b0fefcff9af3cc4876bb420f86f6b471eed55ba/src/keymap). KR reads four additional right inputs at `0x21/P0`. Each layout has its own Vial identifier; ANSI keeps its existing identifier and key assignments.
 
+The `.vil` presets in `firmware/presets/` use the ANSI Vial identity and 84-key matrix. Use each other layout's compiled defaults or remap its keys in Vial. Its current Vial drawing is schematic; check key widths and stagger against the physical keyboard before publishing that layout.
+
 Check all mappings and production builds without connecting a keyboard:
 
 ```sh

@@ -448,6 +448,8 @@ impl Companion {
                         return false;
                     }
                     // Status remains live while the backup state machine owns the guide.
+                    this.discovery_seen = result.as_ref().ok().map(|_| Instant::now());
+                    this.latest_discovery = result.as_ref().ok().cloned();
                     this.recovery_locations = recovery_locations;
                     let mut key = result
                         .as_ref()
@@ -476,8 +478,8 @@ impl Companion {
                             this.operation.fail(error);
                         }
                         this.advance(cx);
-                        cx.notify();
                     }
+                    cx.notify();
                     this.backup_state.state() != BackupState::Complete
                 });
                 if running.is_err() {

@@ -388,9 +388,9 @@ impl Session {
             ReturnPhase::Disconnect => (
                 "Unplug the left half".into(),
                 if self.status.starts_with("It stayed in recovery") {
-                    "It stayed in recovery. Leave its switch in WIRED.".into()
+                    "It stayed in recovery. Leave its switch in WIRED, then unplug its USB cable.".into()
                 } else {
-                    "Leave its switch in WIRED.".into()
+                    "Leave its switch in WIRED, then unplug its USB cable.".into()
                 },
             ),
             ReturnPhase::OffWait { since } if self.role == Some(Role::Right) => (
