@@ -1,5 +1,6 @@
 //! Companion's shared recovery, backup and guarded application-update core.
 pub mod completion_gate;
+pub mod diagnostics;
 pub mod firmware_journey;
 pub mod release;
 pub mod runtime_recovery;

@@ -7,7 +7,9 @@ use crate::{
 };
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
-use std::path::{Component, Path, PathBuf};
+#[cfg(any(debug_assertions, test))]
+use std::path::PathBuf;
+use std::path::{Component, Path};
 
 const MANIFEST_SHA256: &str = "f2b333a0060fe2771bbabe16eda08ee976e4a186e482674297dab26110ed1f20";
 const MAX_FILE: u64 = 1024 * 1024;

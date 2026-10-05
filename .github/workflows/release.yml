@@ -1,0 +1,201 @@
+name: Draft macOS release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version to release, without the v prefix
+        required: true
+        type: string
+      firmware_release_tag:
+        description: Same-repository staging release holding companion-firmware.zip
+        required: true
+        type: string
+      firmware_zip_sha256:
+        description: Reviewed SHA256 of the staged firmware ZIP
+        required: true
+        type: string
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  build:
+    if: github.ref == 'refs/heads/main'
+    runs-on: macos-26
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Rust
+        run: |
+          rustup toolchain install 1.98.1 --profile minimal --component rustfmt,clippy
+          rustup default 1.98.1
+
+      - name: Verify requested and project versions
+        id: version
+        env:
+          REQUESTED_VERSION: ${{ inputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo_version="$(cargo metadata --manifest-path desktop/Cargo.toml --locked --no-deps --format-version 1 | python3 -c 'import json,sys; print(next(p["version"] for p in json.load(sys.stdin)["packages"] if p["name"] == "nocfree-companion"))')"
+          [[ "$REQUESTED_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          [[ "$REQUESTED_VERSION" == "$cargo_version" ]]
+          [[ "$(uname -m)" == arm64 ]]
+          if git ls-remote --exit-code --tags origin "refs/tags/v${REQUESTED_VERSION}" >/dev/null 2>&1; then
+            echo "Version v${REQUESTED_VERSION} is already published; release versions are immutable." >&2
+            exit 1
+          fi
+          echo "version=$REQUESTED_VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Test Companion
+        run: |
+          cargo fmt --manifest-path desktop/Cargo.toml --check
+          cargo test --manifest-path desktop/Cargo.toml --locked --lib
+          cargo clippy --manifest-path desktop/Cargo.toml --locked --all-targets -- -D warnings
+
+      - name: Retrieve reviewed firmware input
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FIRMWARE_TAG: ${{ inputs.firmware_release_tag }}
+          FIRMWARE_SHA256: ${{ inputs.firmware_zip_sha256 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$FIRMWARE_TAG" =~ ^[a-zA-Z0-9._-]+$ ]]
+          [[ "$FIRMWARE_SHA256" =~ ^[a-f0-9]{64}$ ]]
+          gh release download "$FIRMWARE_TAG" --repo "$GITHUB_REPOSITORY" --pattern companion-firmware.zip --dir "$RUNNER_TEMP/firmware-input"
+          python3 scripts/unpack_companion_release.py --input "$RUNNER_TEMP/firmware-input/companion-firmware.zip" --sha256 "$FIRMWARE_SHA256" --output dist/companion-firmware
+
+      - name: Build unsigned app with pinned firmware guard
+        env:
+          BUILD_NUMBER: ${{ github.run_number }}
+        run: ./desktop/package-macos.sh
+
+      - name: Pack unsigned app
+        run: ditto -c -k --keepParent "dist/NocFree RMK Companion.app" "$RUNNER_TEMP/nocfree-rmk-companion-unsigned.zip"
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: nocfree-rmk-companion-unsigned-${{ steps.version.outputs.version }}
+          path: ${{ runner.temp }}/nocfree-rmk-companion-unsigned.zip
+          if-no-files-found: error
+          retention-days: 1
+
+  sign-and-publish:
+    needs: build
+    runs-on: macos-26
+    environment: release
+    permissions:
+      contents: write
+    timeout-minutes: 60
+    env:
+      VERSION: ${{ needs.build.outputs.version }}
+
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: nocfree-rmk-companion-unsigned-${{ needs.build.outputs.version }}
+          path: ${{ runner.temp }}/input
+
+      - name: Unpack unsigned app
+        run: ditto -x -k "$RUNNER_TEMP/input/nocfree-rmk-companion-unsigned.zip" "$RUNNER_TEMP/package"
+
+      - name: Import Developer ID certificate
+        env:
+          MACOS_CERTIFICATE_P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          certificate="$RUNNER_TEMP/developer-id.p12"
+          keychain="$RUNNER_TEMP/nocfree-rmk-companion-signing.keychain-db"
+          keychain_password="$(openssl rand -hex 24)"
+          echo "::add-mask::$keychain_password"
+
+          printf '%s' "$MACOS_CERTIFICATE_P12" | base64 -D > "$certificate"
+          security create-keychain -p "$keychain_password" "$keychain"
+          security set-keychain-settings -lut 1800 "$keychain"
+          security unlock-keychain -p "$keychain_password" "$keychain"
+          security import "$certificate" -k "$keychain" -P "$MACOS_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$keychain_password" "$keychain"
+          security list-keychains -d user -s "$keychain" login.keychain-db
+
+          identity="$(security find-identity -v -p codesigning "$keychain" | sed -n 's/.*"\(Developer ID Application:.*\)"/\1/p' | head -1)"
+          [[ -n "$identity" ]]
+          echo "SIGN_IDENTITY=$identity" >> "$GITHUB_ENV"
+          echo "SIGNING_KEYCHAIN=$keychain" >> "$GITHUB_ENV"
+
+      - name: Sign app
+        shell: bash
+        run: |
+          set -euo pipefail
+          app="$RUNNER_TEMP/package/NocFree RMK Companion.app"
+          sign=(--force --sign "$SIGN_IDENTITY" --options runtime --timestamp)
+          codesign "${sign[@]}" "$app/Contents/MacOS/nocfree-companion"
+          codesign "${sign[@]}" "$app"
+          codesign --verify --deep --strict --verbose=2 "$app"
+
+      - name: Notarize and staple
+        env:
+          APPLE_API_PRIVATE_KEY_P8: ${{ secrets.APPLE_API_PRIVATE_KEY_P8 }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          app="$RUNNER_TEMP/package/NocFree RMK Companion.app"
+          key="$RUNNER_TEMP/AuthKey_${APPLE_API_KEY_ID}.p8"
+          submission="$RUNNER_TEMP/nocfree-rmk-companion-notarization.zip"
+          archive="$RUNNER_TEMP/nocfree-rmk-companion-${VERSION}-macos-arm64.zip"
+
+          printf '%s' "$APPLE_API_PRIVATE_KEY_P8" | base64 -D > "$key"
+          chmod 600 "$key"
+          while IFS= read -r line; do
+            [[ -z "$line" ]] || echo "::add-mask::$line"
+          done < "$key"
+
+          ditto -c -k --keepParent "$app" "$submission"
+          xcrun notarytool submit "$submission" \
+            --key "$key" \
+            --key-id "$APPLE_API_KEY_ID" \
+            --issuer "$APPLE_API_ISSUER_ID" \
+            --wait
+          xcrun stapler staple "$app"
+          xcrun stapler validate "$app"
+          ditto -c -k --keepParent "$app" "$archive"
+          codesign --verify --deep --strict --verbose=2 "$app"
+          spctl --assess --type execute --verbose=2 "$app"
+          checksum="${archive}.sha256"
+          (cd "$(dirname "$archive")" && shasum -a 256 "$(basename "$archive")" > "$(basename "$checksum")")
+          echo "ARCHIVE=$archive" >> "$GITHUB_ENV"
+          echo "CHECKSUM=$checksum" >> "$GITHUB_ENV"
+
+      - name: Remove Apple credentials
+        if: always()
+        shell: bash
+        run: |
+          security delete-keychain "${SIGNING_KEYCHAIN:-$RUNNER_TEMP/nocfree-rmk-companion-signing.keychain-db}" 2>/dev/null || true
+          security list-keychains -d user -s login.keychain-db
+          rm -f "$RUNNER_TEMP/developer-id.p12" "$RUNNER_TEMP"/AuthKey_*.p8 "$RUNNER_TEMP/nocfree-rmk-companion-notarization.zip"
+
+      - name: Create draft GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "v${VERSION}" "$ARCHIVE" "$CHECKSUM" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "NocFree RMK Companion ${VERSION}" \
+            --generate-notes --draft \
+            --notes "Draft only: complete fresh-Mac journey acceptance and the desktop/embedded-firmware license-notice audit in docs/release.md before publication."
+

@@ -57,12 +57,27 @@ jobs:
       - name: Build opt-in left blue status indicator
         working-directory: firmware
         run: cargo build --locked --release --bin nocfree-rmk --target thumbv7em-none-eabihf --no-default-features --features defmt-logging,left,mac-keymap,runtime-recovery,reclaimed-softdevice,backlight-active-high,status-led
-      - name: Build opt-in left color mixing trial
-        working-directory: firmware
-        run: cargo build --locked --release --bin nocfree-rmk --target thumbv7em-none-eabihf --no-default-features --features defmt-logging,left,mac-keymap,runtime-recovery,reclaimed-softdevice,backlight-active-high,status-led-mixing
       - name: Build interrupt-driven scanner for both halves
         working-directory: firmware
         run: |
           for role in left right; do
             cargo build --locked --release --bin nocfree-rmk --target thumbv7em-none-eabihf --no-default-features --features defmt-logging,${role},mac-keymap,runtime-recovery,reclaimed-softdevice,backlight-active-high,async-scanner
           done
+
+  companion:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Install pinned desktop toolchain
+        working-directory: desktop
+        run: rustup show active-toolchain
+      - name: Desktop tests and lint
+        working-directory: desktop
+        run: |
+          cargo test --locked
+          cargo clippy --locked --all-targets -- -D warnings
+          cargo fmt --check
+      - name: Public synthetic image and package guards
+        run: python3 -m unittest discover -s tests -v
+      - name: Companion packaging refusal guards
+        run: python3 -m unittest discover -s scripts -p test_companion_ci.py -v

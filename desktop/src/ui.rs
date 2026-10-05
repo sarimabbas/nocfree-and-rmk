@@ -10,6 +10,7 @@ use std::{
 };
 
 use crate::backup_flow::{Event as BackupEvent, Machine as BackupMachine, State as BackupState};
+use crate::diagnostics::{self, Category, Event as DiagnosticEvent};
 use crate::dongle_pairing::{self, Journey as PairingJourney, State as PairingState};
 use crate::flow_presentation::{self, FlowProgress};
 use crate::{
@@ -57,8 +58,21 @@ struct JourneyScreen {
     actions: Option<gpui::Div>,
 }
 
+#[derive(PartialEq, Eq)]
+struct DiagnosticState {
+    page: &'static str,
+    stage: &'static str,
+    busy: bool,
+    usb_parts: u8,
+    next_ready: bool,
+    component: Option<diagnostics::Component>,
+    mode: Option<diagnostics::ConnectionMode>,
+}
+
 pub struct Companion {
     navigation: Navigation,
+    diagnostic_state: Option<DiagnosticState>,
+    diagnostic_heartbeat: Instant,
     peripherals: Option<crate::peripheral_journey::Machine>,
     usb_identification: crate::scope_presence::Identifier,
     appearance_subscription: Option<gpui::Subscription>,
@@ -153,6 +167,12 @@ impl Companion {
             );
             let mut battery_query: Option<BatteryQuery> = None;
             loop {
+                let _ = this.update(cx, |this, _| {
+                    if this.diagnostic_heartbeat.elapsed() >= Duration::from_secs(30) {
+                        diagnostics::event(Category::Health, DiagnosticEvent::Heartbeat);
+                        this.diagnostic_heartbeat = Instant::now();
+                    }
+                });
                 let bluetooth_interval = this
                     .update(cx, |this, _| {
                         if this.install_checks_active() {
@@ -449,6 +469,8 @@ impl Companion {
         });
         Self {
             navigation: Navigation::default(),
+            diagnostic_state: None,
+            diagnostic_heartbeat: Instant::now(),
             peripherals: None,
             usb_identification: crate::scope_presence::Identifier::default(),
             appearance_subscription: None,
@@ -514,6 +536,191 @@ impl Companion {
     fn backup_view(&self) -> Option<View> {
         self.session.as_ref().map(Journey::view)
     }
+    fn record_diagnostics(&mut self) {
+        let page = match self.navigation.page() {
+            Page::Home => "home",
+            Page::Backups => "backup",
+            Page::Recovery => "recovery",
+            Page::Pairing => "pairing",
+            Page::Firmware => "install-rmk",
+            Page::Restore => "restore-factory",
+        };
+        let (stage, ready) = if self.navigation.choosing() {
+            ("choose", self.navigation.draft_scope().is_some())
+        } else if self.navigation.setup() {
+            ("setup", self.navigation.can_start())
+        } else if self.pending_backup.is_some() {
+            ("backup-saved", true)
+        } else if self.pending_recovery.is_some() || self.pending_procedure.is_some() {
+            ("recovery-result", self.recovery_proof_ready())
+        } else if let Some(install) = self.install.as_ref().filter(|install| {
+            (self.firmware_page() || self.factory_pairing_check_active())
+                && !matches!(
+                    install.stage(),
+                    InstallStage::Installing | InstallStage::Pairing
+                )
+        }) {
+            (
+                match install.stage() {
+                    InstallStage::Installing => "installing",
+                    InstallStage::Pairing => "pairing",
+                    InstallStage::Setup(_) => "mode-setup",
+                    InstallStage::Typing(_) => "typing",
+                    InstallStage::Complete => "complete",
+                    InstallStage::Cancelled => "cancelled",
+                    InstallStage::Failed(_) => "failed",
+                },
+                install.can_next(),
+            )
+        } else if let Some(view) = self.firmware_view().filter(|_| {
+            self.firmware_page()
+                && self
+                    .install
+                    .as_ref()
+                    .is_none_or(|install| matches!(install.stage(), InstallStage::Installing))
+        }) {
+            (
+                if view.error.is_some() {
+                    "failed"
+                } else if view.complete {
+                    "complete"
+                } else if view.verification {
+                    "verification"
+                } else if view.can_transfer {
+                    "transfer-ready"
+                } else if view.needs_recovery {
+                    "recovery"
+                } else {
+                    "restart"
+                },
+                self.pending_firmware
+                    .as_ref()
+                    .or(self.firmware.as_ref())
+                    .is_some_and(FirmwareJourney::can_next),
+            )
+        } else if self.navigation.page() == Page::Pairing
+            || (self.firmware_page()
+                && self
+                    .install
+                    .as_ref()
+                    .is_some_and(|install| matches!(install.stage(), InstallStage::Pairing)))
+        {
+            (
+                match self.pairing.state() {
+                    PairingState::Connect => "connect",
+                    PairingState::SwitchMode => "switch-mode",
+                    PairingState::TurnOnRight => "wake-right",
+                    PairingState::Ready => "ready",
+                    PairingState::Pairing => "pairing",
+                    PairingState::Connected => "complete",
+                    PairingState::Failed(_) => "failed",
+                    PairingState::Cancelled => "cancelled",
+                },
+                self.pairing.can_next(),
+            )
+        } else if self.navigation.page() == Page::Recovery {
+            (
+                match self.rescue.state() {
+                    RecoveryState::Choose => "choose",
+                    RecoveryState::Identify(_) => "identify",
+                    RecoveryState::Guiding(_, _) => "recovery",
+                    RecoveryState::Ready(_) => "ready",
+                    RecoveryState::Failed(_, _) => "failed",
+                },
+                matches!(self.rescue.state(), RecoveryState::Ready(_)),
+            )
+        } else {
+            (
+                match self.backup_state.state() {
+                    BackupState::Choose => "choose",
+                    BackupState::Guiding => "guiding",
+                    BackupState::Recovering => "recovery",
+                    BackupState::RecoveryFailed => "recovery-failed",
+                    BackupState::Saving => "saving",
+                    BackupState::Returning => "restart",
+                    BackupState::Paused => "paused",
+                    BackupState::Failed => "failed",
+                    BackupState::Complete => "complete",
+                },
+                self.backup_state.can_next()
+                    || self.session.as_ref().is_some_and(Journey::can_next_return),
+            )
+        };
+        let role =
+            self.firmware_view()
+                .filter(|_| {
+                    self.firmware_page()
+                        && self.install.as_ref().is_none_or(|install| {
+                            matches!(install.stage(), InstallStage::Installing)
+                        })
+                })
+                .map(|view| view.role)
+                .or_else(|| {
+                    if self.navigation.page() == Page::Recovery {
+                        match self.rescue.state() {
+                            RecoveryState::Identify(role)
+                            | RecoveryState::Guiding(role, _)
+                            | RecoveryState::Ready(role)
+                            | RecoveryState::Failed(role, _) => Some(role),
+                            RecoveryState::Choose => None,
+                        }
+                    } else if self.navigation.page() == Page::Backups {
+                        self.pending_backup
+                            .as_ref()
+                            .map(Journey::component)
+                            .or_else(|| self.backup_component())
+                    } else {
+                        None
+                    }
+                });
+        let role = if self.navigation.choosing() || self.navigation.setup() {
+            None
+        } else {
+            self.pending_recovery
+                .as_ref()
+                .map(|(_, role, _)| *role)
+                .or(role)
+        };
+        let component = role.map(|role| match role {
+            RecoveryRole::Left => diagnostics::Component::Left,
+            RecoveryRole::Right => diagnostics::Component::Right,
+            RecoveryRole::Receiver => diagnostics::Component::Dongle,
+        });
+        let mode = self
+            .install
+            .as_ref()
+            .filter(|_| self.install_checks_active())
+            .and_then(|install| match install.stage() {
+                InstallStage::Setup(mode) | InstallStage::Typing(mode) => Some(match mode {
+                    crate::device_status::Mode::Wired => diagnostics::ConnectionMode::Wired,
+                    crate::device_status::Mode::Bluetooth => diagnostics::ConnectionMode::Bluetooth,
+                    crate::device_status::Mode::Dongle => diagnostics::ConnectionMode::Dongle,
+                }),
+                _ => None,
+            });
+        let state = DiagnosticState {
+            page,
+            stage,
+            busy: self.operation.busy(),
+            usb_parts: self.device_key.len().min(3) as u8,
+            next_ready: ready,
+            component,
+            mode,
+        };
+        if self.diagnostic_state.as_ref() != Some(&state) {
+            diagnostics::snapshot(
+                state.page,
+                state.stage,
+                state.busy,
+                state.usb_parts,
+                state.next_ready,
+                state.component,
+                state.mode,
+            );
+            self.diagnostic_state = Some(state);
+        }
+    }
+
     fn firmware_view(&self) -> Option<FirmwareView> {
         displayed_firmware_view(
             self.pending_firmware.as_ref().map(FirmwareJourney::view),
@@ -541,6 +748,7 @@ impl Companion {
         if key == self.device_key {
             return false;
         }
+        diagnostics::event(Category::Device, DiagnosticEvent::ConnectionChanged);
         let replaced = crate::device_status::battery_source(&key)
             != crate::device_status::battery_source(&self.device_key);
         if replaced {
@@ -2810,6 +3018,7 @@ impl Companion {
 impl Render for Companion {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.refresh_scope_presence();
+        self.record_diagnostics();
         if self.appearance_subscription.is_none() {
             Theme::sync_system_appearance(Some(window), cx);
             self.appearance_subscription =

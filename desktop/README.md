@@ -38,8 +38,16 @@ cargo clippy --locked --all-targets -- -D warnings
 cargo fmt --check
 ```
 
-The built app is locally ad-hoc signed, not a public notarized release. Developer ID distribution, portable release-package delivery and Intel/Windows/Linux acceptance remain release work.
+The default local build is ad-hoc signed. Apple Silicon Developer ID signing, notarization and draft releases are prepared in [the release guide](../docs/release.md); credentials and a signing rehearsal remain outstanding. Intel/Windows/Linux acceptance remains separate work.
 
 ## Owner acceptance before release
 
 Host tests and a macOS build do not establish a physical roundtrip. Test factory → RMK → factory → RMK with the complete current journeys, partial scopes, relaunch during interrupted work, removable-volume denial/regrant, pairing, first-key wake and all three typing modes. Runtime recovery of each shipped image, including dongle crash recovery, is a separate hardware gate. Never substitute a descriptor match, saved backup or cross-build for those observations.
+
+## Diagnostics and macOS menus
+
+Help → Show logs opens the local diagnostics folder. Help → Export diagnostic logs creates a ZIP and reveals it in Finder; attach it to a support issue yourself. Nothing is uploaded automatically. The app menu includes About, hide and quit; Edit supplies normal text editing; Window supplies minimize and zoom.
+
+Logs rotate across four files capped at 256 KiB each under `~/Library/Logs/NocFree RMK Companion/`. They record app version, fixed journey states, component and test mode, operation start/completion/failure, USB connection changes and a 30-second heartbeat. Typed input, firmware contents, device identifiers, raw error messages and panic payloads are excluded. An unclean-exit marker is reported on the next launch. A panic hook records a fixed event when possible; native crashes and abrupt termination may leave only the preceding events. A heartbeat gap is diagnostic evidence, not automatic detection or recovery from a hang. Export excludes unrelated files and the running marker.
+
+Before public distribution, complete a fresh factory → RMK → factory → RMK round trip, refusal/retry of volume permission, cancellation and interruption checks, current-image independent recovery acceptance, and signed/notarized installation on another Mac. See [release gates](../docs/release.md) for credential, firmware package and license-notice requirements.

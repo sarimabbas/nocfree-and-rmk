@@ -101,12 +101,24 @@ impl Operation {
             }),
             &mut accepted,
         );
+        if accepted {
+            crate::diagnostics::event(
+                crate::diagnostics::Category::Operation,
+                crate::diagnostics::Event::Started,
+            );
+        }
         accepted.then_some(ticket)
     }
     pub fn complete(&mut self, ticket: Ticket) -> bool {
         let mut accepted = false;
         self.machine
             .handle_with_context(&Event::Complete(ticket), &mut accepted);
+        if accepted {
+            crate::diagnostics::event(
+                crate::diagnostics::Category::Operation,
+                crate::diagnostics::Event::Completed,
+            );
+        }
         accepted
     }
     pub fn error(&self) -> Option<&String> {
@@ -116,6 +128,10 @@ impl Operation {
         }
     }
     pub fn fail(&mut self, message: String) {
+        crate::diagnostics::event(
+            crate::diagnostics::Category::Operation,
+            crate::diagnostics::Event::Failed,
+        );
         self.machine
             .handle_with_context(&Event::Fail(message), &mut false);
     }

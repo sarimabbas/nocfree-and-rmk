@@ -20,11 +20,11 @@ The nRF52833 boards read switches through PCA9555 I²C expanders. One small scan
 
 “No missed keystrokes or input lag” remains an acceptance requirement. RMK currently has six-key ordinary rollover, and split disconnect/reconnect delivery needs deliberate testing. Source compilation and mock tests do not establish physical latency or loss-free operation.
 
-Indicators, physical mode-switch handling, factory web configuration and optional numpad support are pending. Both battery estimates are implemented but uncalibrated. This is not factory feature parity.
+Physical mode-switch routing and temporary connection indicators passed owner-assisted checks on macOS. Factory web configuration and optional numpad support are pending. Both battery estimates are implemented but uncalibrated. This is not factory feature parity.
 
 ## Build, research and recovery
 
-- [Read-only macOS companion prototype](desktop/README.md)
+- [Native macOS Companion and guided firmware journeys](desktop/README.md)
 - [Guided GPUI/gpuikit installer proposal](docs/research/guided-installer-app.md)
 - [Runtime/HAL observations and exact factory restoration](docs/research/runtime-hal-trial.md)
 - [Left migration recovery, failed startup and exact factory restoration](docs/research/left-migration-trial.md)
@@ -47,3 +47,5 @@ Indicators, physical mode-switch handling, factory web configuration and optiona
 - [Physical acceptance requirements](docs/acceptance.md)
 
 Factory firmware and recovery executables stay outside this public repository. Preserve the original recovery ZIP locally. Never flash an oversized diagnostic build, overwrite factory low flash, or replace the bootloader without a verified backup and independent recovery plan.
+
+The Companion whole-keyboard Install RMK journey passed an owner-assisted macOS walkthrough with role-specific readback, normal startup, pairing, and wired/Bluetooth/dongle typing. Repeated factory/RMK round trips, interruption handling and public signed distribution remain separate acceptance gates. See the [macOS release guide](docs/release.md).

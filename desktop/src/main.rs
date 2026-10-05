@@ -1,11 +1,26 @@
-use nocfree_companion::ui;
+use nocfree_companion::{diagnostics, ui};
 
 use gpui_kit::{
     App, AppContext, Bounds, Focusable, KeyBinding, Menu, MenuItem, TitlebarOptions, WindowBounds,
     WindowOptions, actions, px, size,
 };
 
-actions!(nocfree_companion, [Quit]);
+actions!(
+    nocfree_companion,
+    [
+        Quit,
+        About,
+        Hide,
+        HideOthers,
+        ShowAll,
+        Minimize,
+        Zoom,
+        ShowLogs,
+        ExportLogs,
+        Help,
+        ReportIssue
+    ]
+);
 
 fn main() {
     let arguments: Vec<_> = std::env::args_os().skip(1).collect();
@@ -37,14 +52,16 @@ fn main() {
         }
         return;
     }
+    let _ = diagnostics::initialize();
     gpui_kit::application()
         .with_assets(gpui_kit::assets::AllAssets)
         .run(|cx: &mut App| {
             gpui_kit::init(cx);
-            cx.on_action(|_: &Quit, cx| cx.quit());
-            cx.bind_keys([KeyBinding::new("cmd-q", Quit, None)]);
-            cx.set_menus([Menu::new("NocFree RMK Companion")
-                .items([MenuItem::action("Quit NocFree RMK Companion", Quit)])]);
+            configure_menus(cx);
+            cx.on_app_quit(|_| async {
+                diagnostics::shutdown();
+            })
+            .detach();
             gpui_kit::open_window(
                 WindowOptions {
                     window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
@@ -70,6 +87,141 @@ fn main() {
             .expect("could not open NocFree RMK Companion window");
             cx.activate(true);
         });
+}
+
+fn configure_menus(cx: &mut App) {
+    use gpui_kit::component::input::{Copy, Cut, Paste, Redo, SelectAll, Undo};
+    use gpui_kit::{OsAction, SystemMenuType};
+    cx.on_action(|_: &Quit, cx| cx.quit());
+    cx.on_action(|_: &Hide, cx| cx.hide());
+    cx.on_action(|_: &HideOthers, cx| cx.hide_other_apps());
+    cx.on_action(|_: &ShowAll, cx| cx.unhide_other_apps());
+    cx.on_action(|_: &Minimize, cx| {
+        cx.defer(|cx| {
+            if let Some(handle) = cx
+                .active_window()
+                .or_else(|| cx.windows().into_iter().next())
+            {
+                let _ = handle.update(cx, |_, window, _| window.minimize_window());
+            }
+        })
+    });
+    cx.on_action(|_: &Zoom, cx| {
+        cx.defer(|cx| {
+            if let Some(handle) = cx
+                .active_window()
+                .or_else(|| cx.windows().into_iter().next())
+            {
+                let _ = handle.update(cx, |_, window, _| window.zoom_window());
+            }
+        })
+    });
+    cx.on_action(|_: &About, cx| {
+        message(cx, "NocFree RMK Companion", &format!(
+            "Version {}\nInstall RMK, restore your saved firmware, and check your keyboard.\n\nLocal diagnostic logs contain app states and operation progress. Keyboard input and firmware contents are never recorded.", env!("CARGO_PKG_VERSION")));
+    });
+    cx.on_action(|_: &Help, cx| {
+        cx.open_url("https://github.com/sarimabbas/nocfree-and-rmk/blob/main/desktop/README.md")
+    });
+    cx.on_action(|_: &ReportIssue, cx| {
+        cx.open_url("https://github.com/sarimabbas/nocfree-and-rmk/issues/new")
+    });
+    cx.on_action(|_: &ShowLogs, cx| {
+        if let Err(error) = diagnostics::open_logs() {
+            message(cx, "Couldn’t open logs", &error);
+        }
+    });
+    cx.on_action(|_: &ExportLogs, cx| {
+        cx.spawn(async move |cx| {
+            let result = cx
+                .background_executor()
+                .spawn(async { diagnostics::export_logs() })
+                .await;
+            cx.update(|cx| match result {
+                Ok(path) => {
+                    let result = std::process::Command::new("/usr/bin/open")
+                        .arg("-R")
+                        .arg(&path)
+                        .status();
+                    if !result.is_ok_and(|status| status.success()) {
+                        message(
+                            cx,
+                            "Logs exported",
+                            &format!("Your diagnostic ZIP was saved to:\n{}", path.display()),
+                        );
+                    }
+                }
+                Err(error) => message(cx, "Couldn’t export logs", &error),
+            });
+        })
+        .detach();
+    });
+    cx.bind_keys([
+        KeyBinding::new("cmd-q", Quit, None),
+        KeyBinding::new("cmd-h", Hide, None),
+        KeyBinding::new("cmd-alt-h", HideOthers, None),
+        KeyBinding::new("cmd-m", Minimize, None),
+    ]);
+    cx.set_menus([
+        Menu::new("NocFree RMK Companion").items([
+            MenuItem::action("About NocFree RMK Companion", About),
+            MenuItem::separator(),
+            MenuItem::os_submenu("Services", SystemMenuType::Services),
+            MenuItem::separator(),
+            MenuItem::action("Hide NocFree RMK Companion", Hide),
+            MenuItem::action("Hide others", HideOthers),
+            MenuItem::action("Show all", ShowAll),
+            MenuItem::separator(),
+            MenuItem::action("Quit NocFree RMK Companion", Quit),
+        ]),
+        Menu::new("Edit").items([
+            MenuItem::os_action("Undo", Undo, OsAction::Undo),
+            MenuItem::os_action("Redo", Redo, OsAction::Redo),
+            MenuItem::separator(),
+            MenuItem::os_action("Cut", Cut, OsAction::Cut),
+            MenuItem::os_action("Copy", Copy, OsAction::Copy),
+            MenuItem::os_action("Paste", Paste, OsAction::Paste),
+            MenuItem::os_action("Select all", SelectAll, OsAction::SelectAll),
+        ]),
+        Menu::new("Window").items([
+            MenuItem::action("Minimize", Minimize),
+            MenuItem::action("Zoom", Zoom),
+        ]),
+        Menu::new("Help").items([
+            MenuItem::action("NocFree RMK Companion help", Help),
+            MenuItem::separator(),
+            MenuItem::action("Show logs", ShowLogs),
+            MenuItem::action("Export diagnostic logs…", ExportLogs),
+            MenuItem::separator(),
+            MenuItem::action("Report an issue…", ReportIssue),
+        ]),
+    ]);
+}
+
+fn message(cx: &mut App, title: &str, detail: &str) {
+    let title = title.to_owned();
+    let detail = detail.to_owned();
+    // Menu dispatch may already be updating the window. Prompt after that update.
+    cx.defer(move |cx| {
+        if let Some(handle) = cx
+            .active_window()
+            .or_else(|| cx.windows().into_iter().next())
+        {
+            let _ = handle.update(cx, |_, window, cx| {
+                let answer = window.prompt(
+                    gpui_kit::PromptLevel::Info,
+                    &title,
+                    Some(&detail),
+                    &["OK"],
+                    cx,
+                );
+                cx.spawn(async move |_| {
+                    let _ = answer.await;
+                })
+                .detach();
+            });
+        }
+    });
 }
 
 #[cfg(target_os = "macos")]
