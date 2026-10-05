@@ -32,15 +32,13 @@ Before it replaces the software on a part, Companion saves a backup automaticall
 
 ## What works
 
-- [x] Install RMK
-- [x] Return to the original software with your saved backup
-- [x] Type with a USB cable
-- [x] Type with Bluetooth
-- [x] Type with the dongle after installing RMK on it
-- [x] Check both halves and all three connection modes with guided typing tests
-- [x] Change keys
-- [x] Change the backlight brightness with 16 levels
-- [x] See an estimate of each half’s battery level
+- [x] Install RMK (you can restore to original back up as well)
+- [x] Wired/USB mode 
+- [x] Bluetooth mode
+- [x] Dongle mode after installing RMK on it
+- [x] Change keys with Vial
+- [x] Backlight brightness
+- [x] See estimated battery levels
 
 ![Check the keyboard connections](docs/images/check-pairing.png)
 
