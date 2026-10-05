@@ -3084,8 +3084,21 @@ impl Render for Companion {
                             Button::new("companion-update")
                                 .ghost()
                                 .cursor_pointer()
-                                .icon(Icon::new(IconName::Download).text_color(cx.theme().success))
-                                .label("Update available")
+                                .w_full()
+                                .px(px(8.))
+                                .accessibility_label("Update available")
+                                .child(
+                                    div()
+                                        .flex()
+                                        .items_center()
+                                        .w_full()
+                                        .gap(px(8.))
+                                        .child(
+                                            Icon::new(IconName::Download)
+                                                .text_color(cx.theme().success),
+                                        )
+                                        .child("Update available"),
+                                )
                                 .on_click(|_, _, cx| {
                                     cx.open_url(crate::companion_update::DOWNLOAD_URL)
                                 }),
@@ -3095,8 +3108,20 @@ impl Render for Companion {
                         Button::new("star-on-github")
                             .ghost()
                             .cursor_pointer()
-                            .icon(Icon::new(IconName::Star).text_color(gpui::rgb(0xfacc15)))
-                            .label("Star on GitHub")
+                            .w_full()
+                            .px(px(8.))
+                            .accessibility_label("Star on GitHub")
+                            .child(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .w_full()
+                                    .gap(px(8.))
+                                    .child(
+                                        Icon::new(IconName::Star).text_color(gpui::rgb(0xfacc15)),
+                                    )
+                                    .child("Star on GitHub"),
+                            )
                             .on_click(|_, _, cx| {
                                 cx.open_url(crate::companion_update::REPOSITORY_URL)
                             }),
