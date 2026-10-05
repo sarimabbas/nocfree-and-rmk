@@ -316,20 +316,7 @@ impl Companion {
                         }
                     }
                 }
-                let version_idle = this.update(cx, |this, _| {
-                    (!this.backup_state.active())
-                        && !this.operation.busy()
-                        && (this.navigation.setup()
-                            || this.install_checks_active()
-                            || !matches!(
-                                this.navigation.page(),
-                                Page::Firmware | Page::Restore | Page::Pairing
-                            ))
-                        && !matches!(
-                            &this.rescue.state(),
-                            RecoveryState::Identify(_) | RecoveryState::Guiding(_, _)
-                        )
-                });
+                let version_idle = this.update(cx, |this, _| this.version_query_allowed());
                 if matches!(version_idle, Ok(true))
                     && (matches!(this.update(cx, |this, _| this.version_refresh), Ok(true))
                         || version_checked.is_none_or(|t| t.elapsed() >= Duration::from_secs(5)))
@@ -344,17 +331,7 @@ impl Companion {
                     let _ = this.update(cx, |this, cx| {
                         if this.device_generation == generation
                             && this.device_key == key
-                            && (!this.backup_state.active())
-                            && !this.operation.busy()
-                            && (this.navigation.setup()
-                                || !matches!(
-                                    this.navigation.page(),
-                                    Page::Firmware | Page::Restore | Page::Pairing
-                                ))
-                            && !matches!(
-                                &this.rescue.state(),
-                                RecoveryState::Identify(_) | RecoveryState::Guiding(_, _)
-                            )
+                            && this.version_query_allowed()
                         {
                             this.versions_seen = Some(Instant::now());
                             this.version_refresh = false;
@@ -542,6 +519,21 @@ impl Companion {
             self.pending_firmware.as_ref().map(FirmwareJourney::view),
             self.firmware.as_ref().map(FirmwareJourney::view),
             self.operation.firmware_view(),
+        )
+    }
+
+    fn version_query_allowed(&self) -> bool {
+        version_query_allowed(
+            self.operation.busy(),
+            matches!(
+                self.rescue.state(),
+                RecoveryState::Identify(_) | RecoveryState::Guiding(_, _)
+            ),
+            self.backup_state.state(),
+            self.navigation.setup(),
+            self.install_checks_active(),
+            self.navigation.page(),
+            self.firmware_view().as_ref(),
         )
     }
 
@@ -854,6 +846,7 @@ impl Companion {
             {
                 let ticket = self.usb_identification.ticket();
                 let done = matches!(identification, Identification::Complete(_));
+                let ready = done || self.usb_identification.can_next();
                 let message = match identification {
                     Identification::Disconnect(_) => {
                         identification_disconnect_instruction(role, self.scope_presence())
@@ -872,7 +865,7 @@ impl Companion {
                         Some(role),
                         "Identify USB connection",
                         message,
-                        if done {
+                        if ready {
                             None
                         } else {
                             Some(
@@ -880,7 +873,7 @@ impl Companion {
                                     .into_any_element(),
                             )
                         },
-                        done || self.usb_identification.can_next(),
+                        ready,
                         cx,
                     ),
                     actions: Some(
@@ -905,9 +898,8 @@ impl Companion {
                             )
                             .when(true, |row| {
                                 row.child(
-                                    button("identify-next", "Next")
-                                        .disabled(!done && !self.usb_identification.can_next())
-                                        .on_click(cx.listener(move |this, _, _, cx| {
+                                    button("identify-next", "Next").disabled(!ready).on_click(
+                                        cx.listener(move |this, _, _, cx| {
                                             if this.usb_identification.ticket() == ticket {
                                                 if done {
                                                     this.usb_identification.cancel();
@@ -917,7 +909,8 @@ impl Companion {
                                                 this.refresh_scope_presence();
                                                 cx.notify();
                                             }
-                                        })),
+                                        }),
+                                    ),
                                 )
                             }),
                     ),
@@ -1378,6 +1371,18 @@ impl Companion {
             self.backup_view()
                 .map_or_else(|| "Keep USB connected.".into(), |v| v.instruction)
         };
+        let ready = complete
+            || self.backup_state.failed()
+            || !self.operation.busy()
+                && (self.backup_state.can_next()
+                    || self.session.as_ref().is_some_and(Journey::can_next_return)
+                    || self.backup_view().is_some_and(|v| v.can_save)
+                    || (self
+                        .session
+                        .as_ref()
+                        .is_some_and(|j| j.state() == crate::journey::State::Guiding)
+                        && self.rescue_cancel.is_none())
+                    || self.backup_state.state() == BackupState::Complete);
         let mut screen = recovery_guide_status(
             self.backup_component(),
             title,
@@ -1407,23 +1412,13 @@ impl Companion {
                     .on_click(cx.listener(|this, _, _, cx| this.retry(cx))),
             )
         } else {
-            let ready = !self.operation.busy()
-                && (self.backup_state.can_next()
-                    || self.session.as_ref().is_some_and(Journey::can_next_return)
-                    || self.backup_view().is_some_and(|v| v.can_save)
-                    || (self
-                        .session
-                        .as_ref()
-                        .is_some_and(|j| j.state() == crate::journey::State::Guiding)
-                        && self.rescue_cancel.is_none())
-                    || self.backup_state.state() == BackupState::Complete);
             Some(
                 button("backup-step-next", "Next")
                     .disabled(!ready)
                     .on_click(cx.listener(|this, _, _, cx| this.manual_next(cx))),
             )
         };
-        if next.is_none() {
+        if !ready {
             screen = screen.child(waiting_indicator(
                 if self.operation.busy() {
                     "Saving your firmware copy…"
@@ -1565,22 +1560,23 @@ impl Companion {
     }
     fn recovery_screen(&self, cx: &mut Context<Self>) -> JourneyScreen {
         if let Some(batch) = self.peripherals.as_ref().filter(|b| b.waiting_detach()) {
+            let ready = batch.can_next();
             return JourneyScreen {
                 body: recovery_guide(
                     batch.role(),
                     "Unplug this part",
                     "Unplug its USB cable, then click Next.",
-                    Some(
+                    (!ready).then(|| {
                         self.recovery_waiting("Waiting for USB to disconnect…", cx)
-                            .into_any_element(),
-                    ),
+                            .into_any_element()
+                    }),
                     cx,
                 ),
                 actions: Some(
                     self.footer(
                         Some(
                             button("detach-next", "Next")
-                                .disabled(!batch.can_next())
+                                .disabled(!ready)
                                 .on_click(cx.listener(|this, _, _, cx| {
                                     let role = this.peripherals.as_mut().and_then(|batch| {
                                         if batch.next(batch.ticket()) {
@@ -1616,10 +1612,10 @@ impl Companion {
                     Some(role),
                     "Connect your device",
                     crate::recovery_journey::instruction(role),
-                    Some(
+                    (!recovery_ready).then(|| {
                         self.recovery_waiting("Checking its firmware…", cx)
-                            .into_any_element(),
-                    ),
+                            .into_any_element()
+                    }),
                     recovery_ready,
                     cx,
                 ),
@@ -1630,7 +1626,7 @@ impl Companion {
                     Some(role),
                     "Open the recovery drive",
                     procedure.instruction(role),
-                    Some(
+                    (!recovery_ready).then(|| {
                         self.recovery_waiting(
                             if procedure == crate::recovery_journey::Procedure::Reconnect {
                                 "Watching USB connections…"
@@ -1639,8 +1635,8 @@ impl Companion {
                             },
                             cx,
                         )
-                        .into_any_element(),
-                    ),
+                        .into_any_element()
+                    }),
                     recovery_ready,
                     cx,
                 ),
@@ -2134,7 +2130,7 @@ impl Companion {
                 Some("Waiting for the keyboard…"),
             ),
             PairingState::TurnOnRight => (
-                "Turn the right half on and keep it near the left half. They connect automatically.",
+                "Turn the right half ON and press any key to wake it. Keep it near the left half; they connect automatically.",
                 Some("Waiting for the right half…"),
             ),
             PairingState::SwitchMode => (
@@ -2206,19 +2202,21 @@ impl Companion {
                 ) || self.pairing.can_next(),
                 cx,
             ));
-        if let Some(label) = waiting {
+        let ready = !self.operation.busy()
+            && (self.pairing.can_next()
+                || matches!(
+                    self.pairing.state(),
+                    PairingState::Ready | PairingState::Connected | PairingState::Failed(_)
+                ));
+        if let Some(label) = waiting.and_then(|label| pending_wait_label(ready, label)) {
             body = body.child(waiting_indicator(label, cx));
         }
         let generation = self.pairing_generation;
         let standalone = self.navigation.page() == Page::Pairing;
-        let ready = self.pairing.can_next()
-            || matches!(
-                self.pairing.state(),
-                PairingState::Ready | PairingState::Connected | PairingState::Failed(_)
-            );
+
         let next = Some(
             button("pairing-step-next", "Next")
-                .disabled(!ready || self.operation.busy())
+                .disabled(!ready)
                 .on_click(cx.listener(move |this, _, _, cx| {
                     if this.operation.busy()
                         || !this.pairing_active()
@@ -2541,8 +2539,15 @@ impl Companion {
                     .firmware
                     .as_ref()
                     .is_some_and(FirmwareJourney::can_next));
-        if self.operation.busy() {
-            body = body.child(waiting_indicator("Working…", cx));
+        if !ready {
+            body = body.child(waiting_indicator(
+                if self.operation.busy() {
+                    "Working…"
+                } else {
+                    "Waiting for the keyboard…"
+                },
+                cx,
+            ));
         }
         let next = Some(
             button("firmware-step-next", "Next")
@@ -3428,5 +3433,107 @@ mod firmware_presentation_tests {
                 .step,
             1
         );
+    }
+}
+
+fn version_query_allowed(
+    busy: bool,
+    recovering: bool,
+    backup: BackupState,
+    setup: bool,
+    checking: bool,
+    page: Page,
+    firmware: Option<&FirmwareView>,
+) -> bool {
+    !busy
+        && !recovering
+        && (!backup.active() || backup == BackupState::Returning)
+        && (setup
+            || checking
+            || firmware.is_some_and(|v| !v.needs_recovery && !v.can_transfer)
+            || !matches!(page, Page::Firmware | Page::Restore | Page::Pairing))
+}
+fn pending_wait_label(next_enabled: bool, label: &'static str) -> Option<&'static str> {
+    (!next_enabled).then_some(label)
+}
+#[cfg(test)]
+mod readiness_presentation_tests {
+    use super::*;
+    #[test]
+    fn observed_disconnect_enables_next_and_removes_waiting() {
+        let mut identification = crate::scope_presence::Identifier::default();
+        identification.start(RecoveryRole::Left);
+        assert!(pending_wait_label(identification.can_next(), "Watching USB…").is_some());
+        identification.observe(identification.ticket(), &vec![], true);
+        assert!(identification.can_next());
+        assert_eq!(
+            pending_wait_label(identification.can_next(), "Watching USB…"),
+            None
+        );
+        identification.observe(identification.ticket(), &vec![], false);
+        assert!(pending_wait_label(identification.can_next(), "Watching USB…").is_some());
+    }
+    #[test]
+    fn version_reads_remain_allowed_during_normal_return_and_mode_checks() {
+        let mut normal = FirmwareJourney::new(crate::release::fixture()).view();
+        normal.needs_recovery = false;
+        normal.can_transfer = false;
+        assert!(version_query_allowed(
+            false,
+            false,
+            BackupState::Choose,
+            false,
+            false,
+            Page::Firmware,
+            Some(&normal)
+        ));
+        assert!(version_query_allowed(
+            false,
+            false,
+            BackupState::Choose,
+            false,
+            true,
+            Page::Restore,
+            None
+        ));
+        assert!(!version_query_allowed(
+            true,
+            false,
+            BackupState::Choose,
+            false,
+            true,
+            Page::Restore,
+            None
+        ));
+        assert!(!version_query_allowed(
+            false,
+            true,
+            BackupState::Choose,
+            false,
+            true,
+            Page::Restore,
+            None
+        ));
+        normal.needs_recovery = true;
+        assert!(!version_query_allowed(
+            false,
+            false,
+            BackupState::Choose,
+            false,
+            false,
+            Page::Firmware,
+            Some(&normal)
+        ));
+        normal.needs_recovery = false;
+        normal.can_transfer = true;
+        assert!(!version_query_allowed(
+            false,
+            false,
+            BackupState::Choose,
+            false,
+            false,
+            Page::Firmware,
+            Some(&normal)
+        ));
     }
 }
