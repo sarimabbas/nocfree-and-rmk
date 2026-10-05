@@ -32,10 +32,10 @@ Before it replaces the software on a part, Companion saves a backup automaticall
 
 ## Features
 
-- [x] Install RMK (you can restore to original back up as well)
-- [x] Wired/USB mode 
-- [x] Bluetooth mode
-- [x] Dongle mode after installing RMK on it
+- [x] Install RMK and restore the original software from your backup
+- [x] Choose and remember your keyboard layout
+- [x] Type through USB, Bluetooth or the RMK dongle
+- [x] Check both halves with guided typing tests
 - [x] Change keys with Vial
 - [x] Backlight brightness
 - [x] See estimated battery levels
@@ -46,7 +46,7 @@ The left switch selects the connection: **top = dongle**, **middle = USB**, **bo
 
 ## Comparison to other firmware
 
-All options are good!
+These projects offer different ways to use the NocFree AND keyboard.
 
 | Feature | RMK Companion | [Nocfree-and-ZMK-rust](https://github.com/jhkim0218/Nocfree-and-ZMK-rust) | [NocFree-and-zmk](https://github.com/NocFreeKB/NocFree-and-zmk) |
 | --- | --- | --- | --- |
@@ -55,7 +55,7 @@ All options are good!
 | Dongle typing | Yes, with RMK dongle firmware | Yes, with Rust dongle firmware | Not included |
 | Change keys | Vial | NocFree Link | Edit the keymap file and rebuild |
 | Backlight brightness | 16 levels | Off and five brightness levels | Not included |
-| Keyboard layouts | ANSI | ANSI and KR; ISO and JIS test builds | ANSI |
+| Keyboard layouts | ANSI in the app; ISO, JIS and KR [test builds](TECHNICAL.md#physical-layouts) | ANSI and KR; ISO and JIS test builds | ANSI |
 
 ## Need help?
 
