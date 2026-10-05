@@ -158,7 +158,7 @@ Status separates USB power, selected connection policy, active typing route and 
 
 ## Diagnostics and bug reports
 
-**Help → Show logs** opens local logs. **Help → Export diagnostic logs** saves a ZIP with fixed-state events and an app-window screenshot when capture is available. No automatic upload occurs. Review the screenshot before attaching the ZIP to an issue.
+**Help → Show logs** opens local logs. **Help → Export diagnostic logs** saves a ZIP with fixed-state events and an app-window screenshot when capture is available.
 
 Logs rotate across four files capped at 256 KiB each. They record version, journey state, part and test mode, operation outcomes, USB changes and a 30-second heartbeat. Typed text, firmware bytes, raw error/panic payloads and device identifiers are excluded. An unclean-exit marker is reported on the next successful launch. A heartbeat gap helps diagnose a hang; it is not automatic recovery.
 

@@ -24,8 +24,6 @@ On Mac, you can also use Homebrew:
 brew install --cask sarimabbas/tap/nocfree-rmk-companion
 ```
 
-This is an early release for the ANSI NocFree AND. The keyboard and app have been tested on Mac. Windows and Linux need more testing.
-
 ## Start here
 
 1. Connect both keyboard halves and the dongle to your computer with USB.
@@ -57,8 +55,8 @@ The left switch selects the connection: **top = dongle**, **middle = USB**, **bo
 
 ## Need help?
 
-If you need help, use **Help → Export diagnostic logs** to save a ZIP file. Check its contents and screenshot before you attach it to a [problem report](https://github.com/sarimabbas/nocfree-and-rmk/issues/new/choose). Companion does not send the file for you.
+If you need help, use **Help → Export diagnostic logs** to save a ZIP file. Attach it to a [problem report](https://github.com/sarimabbas/nocfree-and-rmk/issues/new/choose).
 
 For code, builds, recovery details and known limits, see [TECHNICAL.md](TECHNICAL.md).
 
-This community project is not made or supported by NocFree. Its code uses the [MIT license](LICENSE), and other included code keeps its own license.
+Project code uses the [MIT license](LICENSE), and other included code keeps its own license.

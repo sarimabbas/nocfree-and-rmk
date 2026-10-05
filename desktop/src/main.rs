@@ -124,8 +124,14 @@ fn configure_menus(cx: &mut App) {
         })
     });
     cx.on_action(|_: &About, cx| {
-        message(cx, "NocFree RMK Companion", &format!(
-            "Version {}\nInstall RMK, restore your saved firmware, and check your keyboard.\n\nLocal diagnostic logs contain app states and operation progress. Logs omit keyboard input and firmware contents. Exporting logs also attaches an app-window screenshot, which can include visible typing and paths. Review the ZIP before sharing.", env!("CARGO_PKG_VERSION")));
+        message(
+            cx,
+            "NocFree RMK Companion",
+            &format!(
+                "Version {}\nInstall RMK, restore your saved firmware, and check your keyboard.",
+                env!("CARGO_PKG_VERSION")
+            ),
+        );
     });
     cx.on_action(|_: &Help, cx| {
         cx.open_url("https://github.com/sarimabbas/nocfree-and-rmk/blob/main/README.md")

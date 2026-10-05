@@ -100,10 +100,9 @@ jobs:
           Manage your NocFree keyboard with Companion.
 
           Downloads: macOS Apple Silicon, Windows x86-64, and Linux x86-64.
-          macOS is signed and notarized. Windows and Linux are preview builds:
-          they have passed build tests but still need keyboard tests on those systems.
+          The macOS app is signed and notarized.
           See README.md for features and TECHNICAL.md for platform requirements.
-          Export logs from Help if you need support. Review the ZIP before sharing it.
+          Export logs from Help and attach the ZIP to your issue if you need support.
           NOTES
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

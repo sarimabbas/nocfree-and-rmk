@@ -5,7 +5,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        In Companion, select **Help → Export diagnostic logs**. Open the ZIP and review its screenshot before sharing it. Remove private information. Do not attach firmware backups or passwords.
+        In Companion, select **Help → Export diagnostic logs**. Attach the ZIP file to this report.
   - type: input
     id: version
     attributes:
@@ -37,6 +37,6 @@ body:
     id: logs
     attributes:
       label: Exported logs
-      description: Drag the reviewed diagnostic ZIP here. If export failed, explain what happened and add a screenshot with private details removed.
+      description: Drag the diagnostic ZIP here. If export failed, explain what happened and add a screenshot.
     validations:
       required: true
