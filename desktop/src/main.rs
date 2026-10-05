@@ -1,3 +1,5 @@
+mod window_capture;
+
 use nocfree_companion::{diagnostics, ui};
 
 use gpui_kit::{
@@ -118,7 +120,7 @@ fn configure_menus(cx: &mut App) {
     });
     cx.on_action(|_: &About, cx| {
         message(cx, "NocFree RMK Companion", &format!(
-            "Version {}\nInstall RMK, restore your saved firmware, and check your keyboard.\n\nLocal diagnostic logs contain app states and operation progress. Keyboard input and firmware contents are never recorded.", env!("CARGO_PKG_VERSION")));
+            "Version {}\nInstall RMK, restore your saved firmware, and check your keyboard.\n\nLocal diagnostic logs contain app states and operation progress. Logs omit keyboard input and firmware contents. Exporting logs also attaches an app-window screenshot, which can include visible typing and paths. Review the ZIP before sharing.", env!("CARGO_PKG_VERSION")));
     });
     cx.on_action(|_: &Help, cx| {
         cx.open_url("https://github.com/sarimabbas/nocfree-and-rmk/blob/main/desktop/README.md")
@@ -132,29 +134,42 @@ fn configure_menus(cx: &mut App) {
         }
     });
     cx.on_action(|_: &ExportLogs, cx| {
-        cx.spawn(async move |cx| {
-            let result = cx
-                .background_executor()
-                .spawn(async { diagnostics::export_logs() })
-                .await;
-            cx.update(|cx| match result {
-                Ok(path) => {
-                    let result = std::process::Command::new("/usr/bin/open")
-                        .arg("-R")
-                        .arg(&path)
-                        .status();
-                    if !result.is_ok_and(|status| status.success()) {
-                        message(
-                            cx,
-                            "Logs exported",
-                            &format!("Your diagnostic ZIP was saved to:\n{}", path.display()),
-                        );
+        // Menu dispatch may already be updating the window. Capture on the UI
+        // thread after that update, before moving PNG bytes to the background.
+        cx.defer(|cx| {
+            let screenshot = cx
+                .active_window()
+                .or_else(|| cx.windows().into_iter().next())
+                .ok_or_else(|| "Window unavailable.".to_owned())
+                .and_then(|handle| {
+                    handle
+                        .update(cx, |_, window, _| window_capture::capture(window))
+                        .map_err(|_| "Window unavailable.".to_owned())?
+                });
+            cx.spawn(async move |cx| {
+                let result = cx
+                    .background_executor()
+                    .spawn(async move { diagnostics::export_logs(screenshot) })
+                    .await;
+                cx.update(|cx| match result {
+                    Ok(path) => {
+                        let result = std::process::Command::new("/usr/bin/open")
+                            .arg("-R")
+                            .arg(&path)
+                            .status();
+                        if !result.is_ok_and(|status| status.success()) {
+                            message(
+                                cx,
+                                "Logs exported",
+                                &format!("Your diagnostic ZIP was saved to:\n{}", path.display()),
+                            );
+                        }
                     }
-                }
-                Err(error) => message(cx, "Couldn’t export logs", &error),
-            });
-        })
-        .detach();
+                    Err(error) => message(cx, "Couldn’t export logs", &error),
+                });
+            })
+            .detach();
+        });
     });
     cx.bind_keys([
         KeyBinding::new("cmd-q", Quit, None),

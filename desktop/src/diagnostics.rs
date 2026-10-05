@@ -265,9 +265,18 @@ pub fn open_logs() -> Result<(), String> {
         .map(|_| ())
         .ok_or("Could not open the diagnostics folder.".into())
 }
+#[cfg(test)]
 fn export_with(
     logger: &Logger,
     destination: &Path,
+    archive: impl FnOnce(&Path, &Path) -> Result<(), String>,
+) -> Result<PathBuf, String> {
+    export_with_screenshot(logger, destination, Err("Unavailable".into()), archive)
+}
+fn export_with_screenshot(
+    logger: &Logger,
+    destination: &Path,
+    screenshot: Result<Vec<u8>, String>,
     archive: impl FnOnce(&Path, &Path) -> Result<(), String>,
 ) -> Result<PathBuf, String> {
     private_directory(destination)?;
@@ -318,7 +327,21 @@ fn export_with(
             .and_then(|o| String::from_utf8(o.stdout).ok())
             .map(|v| v.trim().to_owned())
             .filter(|v| v.len() < 32 && v.bytes().all(|b| b.is_ascii_digit() || b == b'.'));
-        let context = serde_json::json!({"app_version":env!("CARGO_PKG_VERSION"), "os":std::env::consts::OS, "architecture":std::env::consts::ARCH, "os_version":os_version});
+        let screenshot_status = match screenshot {
+            Ok(bytes)
+                if bytes.starts_with(b"\x89PNG\r\n\x1a\n") && bytes.len() <= 16 * 1024 * 1024 =>
+            {
+                let path = staging.join("app-window.png");
+                if private_write(&path, &bytes).is_ok() {
+                    "captured"
+                } else {
+                    let _ = fs::remove_file(path);
+                    "unavailable"
+                }
+            }
+            _ => "unavailable",
+        };
+        let context = serde_json::json!({"screenshot": screenshot_status,"app_version":env!("CARGO_PKG_VERSION"), "os":std::env::consts::OS, "architecture":std::env::consts::ARCH, "os_version":os_version});
         private_write(
             &staging.join("context.json"),
             &serde_json::to_vec_pretty(&context)
@@ -340,7 +363,7 @@ fn export_with(
     }
     result
 }
-pub fn export_logs() -> Result<PathBuf, String> {
+pub fn export_logs(screenshot: Result<Vec<u8>, String>) -> Result<PathBuf, String> {
     let logger = LOGGER
         .get()
         .ok_or("Diagnostics are unavailable.")?
@@ -354,7 +377,7 @@ pub fn export_logs() -> Result<PathBuf, String> {
     if destination.exists() {
         return Err("A support export already exists. Try again in a moment.".into());
     }
-    export_with(&logger, &destination, |source, destination| {
+    export_with_screenshot(&logger, &destination, screenshot, |source, destination| {
         Command::new("/usr/bin/ditto")
             .args(ARCHIVE_OPTIONS)
             .arg(source)
@@ -561,6 +584,32 @@ mod tests {
             );
         }
         fs::remove_dir_all(destination).unwrap();
+        fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn screenshot_is_bounded_and_failure_keeps_logs_exportable() {
+        let root = temporary();
+        let logger = start_logger(root.clone()).unwrap();
+        for screenshot in [
+            Ok(b"\x89PNG\r\n\x1a\nfixture".to_vec()),
+            Err("PRIVATE ERROR".into()),
+            Ok(vec![0; 17 * 1024 * 1024]),
+        ] {
+            let expected = screenshot.as_ref().is_ok_and(|bytes| {
+                bytes.starts_with(b"\x89PNG") && bytes.len() <= 16 * 1024 * 1024
+            });
+            let destination = temporary();
+            export_with_screenshot(&logger, &destination, screenshot, |staging, archive| {
+                assert_eq!(staging.join("app-window.png").exists(), expected);
+                let context = fs::read_to_string(staging.join("context.json")).unwrap();
+                assert!(context.contains(if expected { "captured" } else { "unavailable" }));
+                assert!(!context.contains("PRIVATE"));
+                fs::write(archive, b"fixture").unwrap();
+                Ok(())
+            })
+            .unwrap();
+            fs::remove_dir_all(destination).unwrap();
+        }
         fs::remove_dir_all(root).unwrap();
     }
     #[test]
