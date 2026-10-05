@@ -138,5 +138,23 @@ class NoticesTests(unittest.TestCase):
                     notices.load_inventory(self.root)
 
 
+    def test_cc0_omission_preserves_declaration_and_only_exact_canonical_terms(self):
+        actual, _ = notices.load_inventory(notices.ROOT)
+        package = next(p for p in actual['desktop']['packages']
+                       if p.get('license_evidence', {}).get('selected_license') == 'CC0-1.0')
+        self.inventory['desktop']['packages'] = [copy.deepcopy(package)]
+        for notice in package['texts']:
+            source = notices.ROOT / 'docs/notices' / notice['file']
+            (self.root / 'docs/notices' / notice['file']).write_bytes(source.read_bytes())
+        self.save()
+        inventory, texts = notices.load_inventory(self.root)
+        full, gaps = notices.render(inventory, texts)
+        self.assertFalse(gaps)
+        self.assertIn('Selected license: CC0-1.0', full)
+        self.inventory['desktop']['packages'][0]['license'] = 'MIT'
+        self.save()
+        with self.assertRaisesRegex(ValueError, 'declared by the published package'):
+            notices.load_inventory(self.root)
+
 if __name__ == '__main__':
     unittest.main()

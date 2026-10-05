@@ -12,6 +12,7 @@ import tomllib
 ROOT = Path(__file__).resolve().parents[1]
 HASH = re.compile(r"[0-9a-f]{64}\Z")
 SUPPLEMENTARY_TERMS = {
+    'CC0-1.0': 'a2010f343487d3f7618affe54f789f5487602331c0a8d03f49e9a7c547cf0499',
     'MIT': 'b05785f9f18e6716bab63424b11454513b9943a222595b70411009202fc592b5',
     'Apache-2.0': '074e6e32c86a4c0ef8b3ed25b721ca23aca83df277cd88106ef7177c354615ff',
 }
