@@ -2756,6 +2756,7 @@ dependencies = [
  "base64 0.22.1",
  "bytes",
  "encoding_rs",
+ "futures-channel",
  "futures-core",
  "futures-util",
  "h2",
@@ -4217,9 +4218,10 @@ dependencies = [
 
 [[package]]
 name = "nocfree-companion"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "gpui-kit",
+ "gpui-pre-reqwest",
  "hidapi",
  "nusb",
  "objc2-app-kit 0.2.2",

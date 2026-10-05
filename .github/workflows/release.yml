@@ -121,7 +121,9 @@ jobs:
           cp "$RUNNER_TEMP/firmware-input/companion-firmware.zip" "$RUNNER_TEMP/release-input/companion-firmware.zip"
           ditto -c -k --keepParent "dist/NocFree RMK Companion.app" "$RUNNER_TEMP/release-input/nocfree-rmk-companion-unsigned.zip"
           cat > "$RUNNER_TEMP/release-input/${VERSION}.md" <<'NOTES'
-          Save your keyboard software, install RMK, change keys and check each connection mode.
+          Companion now shows an Update available link when a newer version is ready. Select it to open the GitHub download page.
+
+          Use Star on GitHub at the bottom of the sidebar to visit the project.
 
           Download the app for Mac with Apple Silicon, Windows or Linux. On Mac and Windows, open the ZIP file. On Linux, extract the archive and follow README.txt.
 

@@ -122,6 +122,8 @@ pub struct Companion {
     bluetooth_seen: Option<Instant>,
     recovery_locations: [Option<u64>; 3],
     focus_handle: FocusHandle,
+    update_available: bool,
+    _update_check: Task<()>,
     _poll: Task<()>,
 }
 
@@ -137,6 +139,18 @@ impl Drop for Companion {
 impl Companion {
     pub fn new(cx: &mut Context<Self>) -> Self {
         Theme::sync_system_appearance(None, cx);
+        let update_check = cx.spawn(async move |this, cx| {
+            let available = cx
+                .background_executor()
+                .spawn(async { crate::companion_update::check().is_some() })
+                .await;
+            if available {
+                let _ = this.update(cx, |this, cx| {
+                    this.update_available = true;
+                    cx.notify();
+                });
+            }
+        });
         let session = Journey::backup();
         let poll = cx.spawn(async move |this, cx| {
             let bundled = cx
@@ -516,6 +530,8 @@ impl Companion {
             bluetooth_seen: None,
             recovery_locations: [None; 3],
             focus_handle: cx.focus_handle(),
+            update_available: false,
+            _update_check: update_check,
             _poll: poll,
         }
     }
@@ -3056,6 +3072,36 @@ impl Render for Companion {
                     .py(px(16.))
                     .font_weight(FontWeight::SEMIBOLD)
                     .child("NocFree RMK Companion"),
+            )
+            .footer(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(12.))
+                    .w_full()
+                    .when(self.update_available, |footer| {
+                        footer.child(
+                            div()
+                                .id("companion-update")
+                                .cursor_pointer()
+                                .text_color(cx.theme().success)
+                                .underline()
+                                .child("Update available")
+                                .on_click(|_, _, cx| {
+                                    cx.open_url(crate::companion_update::DOWNLOAD_URL)
+                                }),
+                        )
+                    })
+                    .child(
+                        Button::new("star-on-github")
+                            .ghost()
+                            .cursor_pointer()
+                            .icon(Icon::new(IconName::Star).text_color(gpui::rgb(0xfacc15)))
+                            .label("Star on GitHub")
+                            .on_click(|_, _, cx| {
+                                cx.open_url(crate::companion_update::REPOSITORY_URL)
+                            }),
+                    ),
             )
             .child(tasks)
             .child(

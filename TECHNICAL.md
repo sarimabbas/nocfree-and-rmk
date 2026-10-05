@@ -111,6 +111,8 @@ Check pairing reads the connection state. Repair clears and replaces the dongle 
 
 Whole-keyboard installation ends with wired, Bluetooth and dongle typing checks. The test `qwert HJKL h` exercises left input, right input, cross-half Shift and modifier release.
 
+Companion checks the latest public GitHub release once at startup. A newer stable app version shows an Update available link in the sidebar. The request runs in the background with a ten-second timeout; failed checks leave the app usable.
+
 ## Build and test
 
 Install Rust through rustup and use the checked-in toolchains. Firmware also needs Arm GNU bare-metal GCC with newlib headers. Linux CI uses `gcc-arm-none-eabi` and `libnewlib-arm-none-eabi`. The P-256 dependency uses the Arm compiler.

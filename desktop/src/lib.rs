@@ -48,3 +48,5 @@ mod peripheral_journey;
 pub mod scope;
 
 mod scope_presence;
+
+mod companion_update;
