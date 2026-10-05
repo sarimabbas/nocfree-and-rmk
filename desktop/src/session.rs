@@ -487,10 +487,10 @@ impl Session {
             Some(Role::Receiver) if !identified => "Plug in the USB dongle. Leave the keyboard halves disconnected from USB.".into(),
             _ if waiting_drive => "Keep the cable connected.".into(),
             _ if !self.connection_present => "Reconnect using the same USB port.".into(),
-            Some(Role::Left) if self.rmk_left => "Use the recovery procedure for your installed firmware, keeping the same USB port.".into(),
+            Some(Role::Left) if self.rmk_left => "Keep USB connected. Click Next to let Companion open recovery.".into(),
             Some(Role::Left) => "Leave USB connected and the switch in WIRED. Hold Fn + 5 for five seconds, then release.".into(),
             Some(Role::Right) if self.factory_right => "Keep the paired factory left half connected by USB in WIRED and right USB connected. Hold Fn + 0 for five seconds, then release.".into(),
-            Some(Role::Right) => "Leave USB connected. Hold Fn, tap the main-row 0 key, then release Fn.".into(),
+            Some(Role::Right) => "Keep USB connected. Click Next to let Companion open recovery.".into(),
             Some(Role::Receiver)=>"Keep the dongle connected. Companion will guide you into recovery.".into(),
         };
         let return_instruction = self.return_instruction(Instant::now());
@@ -506,7 +506,7 @@ impl Session {
                     Some(Role::Left) if self.rmk_left => "Open recovery on the left half".into(),
                     Some(Role::Left) => "Hold Fn + 5".into(),
                     Some(Role::Right) if self.factory_right => "Hold Fn + 0".into(),
-                    Some(Role::Right) => "Hold Fn and tap 0".into(),
+                    Some(Role::Right) => "Open recovery on the right half".into(),
                     Some(Role::Receiver) => "Open recovery on the dongle".into(),
                     None => "Connect your keyboard".into(),
                 }
@@ -1336,7 +1336,7 @@ mod tests {
         let mut s = Session::new();
         s.select(Role::Left);
         s.observe_advance_at(Ok(rmk.clone()), now);
-        assert!(s.view().instruction.contains("installed firmware"));
+        assert!(s.view().instruction.contains("Companion open recovery"));
         assert!(!s.view().instruction.contains("Escape"));
         assert!(!s.view().instruction.contains("Fn + 5"));
         s.observe_advance_at(Ok(boot(true)), now);
