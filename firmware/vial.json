@@ -161,5 +161,47 @@
         "0,83"
       ]
     ]
-  }
+  },
+  "customKeycodes": [
+    {
+      "name": "NOCFREE_BT_1",
+      "title": "Select Bluetooth profile 1; hold for five seconds to pair",
+      "shortName": "BT 1"
+    },
+    {
+      "name": "NOCFREE_BT_2",
+      "title": "Select Bluetooth profile 2; hold for five seconds to pair",
+      "shortName": "BT 2"
+    },
+    {
+      "name": "NOCFREE_BT_3",
+      "title": "Select Bluetooth profile 3; hold for five seconds to pair",
+      "shortName": "BT 3"
+    },
+    {
+      "name": "NOCFREE_BT_4",
+      "title": "Select Bluetooth profile 4; hold for five seconds to pair",
+      "shortName": "BT 4"
+    },
+    {
+      "name": "NOCFREE_BT_5",
+      "title": "Select Bluetooth profile 5; hold for five seconds to pair",
+      "shortName": "BT 5"
+    },
+    {
+      "name": "NOCFREE_BT_NEXT",
+      "title": "Select the next Bluetooth profile",
+      "shortName": "BT next"
+    },
+    {
+      "name": "NOCFREE_BT_PREVIOUS",
+      "title": "Select the previous Bluetooth profile",
+      "shortName": "BT prev"
+    },
+    {
+      "name": "NOCFREE_BT_CLEAR",
+      "title": "Clear the bond for the current Bluetooth profile",
+      "shortName": "BT clear"
+    }
+  ]
 }

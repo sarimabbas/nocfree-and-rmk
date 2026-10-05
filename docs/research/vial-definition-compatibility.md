@@ -69,3 +69,25 @@ The local preview is `.evidence/vial-layout-preview/vial-layout.png`. Official
 source: [Vial v0.7.5 KLE parser](https://github.com/vial-kb/vial-gui/blob/v0.7.5/src/main/python/kle_serial.py)
 and [keyboard renderer](https://github.com/vial-kb/vial-gui/blob/v0.7.5/src/main/python/widgets/keyboard_widget.py).
 No installed firmware or Companion firmware package was replaced by this work.
+
+## Backlight conversion and OS presets, 2026-10-04
+
+An isolated RMK fork commit `8d07593e4f829ec165f08a2286dd516dc7113c21` adds
+round-trip conversion for backlight On, Off, Toggle, Down, Up and Step
+(`0x7800` through `0x7805`). It leaves breathing and RGB unsupported and changes
+no scanner, transport or backlight hold behavior. Until that dependency is
+published and pinned, the earlier pinned firmware still has the limitation above.
+
+The definition now labels User actions 0 through 7 for Bluetooth profiles,
+next/previous profile and bond clearing. Optional Mac and Windows/Linux
+[layout presets](../../firmware/presets/README.md) preserve the existing two-layer
+keymap and Bluetooth/Fn/backlight actions. The PC preset uses ordinary F1-F12
+on the base layer and omits Mac Mission Control from Fn+F3.
+
+Validation: all 595 RMK host tests with backlight enabled passed; left, right
+and receiver release cross-builds passed using the isolated patch. Four preset
+checks passed, as did an independent source review. The official Vial v0.7.5
+`DummyKeyboard.restore_layout` imported both presets and preserved all 168 numeric
+keycodes per preset with HID access forbidden. These are offline checks, not
+hardware remapping or restart-persistence acceptance. No connected devices,
+installed Companion app or primary checkout were modified.
