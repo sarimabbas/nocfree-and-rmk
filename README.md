@@ -46,6 +46,21 @@ Before it replaces the software on a part, Companion saves a backup automaticall
 
 The left switch selects the connection: **top = dongle**, **middle = USB**, **bottom = Bluetooth**. A USB cable can charge a half while it uses a wireless connection.
 
+## Compare the projects
+
+Choose the project that fits how you want to set up and change your keyboard.
+
+| Feature | RMK Companion | [NocFree Rust](https://github.com/jhkim0218/Nocfree-and-ZMK-rust) | [Community ZMK port](https://github.com/NocFreeKB/NocFree-and-zmk) |
+| --- | --- | --- | --- |
+| Installation | Guided app for Mac, Windows and Linux | Download firmware and follow the recovery guide | Build firmware on GitHub or your computer, then install it |
+| USB and Bluetooth typing | Yes | Yes | Yes |
+| Dongle typing | Yes, with RMK dongle firmware | Yes, with Rust dongle firmware | Not included |
+| Change keys | Vial | NocFree Link | Edit the keymap file and rebuild |
+| Backlight brightness | 16 levels | Off and five brightness levels | Not included |
+| Keyboard layouts | ANSI | ANSI and KR; ISO and JIS test builds | ANSI |
+
+Sources: [Rust project guide](https://github.com/jhkim0218/Nocfree-and-ZMK-rust#implemented-features), [ZMK project guide](https://github.com/NocFreeKB/NocFree-and-zmk#9-community-zmk-module-in-this-repository) and [ZMK setup instructions](https://github.com/NocFreeKB/NocFree-and-zmk/blob/main/docs/build.md). Compared on 5 October 2026.
+
 ## Need help?
 
 If you need help, use **Help → Export diagnostic logs** to save a ZIP file. Attach it to a [problem report](https://github.com/sarimabbas/nocfree-and-rmk/issues/new/choose).
