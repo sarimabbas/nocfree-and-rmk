@@ -10,9 +10,9 @@ Companion helps you save your keyboard’s original software, install RMK, and c
 
 | Computer | App |
 | --- | --- |
-| Mac with Apple Silicon | [Download for Mac](https://github.com/sarimabbas/nocfree-and-rmk/releases/download/v0.1.2/nocfree-rmk-companion-0.1.2-macos-arm64.zip) |
-| Windows, 64-bit | [Download for Windows](https://github.com/sarimabbas/nocfree-and-rmk/releases/download/v0.1.2/nocfree-rmk-companion-0.1.2-windows-x86_64.zip) |
-| Linux, 64-bit | [Download for Linux](https://github.com/sarimabbas/nocfree-and-rmk/releases/download/v0.1.2/nocfree-rmk-companion-0.1.2-linux-x86_64.tar.gz) |
+| Mac with Apple Silicon | [Download for Mac](https://github.com/sarimabbas/nocfree-and-rmk/releases/latest/download/nocfree-rmk-companion-macos-arm64.zip) |
+| Windows, 64-bit | [Download for Windows](https://github.com/sarimabbas/nocfree-and-rmk/releases/latest/download/nocfree-rmk-companion-windows-x86_64.zip) |
+| Linux, 64-bit | [Download for Linux](https://github.com/sarimabbas/nocfree-and-rmk/releases/latest/download/nocfree-rmk-companion-linux-x86_64.tar.gz) |
 
 On Mac, open the ZIP file and move **NocFree RMK Companion** to **Applications**.
 

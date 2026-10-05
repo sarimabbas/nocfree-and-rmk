@@ -302,7 +302,22 @@ jobs:
       - name: Create draft GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
+        shell: bash
         run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/latest"
+          latest_assets=()
+          for platform in macos-arm64 windows-x86_64 linux-x86_64; do
+            case "$platform" in
+              macos-arm64) source="$ARCHIVE"; extension=zip ;;
+              windows-x86_64) source="$RUNNER_TEMP/portable/nocfree-rmk-companion-${VERSION}-${platform}.zip"; extension=zip ;;
+              linux-x86_64) source="$RUNNER_TEMP/portable/nocfree-rmk-companion-${VERSION}-${platform}.tar.gz"; extension=tar.gz ;;
+            esac
+            name="nocfree-rmk-companion-${platform}.${extension}"
+            cp "$source" "$RUNNER_TEMP/latest/$name"
+            (cd "$RUNNER_TEMP/latest" && shasum -a 256 "$name" > "$name.sha256")
+            latest_assets+=("$RUNNER_TEMP/latest/$name" "$RUNNER_TEMP/latest/$name.sha256")
+          done
           gh release create "v${VERSION}" "$ARCHIVE" "$CHECKSUM" \
             "$RUNNER_TEMP/portable/nocfree-rmk-companion-${VERSION}-windows-x86_64.zip" \
             "$RUNNER_TEMP/portable/nocfree-rmk-companion-${VERSION}-windows-x86_64.zip.sha256" \
@@ -311,6 +326,7 @@ jobs:
             --repo "$GITHUB_REPOSITORY" \
             --target "$GITHUB_SHA" \
             --title "NocFree RMK Companion ${VERSION}" \
-            --draft --prerelease \
+            "${latest_assets[@]}" \
+            --draft \
             --notes-file "$RUNNER_TEMP/input/${VERSION}.md"
 
