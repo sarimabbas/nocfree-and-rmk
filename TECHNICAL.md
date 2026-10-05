@@ -138,7 +138,7 @@ On macOS, with a validated release firmware package in `dist/companion-firmware/
 ./desktop/build-macos.sh
 ```
 
-Download `companion-firmware.zip` from the firmware release and use `scripts/unpack_companion_release.py` to extract it for app builds. `scripts/package_companion_release.py` creates firmware packages from images and device test records.
+Each app download includes the firmware for both halves and the dongle. The same app release also contains `companion-firmware.zip` for builds. Use `scripts/unpack_companion_release.py` to extract this package for local app builds. `scripts/package_companion_release.py` creates firmware packages from images and device test records.
 
 Firmware roles are `left`, `right`, `receiver`; select exactly one. Production halves use the explicit `reclaimed-softdevice` layout with runtime recovery. The receiver preserves resident S140. Role builds share an output name, so use separate target directories or save each ELF before another build. The optional CDC logger can report raw battery ADC samples.
 
@@ -184,6 +184,8 @@ python3 scripts/companion_notices.py /tmp/NocFree-Third-Party-Notices.md --stric
 The notice generator checks the recorded source hashes and license texts. Update the inventory when dependencies or bundled firmware change.
 
 Release jobs build the app first. A protected job signs the build with a temporary keychain in the main-branch release environment. Verify the archive checksums, bundled firmware manifest and license notices. On macOS, also check the Developer ID signature, notarization ticket and Gatekeeper result.
+
+When starting the release workflow, select an app release that holds the firmware package and provide its SHA256. For new firmware, put the checked package in a draft of the new app release and select that draft as the source. The workflow checks the package, bundles it in all three apps, and adds the app downloads to the same draft. When reusing firmware, it copies the package from an earlier app release. Firmware and app downloads share one release.
 
 ## Windows and Linux
 
