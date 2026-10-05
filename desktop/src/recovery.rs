@@ -55,7 +55,7 @@ fn run_with(
         loop {
             if cancelled.load(Ordering::Relaxed) { return Err("Recovery cancelled.".into()); }
             if !ready_drive && drive_deadline_passed(requested_at.or(mounting_at), Instant::now()) {
-                return Err("The recovery drive didn’t appear. Check its power and USB connection, then try again.".into());
+                return Err("Could not read the recovery drive. Unplug and reconnect this part, then try again.".into());
             }
             if requested_at.is_none() && !matches!(last_procedure, Some(Procedure::FactoryLeft | Procedure::FactoryRight | Procedure::FactoryReceiver)) {
                 let devices=tokio::time::timeout(Duration::from_secs(2),nusb::list_devices()).await
