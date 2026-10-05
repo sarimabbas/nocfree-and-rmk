@@ -3081,12 +3081,11 @@ impl Render for Companion {
                     .w_full()
                     .when(self.update_available, |footer| {
                         footer.child(
-                            div()
-                                .id("companion-update")
+                            Button::new("companion-update")
+                                .ghost()
                                 .cursor_pointer()
-                                .text_color(cx.theme().success)
-                                .underline()
-                                .child("Update available")
+                                .icon(Icon::new(IconName::Download).text_color(cx.theme().success))
+                                .label("Update available")
                                 .on_click(|_, _, cx| {
                                     cx.open_url(crate::companion_update::DOWNLOAD_URL)
                                 }),
