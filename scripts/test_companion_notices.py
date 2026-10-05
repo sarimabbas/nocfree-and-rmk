@@ -100,15 +100,15 @@ class NoticesTests(unittest.TestCase):
         output.write_text('Keep existing output')
         with patch.object(notices, 'ROOT', self.root):
             self.assertEqual(notices.main([str(output), '--strict']), 1)
-            self.assertEqual(output.read_text(), 'Keep existing output')
+            self.assertEqual(output.read_text(encoding='utf-8'), 'Keep existing output')
             self.assertEqual(notices.main([str(output), '--inventory']), 0)
             self.assertEqual(notices.main([str(output), '--inventory', '--check']), 0)
-            self.assertNotIn('Full source notice texts', output.read_text())
+            self.assertNotIn('Full source notice texts', output.read_text(encoding='utf-8'))
 
     def test_committed_inventory_matches_current_pins_and_catalog(self):
         inventory, texts = notices.load_inventory(notices.ROOT)
         catalog, _ = notices.render(inventory, texts, inventory_only=True)
-        self.assertEqual((notices.ROOT / 'desktop/THIRD_PARTY_NOTICES.md').read_text(), catalog)
+        self.assertEqual((notices.ROOT / 'desktop/THIRD_PARTY_NOTICES.md').read_text(encoding='utf-8'), catalog)
 
     def test_supplementary_terms_need_original_declaration_and_exact_terms(self):
         actual, _ = notices.load_inventory(notices.ROOT)

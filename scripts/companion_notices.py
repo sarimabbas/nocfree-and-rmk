@@ -24,7 +24,7 @@ def digest(data):
 
 def release_pins(root):
     """Read the public pin allowlist, without importing private release evidence tools."""
-    tree = ast.parse((root / 'scripts/package_companion_release.py').read_text())
+    tree = ast.parse((root / 'scripts/package_companion_release.py').read_text(encoding='utf-8'))
     for node in tree.body:
         if isinstance(node, ast.Assign) and any(isinstance(t, ast.Name) and t.id == 'ROLES' for t in node.targets):
             roles = ast.literal_eval(node.value)
@@ -34,7 +34,7 @@ def release_pins(root):
 
 def load_inventory(root):
     folder = root / 'docs/notices'
-    inventory = json.loads((folder / 'inventory.json').read_text())
+    inventory = json.loads((folder / 'inventory.json').read_text(encoding='utf-8'))
     if inventory.get('schema') != 1:
         raise ValueError('Unsupported notices inventory schema')
     desktop = inventory['desktop']
@@ -139,10 +139,10 @@ def main(argv=None):
         if args.strict and gaps:
             raise ValueError('Unresolved source notice texts:\n' + '\n'.join(gaps))
         if args.check:
-            if not args.output.exists() or args.output.read_text() != output:
+            if not args.output.exists() or args.output.read_text(encoding='utf-8') != output:
                 raise ValueError('Notices output is out of date; regenerate it')
         else:
-            args.output.write_text(output)
+            args.output.write_text(output, encoding='utf-8')
         print(f'{len(texts)} full notice texts; {len(gaps)} unresolved source-text gaps', file=sys.stderr)
         return 0
     except (ValueError, KeyError, OSError, UnicodeError) as error:
