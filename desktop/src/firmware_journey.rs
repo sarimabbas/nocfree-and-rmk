@@ -716,8 +716,20 @@ fn reconcile_target(
         )? {
             continue;
         }
+        // A completed factory restore must be reconciled against that attempt's
+        // full canonical target, even when the next requested target is RMK.
+        // The old durable intent supplies the exact target hash; this does not
+        // classify a partial factory application as a completed restore.
+        let prior_factory = if record["kind"].as_str() == Some("factory") && !rmk_intent(&record) {
+            let restored = FactoryRelease::verified_archive_image(role, actual)?;
+            restored.checked()?;
+            Some(TargetImage::Factory(restored))
+        } else {
+            None
+        };
+        let reconciliation_image = prior_factory.as_ref().unwrap_or(image);
         if record["location"].as_u64() != Some(location)
-            || record["target_sha256"].as_str() != Some(image.sha())
+            || record["target_sha256"].as_str() != Some(reconciliation_image.sha())
         {
             return Err("An earlier installation needs reconciliation on its original USB connection and release.".into());
         }
@@ -725,7 +737,7 @@ fn reconcile_target(
         if record["backup_sha256"].as_str() != Some(hash(&previous).as_str()) {
             return Err("The earlier installation backup changed.".into());
         }
-        let storage = image.verify(actual, &previous)?;
+        let storage = reconciliation_image.verify(actual, &previous)?;
         durable(&prior,"install-verified.json",&serde_json::to_vec_pretty(&serde_json::json!({"schema":1,"readback_sha256":hash(actual),"settings_changed_bytes":storage,"reconciled_after_restart":true})).map_err(|_| "Could not encode reconciliation.")?)?;
     }
     Ok(())
@@ -1992,6 +2004,47 @@ mod tests {
             [Role::Left, Role::Right, Role::Receiver]
         );
     }
+    #[test]
+    fn prior_factory_intent_is_verified_against_its_own_full_target_before_rmk() {
+        let root = std::env::temp_dir().join(format!(
+            "factory-reconcile-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let prior = root.join("prior");
+        let current = root.join("current");
+        fs::create_dir_all(&prior).unwrap();
+        fs::create_dir(&current).unwrap();
+        let mut actual = device::tests::archive();
+        for block in actual.as_chunks_mut::<512>().0 {
+            if u32::from_le_bytes(block[12..16].try_into().unwrap()) == 0x27000 {
+                block[32..36].copy_from_slice(&0x20020000u32.to_le_bytes());
+                block[36..40].copy_from_slice(&0x27009u32.to_le_bytes());
+            }
+        }
+        let role = Role::Receiver;
+        let factory = FactoryRelease::verified_archive_image(role, &actual).unwrap();
+        let old = device::tests::archive();
+        fs::write(prior.join("CURRENT.UF2"), &old).unwrap();
+        let raw = serde_json::to_vec(&serde_json::json!({"schema":1,"kind":"factory","role":"Receiver","location":10,"target_sha256":factory.sha256,"backup_sha256":hash(&old)})).unwrap();
+        fs::write(prior.join("install-intent.json"), &raw).unwrap();
+        let rmk = TargetImage::Rmk(Box::new(crate::release::fixture().image(role).clone()));
+        assert!(reconcile_target(&current, role, 11, &actual, &rmk).is_err());
+        let mut mismatch = actual.clone();
+        mismatch[32 + 100] ^= 1;
+        assert!(reconcile_target(&current, role, 10, &mismatch, &rmk).is_err());
+        fs::write(prior.join("CURRENT.UF2"), &mismatch).unwrap();
+        assert!(reconcile_target(&current, role, 10, &actual, &rmk).is_err());
+        fs::write(prior.join("CURRENT.UF2"), &old).unwrap();
+        assert!(!prior.join("install-verified.json").exists());
+        reconcile_target(&current, role, 10, &actual, &rmk).unwrap();
+        assert!(prior.join("install-verified.json").exists());
+        assert_eq!(fs::read(prior.join("install-intent.json")).unwrap(), raw);
+        fs::remove_dir_all(root).unwrap();
+    }
+
     #[test]
     fn interrupted_transfer_requires_exact_original_backup_and_cannot_be_blindly_retried() {
         let root = std::env::temp_dir().join(format!(
