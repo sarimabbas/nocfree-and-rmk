@@ -1,0 +1,11 @@
+[package]
+name = "nocfree-board-backlight-tests"
+version = "0.0.0"
+edition = "2024"
+[dependencies]
+rmk = { git = "https://github.com/rmk-rs/rmk", rev = "434ab4d7d29d8e9ba689837358c8a44996ba38cc", default-features = false, features = ["std", "split", "custom_message", "storage", "_ble"] }
+embassy-sync = "0.8"
+embassy-futures = "0.1"
+embassy-time = "0.5"
+critical-section = { version = "1.2", features = ["std"] }
+embedded-storage = "0.3"

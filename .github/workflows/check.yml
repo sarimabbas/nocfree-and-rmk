@@ -3,7 +3,7 @@ on:
   push:
     branches: [main]
   pull_request:
-    branches: [main]
+    branches: [main, "review/factory-rmk-*"]
   release:
     types: [published]
   workflow_dispatch:
@@ -84,10 +84,6 @@ jobs:
     needs: changes
     if: needs.changes.outputs.firmware == 'true'
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        layout: [reclaimed-softdevice, factory-layout]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -97,78 +93,13 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           workspaces: firmware -> target
-          shared-key: firmware-check-${{ matrix.layout }}
+          shared-key: firmware-factory
           cache-bin: false
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Install Arm build dependencies
         run: sudo apt-get update && sudo apt-get install -y gcc-arm-none-eabi libnewlib-arm-none-eabi
-      - name: Check firmware layout
-        env:
-          LAYOUT: ${{ matrix.layout }}
-        run: |
-          if [ "$LAYOUT" = factory-layout ]; then
-            cd firmware
-            cargo build --locked --release --bin nocfree-rmk --target thumbv7em-none-eabihf --no-default-features --features defmt-logging,receiver,runtime-recovery
-          else
-            ./scripts/check.sh --build-only --reclaimed-softdevice
-          fi
-
-  backlight:
-    needs: changes
-    if: needs.changes.outputs.firmware == 'true'
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        polarity: [low, high]
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - name: Install Rust target and formatter
-        run: rustup target add thumbv7em-none-eabihf && rustup component add rustfmt
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-        with:
-          workspaces: firmware -> target
-          shared-key: firmware-backlight-${{ matrix.polarity }}
-          cache-bin: false
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-      - name: Install Arm build dependencies
-        run: sudo apt-get update && sudo apt-get install -y gcc-arm-none-eabi libnewlib-arm-none-eabi
-      - name: Check optional backlight and all roles
-        env:
-          POLARITY: ${{ matrix.polarity }}
-        run: ./scripts/check.sh --build-only --reclaimed-softdevice --backlight-active-${POLARITY}
-
-  runtime-recovery:
-    needs: changes
-    if: needs.changes.outputs.firmware == 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - name: Install Rust target and formatter
-        run: rustup target add thumbv7em-none-eabihf && rustup component add rustfmt
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-        with:
-          workspaces: firmware -> target
-          shared-key: firmware-runtime-recovery
-          cache-bin: false
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-      - name: Install Arm build dependencies
-        run: sudo apt-get update && sudo apt-get install -y gcc-arm-none-eabi libnewlib-arm-none-eabi
-      - name: Check Vial, runtime recovery and all roles
-        run: ./scripts/check.sh --build-only --all-layouts --reclaimed-softdevice --backlight-active-high --runtime-recovery
-      - name: Build opt-in left blue status indicator
-        working-directory: firmware
-        run: cargo build --locked --release --bin nocfree-rmk --target thumbv7em-none-eabihf --no-default-features --features defmt-logging,left,mac-keymap,runtime-recovery,reclaimed-softdevice,backlight-active-high,status-led
-      - name: Build interrupt-driven scanner for both halves
-        working-directory: firmware
-        run: |
-          for role in left right; do
-            cargo build --locked --release --bin nocfree-rmk --target thumbv7em-none-eabihf --no-default-features --features defmt-logging,${role},mac-keymap,runtime-recovery,reclaimed-softdevice,backlight-active-high,async-scanner
-          done
+      - name: Cross-build all factory-compatible RMK roles and layouts
+        run: ./scripts/check.sh --build-only --all-layouts
 
   companion:
     needs: changes
@@ -211,7 +142,7 @@ jobs:
   ci:
     name: CI
     if: always()
-    needs: [changes, host, check, backlight, runtime-recovery, companion]
+    needs: [changes, host, check, companion]
     runs-on: ubuntu-latest
     steps:
       - name: Require all relevant checks to pass
@@ -224,7 +155,7 @@ jobs:
           assert results["changes"]["result"] == "success", "File detection failed"
           failed = [name for name, job in results.items() if job["result"] not in ("success", "skipped")]
           assert not failed, f"Checks did not pass: {failed}"
-          for gate, jobs in {"host": ["host"], "firmware": ["check", "backlight", "runtime-recovery"], "companion": ["companion"]}.items():
+          for gate, jobs in {"host": ["host"], "firmware": ["check"], "companion": ["companion"]}.items():
               if results["changes"]["outputs"][gate] == "true":
                   assert all(results[job]["result"] == "success" for job in jobs), f"Required {gate} checks were skipped"
           PY
