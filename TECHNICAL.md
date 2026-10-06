@@ -114,6 +114,10 @@ Implement in three checkpoints: first USB/PWM and status/recovery adapters with 
 
 The expected remaining RMK changes are absolute output selection, layout/error handling and the small macro-bounds guard until equivalent upstream behavior is tested. Embassy still needs UICR preservation. Zero forks depends on equivalent upstream changes; moving code to a local patch does not remove that dependency. Each checkpoint requires host tests, every role/layout build and physical acceptance before replacing the approved images. Do not change the bootloader or expand the reserved flash area.
 
+The completed migration must reduce maintained custom code on balance. Count board and desktop changes, dependency patches, new helpers and tests together; report implementation and test changes separately. Moving code between repositories, vendoring, formatting or removing documentation does not count as a reduction. Remove each superseded implementation and its compatibility path once the replacement passes acceptance. Keep useful regression tests. If a replacement adds more maintenance than it removes, retain the simpler current implementation.
+
+The Rust source baseline at `bf88e29` is 981 lines in firmware, 823 in `nocfree-input` and 21,429 in desktop, plus a net 2,842 lines of RMK fork changes and 120 lines of Embassy changes. These physical-line counts include tests and comments, not generated sources. RMK is compared with fork base `92a626cf`; Embassy is compared with published 0.11.0. Compare custom changes against each dependency's own upstream base, so unrelated upstream additions do not become our code. Include any new non-Rust implementation or test helpers in the final change report.
+
 ## Board reference
 
 These GPIO mappings come from the [vendor porting guide](https://github.com/NocFreeKB/NocFree-and-zmk/blob/8bc5f6fe4531cadc62dc39aa92750fba90e009c4/README.md#4-pins-required-for-zmk-porting). The table uses Nordic GPIO names.
