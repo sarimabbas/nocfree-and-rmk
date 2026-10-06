@@ -774,7 +774,6 @@ dependencies = [
 [[package]]
 name = "embassy-nrf"
 version = "0.11.0"
-source = "git+https://github.com/sarimabbas/embassy-nrf-nocfree?rev=ec44c260354cfd31f3bb6f0a05f82e7f58e8cdff#ec44c260354cfd31f3bb6f0a05f82e7f58e8cdff"
 dependencies = [
  "bitflags 2.13.2",
  "cfg-if",
@@ -1526,8 +1525,12 @@ dependencies = [
  "defmt 1.1.1",
  "defmt-rtt",
  "embassy-executor",
+ "embassy-futures",
  "embassy-nrf",
+ "embassy-sync",
  "embassy-time",
+ "embassy-usb",
+ "embassy-usb-driver",
  "embedded-hal 1.0.0",
  "embedded-hal-async",
  "log",
@@ -1536,6 +1539,7 @@ dependencies = [
  "nrf-sdc",
  "panic-probe",
  "rmk",
+ "rmk-types",
  "serde_json",
  "static_cell",
  "xz2",
@@ -1950,7 +1954,6 @@ checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 [[package]]
 name = "rmk"
 version = "0.9.0"
-source = "git+https://github.com/sarimabbas/rmk-nocfree?rev=108067bf3577e5b46e9436522c6b805d2cf36fbd#108067bf3577e5b46e9436522c6b805d2cf36fbd"
 dependencies = [
  "bt-hci",
  "byteorder",
@@ -1986,7 +1989,6 @@ dependencies = [
 [[package]]
 name = "rmk-config"
 version = "0.8.0"
-source = "git+https://github.com/sarimabbas/rmk-nocfree?rev=108067bf3577e5b46e9436522c6b805d2cf36fbd#108067bf3577e5b46e9436522c6b805d2cf36fbd"
 dependencies = [
  "config",
  "miniz_oxide",
@@ -2003,7 +2005,6 @@ dependencies = [
 [[package]]
 name = "rmk-macro"
 version = "0.8.0"
-source = "git+https://github.com/sarimabbas/rmk-nocfree?rev=108067bf3577e5b46e9436522c6b805d2cf36fbd#108067bf3577e5b46e9436522c6b805d2cf36fbd"
 dependencies = [
  "cargo_toml",
  "darling 0.24.1",
@@ -2019,7 +2020,6 @@ dependencies = [
 [[package]]
 name = "rmk-types"
 version = "0.4.0"
-source = "git+https://github.com/sarimabbas/rmk-nocfree?rev=108067bf3577e5b46e9436522c6b805d2cf36fbd#108067bf3577e5b46e9436522c6b805d2cf36fbd"
 dependencies = [
  "bitfield-struct",
  "cobs",

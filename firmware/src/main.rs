@@ -30,12 +30,20 @@ compile_error!("Backlight output requires an explicit board polarity");
 compile_error!("Status LED pin mapping is documented only for LEFT");
 #[cfg(not(feature = "receiver"))]
 mod battery;
+#[cfg(feature = "backlight")]
+mod board_backlight;
+#[cfg(feature = "backlight")]
+mod board_pwm;
+#[cfg(feature = "status-led")]
+mod board_status_led;
+mod companion;
 #[cfg(feature = "left")]
 mod keymap;
 #[cfg(feature = "left")]
 mod mode_switch;
 #[cfg(not(feature = "receiver"))]
 mod scanner;
+mod usb_adapter;
 #[cfg(feature = "left")]
 mod vial;
 use defmt::unwrap;
@@ -48,7 +56,7 @@ use embassy_nrf::{bind_interrupts, rng, saadc, twim, usb};
 use nrf_mpsl::Flash;
 use nrf_sdc::{self as sdc, mpsl};
 use panic_probe as _;
-use rmk::{config::StorageConfig, run_all};
+use rmk::{config::StorageConfig, core_traits::Runnable, run_all};
 use static_cell::StaticCell;
 bind_interrupts!(struct Irqs {
     USBD => usb::InterruptHandler<USBD>;
@@ -75,7 +83,9 @@ fn ble_addr() -> [u8; 6] {
 #[embassy_executor::main]
 async fn main(spawner: Spawner) {
     #[allow(unused_mut)]
-    let mut p = embassy_nrf::init(embassy_nrf::config::Config::default());
+    let mut hal_config = embassy_nrf::config::Config::default();
+    hal_config.debug = embassy_nrf::config::Debug::NotConfigured;
+    let p = embassy_nrf::init(hal_config);
     #[cfg(feature = "startup-watchdog")]
     let mut watchdog_runner = rmk::watchdog::Nrf52Watchdog::default_runner(p.WDT);
     let mpsl_p =
@@ -160,7 +170,8 @@ async fn main(spawner: Spawner) {
         ..Default::default()
     };
     #[cfg(any(not(feature = "right"), feature = "runtime-recovery"))]
-    let driver = Driver::new(p.USBD, Irqs, HardwareVbusDetect::new(Irqs));
+    let driver =
+        usb_adapter::Nrf52833Driver(Driver::new(p.USBD, Irqs, HardwareVbusDetect::new(Irqs)));
     #[cfg(any(not(feature = "right"), feature = "runtime-recovery"))]
     let device_config = rmk::config::DeviceConfig {
         manufacturer: concat!("NocFree RMK;fw=", env!("CARGO_PKG_VERSION")),
@@ -184,23 +195,7 @@ async fn main(spawner: Spawner) {
     #[cfg(not(feature = "receiver"))]
     {
         #[cfg(feature = "backlight")]
-        let backlight = {
-            use embassy_nrf::{
-                gpio::Level,
-                pwm::{DutyCycle, Prescaler, SimpleConfig, SimplePwm},
-            };
-            let active_low = cfg!(feature = "backlight-active-low");
-            // P0.20 is the backlight pin in the vendor board mapping.
-            // Factory applications request 400 Hz: 8 MHz / 20000, up counting.
-            let mut config = SimpleConfig::default();
-            config.prescaler = Prescaler::Div2;
-            config.max_duty = 20000;
-            config.ch0_idle_level = if active_low { Level::High } else { Level::Low };
-            static DUTIES: StaticCell<[DutyCycle; 4]> = StaticCell::new();
-            let pwm = SimplePwm::new_1ch(p.PWM0, p.P0_20, &config)
-                .with_static_duty_buffer(DUTIES.init([DutyCycle::normal(0); 4]));
-            rmk::backlight::NrfPwm::new(pwm, active_low)
-        };
+        let backlight = board_pwm::new(p.PWM0, p.P0_20);
         use embassy_nrf::gpio::{Level, Output, OutputDrive};
         use embassy_nrf::saadc::Input as _;
         use rmk::input_device::battery::BatteryProcessor;
@@ -217,11 +212,16 @@ async fn main(spawner: Spawner) {
         adc.calibrate().await;
         let mut battery_adc = battery::Battery::new(adc, battery_enable);
         #[cfg(feature = "status-led")]
-        let mut status_led = rmk::status_led::StatusLed::new(
-            // Published LEFT blue LED: active low. Start inactive.
-            Output::new(p.P0_10, Level::High, OutputDrive::Standard),
-            true,
-        );
+        let mut status_led =
+            if unsafe { core::ptr::read_volatile(0x1000120c as *const u32) } & 1 == 0 {
+                Some(board_status_led::StatusLed::new(
+                    Output::new(p.P0_10, Level::High, OutputDrive::Standard),
+                    true,
+                ))
+            } else {
+                defmt::warn!("Status LED unavailable: NFC owns pin");
+                None
+            };
         #[cfg(feature = "left")]
         let mut mode_switch = mode_switch::ModeSwitch::new(
             embassy_nrf::gpio::Input::new(p.P0_15, embassy_nrf::gpio::Pull::Up),
@@ -264,24 +264,33 @@ async fn main(spawner: Spawner) {
         {
             let mut storage = rmk::storage::new_storage_without_keymap(flash, storage_config).await;
             #[cfg(feature = "runtime-recovery")]
-            let mut recovery_usb = rmk::usb::UsbRecoveryTransport::new(driver, device_config);
+            let mut recovery_builder = right_usb_builder(driver, device_config);
             #[cfg(feature = "runtime-recovery")]
-            let local_tasks = run_all!(
-                matrix,
-                battery_adc,
-                battery,
-                storage,
-                recovery_usb,
-                watchdog_runner
-            );
+            let mut companion_service =
+                companion::attach(&mut recovery_builder, companion::Role::Right);
+            #[cfg(feature = "runtime-recovery")]
+            let mut recovery_usb = recovery_builder.build();
+            #[cfg(feature = "runtime-recovery")]
+            let local_tasks = run_all!(matrix, battery_adc, battery, storage, watchdog_runner);
             #[cfg(not(feature = "runtime-recovery"))]
             let local_tasks = run_all!(matrix, battery_adc, battery, storage);
             let keyboard_tasks = rmk::futures::future::join(
                 local_tasks,
                 rmk::split::peripheral::run_rmk_split_peripheral(0, sdc, ble_addr()),
             );
+            #[cfg(feature = "runtime-recovery")]
+            let keyboard_tasks = embassy_futures::join::join3(
+                companion_service.run(),
+                recovery_usb.run(),
+                keyboard_tasks,
+            );
             #[cfg(feature = "backlight")]
-            rmk::futures::future::join(keyboard_tasks, rmk::backlight::run(backlight, false)).await;
+            embassy_futures::join::join3(
+                board_backlight::run_right(),
+                board_pwm::run(backlight),
+                keyboard_tasks,
+            )
+            .await;
             #[cfg(not(feature = "backlight"))]
             keyboard_tasks.await;
         }
@@ -316,7 +325,10 @@ async fn main(spawner: Spawner) {
             let mut keyboard = Keyboard::new(&keymap);
 
             let host_service = rmk::host::HostService::new(&keymap, &config);
-            let mut usb = UsbTransport::new(driver, device_config).with_host_service(&host_service);
+            let mut usb_builder = UsbTransport::builder(driver, device_config);
+            let mut companion_service =
+                companion::attach(usb_builder.usb_builder(), companion::Role::Left);
+            let mut usb = usb_builder.build().with_host_service(&host_service);
             let ble = BleTransport::new(
                 sdc,
                 ble_addr(),
@@ -353,12 +365,21 @@ async fn main(spawner: Spawner) {
                 ble
             );
             #[cfg(feature = "status-led")]
-            let keyboard_tasks = rmk::futures::future::join(
-                keyboard_tasks,
-                rmk::core_traits::Runnable::run(&mut status_led),
-            );
+            let keyboard_tasks = rmk::futures::future::join(keyboard_tasks, async {
+                if let Some(led) = &mut status_led {
+                    led.run().await;
+                }
+                core::future::pending::<()>().await
+            });
+            let keyboard_tasks =
+                embassy_futures::join::join(companion_service.run(), keyboard_tasks);
             #[cfg(feature = "backlight")]
-            rmk::futures::future::join(keyboard_tasks, rmk::backlight::run(backlight, true)).await;
+            embassy_futures::join::join3(
+                board_backlight::run_left(),
+                board_pwm::run(backlight),
+                keyboard_tasks,
+            )
+            .await;
             #[cfg(not(feature = "backlight"))]
             keyboard_tasks.await;
         }
@@ -372,10 +393,49 @@ async fn main(spawner: Spawner) {
         let mut storage = rmk::storage::new_storage_without_keymap(flash, storage_config).await;
         let router = DongleRouter::new();
         let mut dongle = Dongle::new(sdc, ble_addr(), &router);
-        let mut usb = UsbTransport::new(driver, device_config).with_dongle_router(&router);
+        let mut usb_builder = UsbTransport::builder(driver, device_config);
+        let mut companion_service =
+            companion::attach(usb_builder.usb_builder(), companion::Role::Receiver);
+        let mut usb = usb_builder.build().with_dongle_router(&router);
         #[cfg(feature = "startup-watchdog")]
-        run_all!(storage, dongle, usb, watchdog_runner).await;
+        run_all!(storage, dongle, usb, companion_service, watchdog_runner).await;
         #[cfg(not(feature = "startup-watchdog"))]
-        run_all!(storage, dongle, usb).await;
+        run_all!(storage, dongle, usb, companion_service).await;
     }
+}
+
+#[cfg(all(feature = "right", feature = "runtime-recovery"))]
+fn right_usb_builder<D: embassy_usb::driver::Driver<'static>>(
+    driver: D,
+    device: rmk::config::DeviceConfig<'static>,
+) -> embassy_usb::Builder<'static, D> {
+    static CONFIG: StaticCell<[u8; 256]> = StaticCell::new();
+    static BOS: StaticCell<[u8; 32]> = StaticCell::new();
+    static MSOS: StaticCell<[u8; 32]> = StaticCell::new();
+    static CONTROL: StaticCell<[u8; 64]> = StaticCell::new();
+    let mut config = embassy_usb::Config::new(device.vid, device.pid);
+    config.manufacturer = Some(device.manufacturer);
+    config.product = Some(device.product_name);
+    config.serial_number = Some(right_serial_number());
+    config.max_packet_size_0 = 64;
+    config.max_power = 450;
+    embassy_usb::Builder::new(
+        driver,
+        config,
+        CONFIG.init([0; 256]),
+        BOS.init([0; 32]),
+        MSOS.init([0; 32]),
+        CONTROL.init([0; 64]),
+    )
+}
+
+#[cfg(all(feature = "right", feature = "runtime-recovery"))]
+fn right_serial_number() -> &'static str {
+    static SERIAL: StaticCell<[u8; 6]> = StaticCell::new();
+    let ficr = embassy_nrf::pac::FICR;
+    let id = (u64::from(ficr.deviceid(1).read()) << 32) | u64::from(ficr.deviceid(0).read());
+    let bytes = SERIAL.init(core::array::from_fn(|index| {
+        b"0123456789abcdef"[((id >> (60 - index * 4)) & 15) as usize]
+    }));
+    core::str::from_utf8(bytes).unwrap()
 }

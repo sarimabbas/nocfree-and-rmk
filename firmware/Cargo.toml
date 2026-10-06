@@ -13,7 +13,7 @@ default = ["defmt-logging", "runtime-recovery"]
 # Register-only early guard, adopted and fed by RMK in normal operation.
 startup-watchdog = ["rmk/watchdog"]
 # Normal production recovery: local USB DETACH and one startup/runtime watchdog.
-runtime-recovery = ["startup-watchdog", "rmk/runtime_dfu", "embassy-nrf/preserve-uicr"]
+runtime-recovery = ["startup-watchdog", "embassy-nrf/preserve-uicr"]
 # Normal builds use RMK defmt; --no-default-features callers select this explicitly.
 defmt-logging = ["rmk/defmt"]
 # Optional framework CDC logger; choose instead of defmt-logging.
@@ -23,21 +23,26 @@ battery-adc-diagnostic = ["rmk/usb_log", "dep:log", "log/max_level_error", "log/
 # Mac media keys in the default keymap.
 mac-keymap = []
 # Wait for the expander interrupt while the scanner is idle.
-async-scanner = ["rmk/async_matrix", "dep:embedded-hal"]
+async-scanner = ["rmk/async_matrix"]
 # Left blue connection indicator.
-status-led = ["rmk/status_led", "embassy-nrf/nfc-pins-as-gpio", "embassy-nrf/preserve-uicr"]
+status-led = ["embassy-nrf/nfc-pins-as-gpio", "embassy-nrf/preserve-uicr"]
 # Backlight PWM; select the board polarity below.
-backlight = ["rmk/backlight"]
+backlight = []
 backlight-active-low = ["backlight"]
 backlight-active-high = ["backlight"]
 # Application at 0x1000; the receiver keeps the factory layout.
 reclaimed-softdevice = []
-left = ["rmk/usb_power_awake", "rmk/split", "rmk/dongle", "rmk/adafruit_bl", "rmk/vial", "rmk/host_lock", "rmk/vial_battery"]
-right = ["rmk/usb_power_awake", "rmk/split", "rmk/adafruit_bl"]
-receiver = ["rmk/dongle", "rmk/adafruit_bl", "rmk/vial", "rmk/host_lock"]
+left = ["rmk/split", "rmk/dongle", "rmk/adafruit_bl", "rmk/vial", "rmk/host_lock"]
+right = ["rmk/split", "rmk/adafruit_bl"]
+receiver = ["rmk/dongle", "rmk/adafruit_bl", "rmk/vial", "rmk/host_lock", "rmk/custom_message_receive_only"]
 [dependencies]
+rmk-types = { path = "../dependencies/rmk/rmk-types" }
+embassy-sync = "0.8"
+embassy-usb = "0.6"
+embassy-usb-driver = "0.2.2"
+embassy-futures = "0.1"
 log = { version = "0.4", optional = true }
-rmk = { git = "https://github.com/sarimabbas/rmk-nocfree", rev = "108067bf3577e5b46e9436522c6b805d2cf36fbd", default-features = false, features = ["storage", "nrf52833_ble"] }
+rmk = { path = "../dependencies/rmk/rmk", default-features = false, features = ["storage", "nrf52833_ble", "custom_message"] }
 nocfree-input = { path = "../crates/nocfree-input" }
 nrf-sdc = { version = "0.4", features = ["defmt", "peripheral", "central", "nrf52833"] }
 nrf-mpsl = { version = "0.4", features = ["defmt", "critical-section-impl", "nrf52833"] }
@@ -45,7 +50,7 @@ embassy-nrf = { version = "0.11", features = ["defmt", "nrf52833", "time-driver-
 embassy-executor = { version = "0.10", features = ["defmt", "platform-cortex-m", "executor-thread"] }
 embassy-time = { version = "0.5", features = ["tick-hz-32_768", "defmt", "defmt-timestamp-uptime"] }
 embedded-hal-async = "1"
-embedded-hal = { version = "1", optional = true }
+embedded-hal = "1"
 cortex-m = "0.7"
 cortex-m-rt = { version = "0.7", features = ["set-vtor"] }
 defmt = "1"
@@ -58,9 +63,9 @@ opt-level = "z"
 lto = "fat"
 debug = 2
 
-# Published 0.11.0 source with nRF52833 SET_ADDRESS handling and buffered PWM updates.
+# Published 0.11.0 with one explicit preserve-uicr option; USB/PWM adapters stay on the board.
 [patch.crates-io]
-embassy-nrf = { git = "https://github.com/sarimabbas/embassy-nrf-nocfree", rev = "ec44c260354cfd31f3bb6f0a05f82e7f58e8cdff" }
+embassy-nrf = { path = "../dependencies/embassy-nrf" }
 
 [build-dependencies]
 serde_json = "1"

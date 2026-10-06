@@ -1,4 +1,4 @@
-//! One read-only VIA custom-value report using the existing raw-HID collection.
+//! Read-only board HID status, with the original VIA collection as a fallback.
 //! Native HID writes are synchronous: the UI bounds observation time, not the
 //! OS syscall. Battery's single-flight guard prevents accumulating stuck calls.
 use super::Readings;
@@ -44,7 +44,7 @@ fn hid_contract(
     usb && vendor == 0x4c4b
         && product == role.product()
         && name == Some(role.name())
-        && usage == (0xff60, 0x61)
+        && matches!(usage, (0xff60 | 0xff61, 0x61))
 }
 
 fn hid_matches(info: &HidInfo, role: Role) -> bool {
@@ -56,6 +56,14 @@ fn hid_matches(info: &HidInfo, role: Role) -> bool {
         matches!(info.bus_type(), BusType::Usb),
         (info.usage_page(), info.usage()),
     )
+}
+
+fn preferred_page(pages: impl IntoIterator<Item = u16>) -> u16 {
+    if pages.into_iter().any(|page| page == 0xff61) {
+        0xff61
+    } else {
+        0xff60
+    }
 }
 
 fn physical_key(device: &DeviceInfo) -> (nusb::DeviceId, Option<Role>, Option<u64>) {
@@ -116,7 +124,14 @@ pub(super) fn read(started: Instant) -> Result<Readings, String> {
     let target = select_usb()?;
     let role = role(&target).ok_or("Unsupported keyboard identity.")?;
     let api = HidApi::new().map_err(|_| "Couldn't inspect the keyboard's HID battery service.")?;
-    let mut interfaces = api.device_list().filter(|info| hid_matches(info, role));
+    let preferred_page = preferred_page(
+        api.device_list()
+            .filter(|info| hid_matches(info, role))
+            .map(|info| info.usage_page()),
+    );
+    let mut interfaces = api
+        .device_list()
+        .filter(|info| hid_matches(info, role) && info.usage_page() == preferred_page);
     let info = interfaces
         .next()
         .ok_or("Battery details unavailable with this firmware.")?;
@@ -376,6 +391,38 @@ mod tests {
         assert!(submission_allowed(started, started + Duration::from_secs(2)).is_ok());
         assert!(submission_allowed(started, started + Duration::from_secs(3)).is_err());
         assert!(submission_allowed(started, started + Duration::from_secs(8)).is_err());
+    }
+    #[test]
+    fn board_collection_is_preferred_while_legacy_firmware_still_works() {
+        assert_eq!(preferred_page([0xff60]), 0xff60);
+        assert_eq!(preferred_page([0xff60, 0xff61]), 0xff61);
+        assert_eq!(preferred_page([0xff61, 0xff60]), 0xff61);
+        for role in [Role::Left, Role::Receiver] {
+            assert!(hid_contract(
+                role,
+                0x4c4b,
+                role.product(),
+                Some(role.name()),
+                true,
+                (0xff61, 0x61)
+            ));
+            assert!(!hid_contract(
+                role,
+                0x4c4b,
+                role.product(),
+                Some(role.name()),
+                false,
+                (0xff61, 0x61)
+            ));
+            assert!(!hid_contract(
+                role,
+                0x4c4b,
+                role.product(),
+                Some(role.name()),
+                true,
+                (0xff61, 0x62)
+            ));
+        }
     }
     #[test]
     fn only_selected_usb_raw_hid_collection_can_be_opened() {

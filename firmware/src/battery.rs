@@ -35,7 +35,7 @@ impl Runnable for Battery<'_> {
             #[cfg(feature = "left")]
             {
                 let adc = embassy_nrf::pac::SAADC;
-                rmk::input_device::battery::record_adc_diagnostic(
+                crate::companion::record_adc(
                     sample[0],
                     [
                         adc.resolution().read().0,

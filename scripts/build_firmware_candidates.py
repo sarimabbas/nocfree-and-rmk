@@ -12,6 +12,7 @@ import tomllib
 
 import image_guard
 import migration_guard
+import prepare_migration
 
 ROOT = Path(__file__).resolve().parents[1]
 TARGET = 'thumbv7em-none-eabihf'
@@ -81,6 +82,15 @@ def llvm_tool(name, toolchain):
     raise ValueError('LLVM tools missing; install rustup component llvm-tools-preview')
 
 
+def validate_dependency_sources(manifest):
+    sources = ((manifest['dependencies']['rmk'], 'dependencies/rmk/rmk'),
+               (manifest['dependencies']['rmk-types'], 'dependencies/rmk/rmk-types'),
+               (manifest['patch']['crates-io']['embassy-nrf'], 'dependencies/embassy-nrf'))
+    for source, expected in sources:
+        if 'path' not in source or (ROOT / 'firmware' / source['path']).resolve() != (ROOT / expected).resolve():
+            raise ValueError(f'dependency source must use the prepared {expected}')
+
+
 def source_hashes():
     paths = set()
     for directory in ('firmware/src', 'crates/nocfree-input/src'):
@@ -113,7 +123,8 @@ def main():
     args = parser.parse_args()
     try:
         manifest = tomllib.loads((ROOT / 'firmware/Cargo.toml').read_text())
-        rmk = manifest['dependencies']['rmk']['rev']
+        validate_dependency_sources(manifest)
+        rmk = prepare_migration.RMK_REVISION
         before = source_hashes()
         for layout in LAYOUTS if args.all_layouts else (args.layout,):
             output = args.output.resolve() / layout if args.all_layouts else args.output.resolve()
@@ -162,7 +173,7 @@ def main():
                 raise ValueError('firmware sources changed during build; rebuild candidates')
             (output / 'manifest.json').write_text(json.dumps(report, indent=2) + '\n')
             print(f'Candidate manifest: {output / "manifest.json"}')
-    except (OSError, ValueError, subprocess.CalledProcessError) as error:
+    except (OSError, KeyError, ValueError, RuntimeError, subprocess.CalledProcessError) as error:
         parser.exit(1, f'Build rejected: {error}\n')
 
 

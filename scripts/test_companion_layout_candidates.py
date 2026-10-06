@@ -1,5 +1,7 @@
 """Layout candidate builds must not reuse another layout's half image."""
+import copy
 import json
+import tomllib
 from pathlib import Path
 import subprocess
 import sys
@@ -20,6 +22,19 @@ class LayoutCandidates(unittest.TestCase):
             self.assertNotIn('mac-keymap', candidates.features('receiver', layout))
         with self.assertRaises(ValueError):
             candidates.features('left', 'unknown')
+
+    def test_candidate_rejects_redirected_dependency_sources(self):
+        manifest = tomllib.loads((candidates.ROOT / 'firmware/Cargo.toml').read_text())
+        candidates.validate_dependency_sources(manifest)
+        for section, name in ((('dependencies',), 'rmk'), (('dependencies',), 'rmk-types'),
+                              (('patch', 'crates-io'), 'embassy-nrf')):
+            redirected = copy.deepcopy(manifest)
+            dependency = redirected
+            for key in section:
+                dependency = dependency[key]
+            dependency[name]['path'] = '../unreviewed-source'
+            with self.subTest(name=name), self.assertRaises(ValueError):
+                candidates.validate_dependency_sources(redirected)
 
     def test_all_layouts_have_separate_output_directories(self):
         script = Path(candidates.__file__)

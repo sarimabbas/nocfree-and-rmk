@@ -20,7 +20,9 @@ impl<'a> ModeSwitch<'a> {
             bluetooth,
             receiver,
         };
-        output_selection::initialize(this.read().unwrap_or(OutputSelection::Off));
+        let selection = this.read().unwrap_or(OutputSelection::Off);
+        output_selection::initialize(selection);
+        crate::companion::set_mode(mode(selection));
         this
     }
     fn read(&self) -> Option<OutputSelection> {
@@ -48,9 +50,19 @@ impl Runnable for ModeSwitch<'_> {
             if let Some(selection) = first.filter(|value| Some(*value) == self.read()) {
                 if applied != Some(selection) {
                     output_selection::select(selection).await;
+                    crate::companion::set_mode(mode(selection));
                     applied = Some(selection);
                 }
             }
         }
+    }
+}
+
+fn mode(selection: OutputSelection) -> u8 {
+    match selection {
+        OutputSelection::Wired => 1,
+        OutputSelection::Bluetooth => 2,
+        OutputSelection::Dongle => 3,
+        _ => 0,
     }
 }
