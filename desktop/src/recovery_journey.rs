@@ -215,12 +215,15 @@ impl RecoveryJourney {
 }
 
 /// Production recovery starts from a local USB connection. Upstream RMK
-/// restricts its native DETACH interface to 30 seconds after CPU startup.
+/// restricts the dongle DETACH interface to 30 seconds after CPU startup;
+/// LEFT uses the native VIA bootloader command instead.
 pub fn instruction(role: Role) -> &'static str {
     match role {
         Role::Left => "Connect the left half by USB. ",
         Role::Right => "Connect the right half by USB. ",
-        Role::Receiver => "Plug in the USB dongle. ",
+        Role::Receiver => {
+            "Unplug the dongle, then plug it back in. Keep it connected while the app opens recovery."
+        }
     }
 }
 
