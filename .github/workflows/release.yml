@@ -23,7 +23,33 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  firmware-input:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Stage firmware from the release draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FIRMWARE_TAG: ${{ inputs.firmware_source_tag }}
+          FIRMWARE_SHA256: ${{ inputs.firmware_zip_sha256 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$FIRMWARE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          [[ "$FIRMWARE_SHA256" =~ ^[a-f0-9]{64}$ ]]
+          gh release download "$FIRMWARE_TAG" --repo "$GITHUB_REPOSITORY" --pattern companion-firmware.zip --dir "$RUNNER_TEMP/firmware-input"
+          echo "$FIRMWARE_SHA256  $RUNNER_TEMP/firmware-input/companion-firmware.zip" | sha256sum --check
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: companion-firmware-input
+          path: ${{ runner.temp }}/firmware-input/companion-firmware.zip
+          if-no-files-found: error
+          retention-days: 1
+
   build:
+    needs: firmware-input
     if: github.ref == 'refs/heads/main'
     runs-on: macos-26
     permissions:
@@ -88,17 +114,17 @@ jobs:
           cargo test --manifest-path desktop/Cargo.toml --locked --lib
           cargo clippy --manifest-path desktop/Cargo.toml --locked --all-targets -- -D warnings
 
-      - name: Retrieve reviewed firmware input
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: companion-firmware-input
+          path: ${{ runner.temp }}/firmware-input
+      - name: Validate reviewed firmware input
         env:
-          GH_TOKEN: ${{ github.token }}
-          FIRMWARE_TAG: ${{ inputs.firmware_source_tag }}
           FIRMWARE_SHA256: ${{ inputs.firmware_zip_sha256 }}
         shell: bash
         run: |
           set -euo pipefail
-          [[ "$FIRMWARE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
           [[ "$FIRMWARE_SHA256" =~ ^[a-f0-9]{64}$ ]]
-          gh release download "$FIRMWARE_TAG" --repo "$GITHUB_REPOSITORY" --pattern companion-firmware.zip --dir "$RUNNER_TEMP/firmware-input"
           python3 scripts/unpack_companion_release.py --input "$RUNNER_TEMP/firmware-input/companion-firmware.zip" --sha256 "$FIRMWARE_SHA256" --output dist/companion-firmware
           python3 -c 'import json,tomllib; assert json.load(open("dist/companion-firmware/manifest.json"))["version"] == tomllib.load(open("desktop/Cargo.toml", "rb"))["package"]["version"]'
 
@@ -142,6 +168,7 @@ jobs:
           retention-days: 1
 
   portable:
+    needs: firmware-input
     if: github.ref == 'refs/heads/main'
     strategy:
       fail-fast: false
@@ -195,17 +222,17 @@ jobs:
         run: |
           cargo test --manifest-path desktop/Cargo.toml --locked --lib
           cargo clippy --manifest-path desktop/Cargo.toml --locked --all-targets -- -D warnings
-      - name: Retrieve reviewed firmware input
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: companion-firmware-input
+          path: ${{ runner.temp }}/firmware-input
+      - name: Validate reviewed firmware input
         env:
-          GH_TOKEN: ${{ github.token }}
-          FIRMWARE_TAG: ${{ inputs.firmware_source_tag }}
           FIRMWARE_SHA256: ${{ inputs.firmware_zip_sha256 }}
         shell: bash
         run: |
           set -euo pipefail
-          [[ "$FIRMWARE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
           [[ "$FIRMWARE_SHA256" =~ ^[a-f0-9]{64}$ ]]
-          gh release download "$FIRMWARE_TAG" --repo "$GITHUB_REPOSITORY" --pattern companion-firmware.zip --dir "$RUNNER_TEMP/firmware-input"
           python scripts/unpack_companion_release.py --input "$RUNNER_TEMP/firmware-input/companion-firmware.zip" --sha256 "$FIRMWARE_SHA256" --output dist/companion-firmware
       - name: Build native archive
         shell: bash
