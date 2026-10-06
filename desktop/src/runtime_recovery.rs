@@ -77,7 +77,10 @@ fn dfu_interface(role: Role, device: &DeviceInfo) -> Option<u8> {
 }
 
 fn functional_valid(descriptors: &[&[u8]]) -> bool {
-    descriptors.len() == 1 && descriptors[0].len() == 9 && descriptors[0][0..3] == [9, 0x21, 8]
+    descriptors.len() == 1
+        && descriptors[0].len() == 9
+        && descriptors[0][0..2] == [9, 0x21]
+        && matches!(descriptors[0][2], 8 | 9)
 }
 
 fn validate_descriptor(claimed: &nusb::Interface, number: u8) -> Result<(), &'static str> {
@@ -282,15 +285,22 @@ mod tests {
         assert_ne!(Role::Left.product(), Role::Receiver.product());
     }
     #[test]
-    fn only_will_detach_runtime_descriptor_is_accepted() {
+    fn production_and_upstream_runtime_detach_descriptors_are_accepted() {
         let valid = [9, 0x21, 8, 0, 0, 0, 0, 0x10, 1];
         assert!(functional_valid(&[&valid]));
         assert!(!functional_valid(&[]));
         assert!(!functional_valid(&[&valid, &valid]));
         assert!(!functional_valid(&[&valid[..8]]));
-        let mut download = valid;
-        download[2] = 9;
-        assert!(!functional_valid(&[&download]));
+        // Upstream RMK advertises CAN_DOWNLOAD as well as WILL_DETACH on its
+        // runtime interface. We send DETACH only; protocol 1 is checked above.
+        let mut upstream = valid;
+        upstream[2] = 9;
+        assert!(functional_valid(&[&upstream]));
+        for attributes in [0, 1, 2, 4, 10, 15] {
+            let mut unsupported = valid;
+            unsupported[2] = attributes;
+            assert!(!functional_valid(&[&unsupported]));
+        }
     }
     #[test]
     fn cancellation_and_expiration_prevent_dispatch() {
