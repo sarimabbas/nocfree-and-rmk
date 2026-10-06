@@ -40,6 +40,7 @@ jobs:
               - 'rust-toolchain.toml'
               - '.cargo/**'
               - 'scripts/check.sh'
+              - 'scripts/prepare_migration.py'
               - 'scripts/build_firmware_candidates.py'
               - '.github/workflows/check.yml'
             companion:
@@ -70,6 +71,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Prepare pinned firmware dependencies
+        run: python3 scripts/prepare_migration.py
       - name: Install pinned Rust toolchain
         run: rustup show active-toolchain
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
@@ -92,6 +95,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Prepare pinned firmware dependencies
+        run: python3 scripts/prepare_migration.py
       - name: Install Rust target and formatter
         run: rustup target add thumbv7em-none-eabihf && rustup component add rustfmt
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
@@ -125,6 +130,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Prepare pinned firmware dependencies
+        run: python3 scripts/prepare_migration.py
       - name: Install Rust target and formatter
         run: rustup target add thumbv7em-none-eabihf && rustup component add rustfmt
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
@@ -148,6 +155,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Prepare pinned firmware dependencies
+        run: python3 scripts/prepare_migration.py
       - name: Install Rust target and formatter
         run: rustup target add thumbv7em-none-eabihf && rustup component add rustfmt
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2

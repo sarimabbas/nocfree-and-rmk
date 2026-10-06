@@ -1,0 +1,718 @@
+--- a/rmk/build.rs
++++ b/rmk/build.rs
+@@ -1,7 +1,5 @@
+ #[path = "./build_common.rs"]
+ mod common;
+-
+-use std::process::Command;
+ 
+ fn main() {
+     let mut cfgs = common::CfgSet::new();
+@@ -9,11 +7,7 @@
+ 
+     // `RMK_COMMIT` and `RMK_FEATURES` go into the storage schema hash.
+     // When either changes, the storage is erased.
+-    let commit = Command::new("git")
+-        .args(["log", "-1", "--format=%H", "--", "."])
+-        .output()
+-        .map(|out| String::from_utf8_lossy(&out.stdout).trim().to_string())
+-        .unwrap_or_default();
++    let commit = "434ab4d7d29d8e9ba689837358c8a44996ba38cc-nocfree-spike-v1";
+     println!("cargo:rustc-env=RMK_COMMIT={commit}");
+ 
+     let mut features: Vec<String> = std::env::vars()
+--- a/rmk/src/lib.rs
++++ b/rmk/src/lib.rs
+@@ -117,6 +117,7 @@
+ pub mod layout_macro;
+ pub mod light;
+ pub mod matrix;
++pub mod output_selection;
+ pub mod processor;
+ #[cfg(feature = "split")]
+ pub mod split;
+--- a/rmk/src/state.rs
++++ b/rmk/src/state.rs
+@@ -8,6 +8,7 @@
+ 
+ use crate::RawMutex;
+ use crate::event::{ConnectionStatusChangeEvent, publish_event};
++use crate::output_selection::{OutputSelection, active};
+ 
+ /// Single source of truth for transport state and routing. All writes go
+ /// through the mutator helpers below so the active-output cascade runs and
+@@ -15,8 +16,32 @@
+ pub(crate) static CONNECTION_STATUS: Mutex<RawMutex, Cell<ConnectionStatus>> =
+     Mutex::new(Cell::new(ConnectionStatus::new()));
+ 
++static OUTPUT_SELECTION: Mutex<RawMutex, Cell<OutputSelection>> = Mutex::new(Cell::new(OutputSelection::Automatic));
++#[cfg(feature = "_ble")]
++static LAST_HOST_PROFILE: Mutex<RawMutex, Cell<u8>> = Mutex::new(Cell::new(0));
++pub fn output_selection() -> OutputSelection {
++    OUTPUT_SELECTION.lock(|c| c.get())
++}
++#[cfg(feature = "_ble")]
++pub(crate) fn last_host_profile() -> u8 {
++    LAST_HOST_PROFILE.lock(|c| c.get())
++}
++pub(crate) fn set_output_selection(selection: OutputSelection) {
++    let status = current_connection_status();
++    let before = active(status, output_selection());
++    OUTPUT_SELECTION.lock(|c| c.set(selection));
++    release_previous(before, active(status, selection));
++    publish_event(ConnectionStatusChangeEvent(status));
++}
++fn release_previous(before: Option<ConnectionType>, after: Option<ConnectionType>) {
++    if before != after
++        && let Some(before) = before
++    {
++        crate::channel::clear_and_release_report_channel(before);
++    }
++}
+ pub(crate) fn active_transport() -> Option<ConnectionType> {
+-    CONNECTION_STATUS.lock(|c| c.get().decide_active())
++    CONNECTION_STATUS.lock(|c| active(c.get(), output_selection()))
+ }
+ 
+ /// Snapshot of the current connection status.
+@@ -65,8 +90,9 @@
+         return;
+     };
+ 
+-    let prev_active = prev.decide_active();
+-    let new_active = new.decide_active();
++    let selection = output_selection();
++    let prev_active = active(prev, selection);
++    let new_active = active(new, selection);
+ 
+     if prev_active != new_active
+         && let Some(prev_active) = prev_active
+@@ -92,6 +118,10 @@
+ /// connection loop re-advertises and updates state from there. `bonded` is the bond
+ /// presence of `profile`, the slot being switched to, not of the outgoing one.
+ pub(crate) fn set_ble_profile(profile: u8, bonded: bool) {
++    #[cfg(feature = "_ble")]
++    if (profile as usize) < crate::NUM_BLE_PROFILE {
++        LAST_HOST_PROFILE.lock(|c| c.set(profile));
++    }
+     update_status(|c| {
+         c.ble.profile = profile;
+         c.ble.state = BleState::Inactive;
+@@ -172,6 +202,7 @@
+     }
+ 
+     fn reset_state() {
++        super::OUTPUT_SELECTION.lock(|c| c.set(crate::output_selection::OutputSelection::Automatic));
+         CONNECTION_STATUS.lock(|c| c.set(ConnectionStatus::default()));
+         #[cfg(not(feature = "_no_usb"))]
+         crate::channel::USB_REPORT_CHANNEL.clear();
+--- a/rmk/src/output_selection.rs
++++ b/rmk/src/output_selection.rs
+@@ -0,0 +1,181 @@
++//! Absolute output selection for a physical mode selector. Automatic preserves RMK defaults.
++use rmk_types::connection::{ConnectionStatus, ConnectionType};
++
++#[derive(Clone, Copy, Debug, PartialEq, Eq)]
++pub enum OutputSelection {
++    Off,
++    Automatic,
++    Wired,
++    Bluetooth,
++    Dongle,
++}
++
++pub(crate) fn active(status: ConnectionStatus, selection: OutputSelection) -> Option<ConnectionType> {
++    match selection {
++        OutputSelection::Off => None,
++        OutputSelection::Automatic => status.decide_active(),
++        OutputSelection::Wired => matches!(
++            status.usb,
++            rmk_types::connection::UsbState::Configured | rmk_types::connection::UsbState::Suspended
++        )
++        .then_some(ConnectionType::Usb),
++        OutputSelection::Bluetooth => (status.ble.state == rmk_types::ble::BleState::Connected
++            && (status.ble.profile as usize) < crate::NUM_BLE_PROFILE)
++            .then_some(ConnectionType::Ble),
++        OutputSelection::Dongle => {
++            #[cfg(feature = "dongle")]
++            {
++                (status.ble.state == rmk_types::ble::BleState::Connected
++                    && status.ble.profile == crate::ble::profile::DONGLE_PROFILE)
++                    .then_some(ConnectionType::Ble)
++            }
++            #[cfg(not(feature = "dongle"))]
++            {
++                None
++            }
++        }
++    }
++}
++
++/// Establish fail-closed routing before starting USB, BLE, or keyboard tasks.
++/// The input reader subsequently calls `select` to let the initialized profile manager select its peer.
++pub fn initialize(selection: OutputSelection) {
++    crate::state::set_output_selection(selection);
++}
++
++/// Use RMK's profile manager and release/routing cascade. Physical selection is not persisted:
++/// the switch supplies it on every boot, and no unavailable transport is substituted.
++#[cfg(feature = "_ble")]
++pub async fn select(selection: OutputSelection) {
++    crate::state::set_output_selection(selection);
++    use crate::ble::profile::BleProfileAction;
++    let action = match selection {
++        OutputSelection::Bluetooth => Some(BleProfileAction::SwitchLastHost),
++        #[cfg(feature = "dongle")]
++        OutputSelection::Dongle => Some(BleProfileAction::Switch(crate::ble::profile::DONGLE_PROFILE)),
++        _ => None,
++    };
++    if let Some(action) = action {
++        crate::channel::BLE_PROFILE_CHANNEL.send(action).await;
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use rmk_types::{
++        ble::{BleState, BleStatus},
++        connection::UsbState,
++    };
++    fn status(usb: UsbState, ble: BleState, profile: u8) -> ConnectionStatus {
++        ConnectionStatus {
++            usb,
++            ble: BleStatus {
++                state: ble,
++                profile,
++                bonded: false,
++            },
++            preferred: ConnectionType::Usb,
++        }
++    }
++    #[test]
++    fn wired_does_not_fall_back_to_connected_radio() {
++        assert_eq!(
++            active(
++                status(UsbState::Disabled, BleState::Connected, 0),
++                OutputSelection::Wired
++            ),
++            None
++        );
++        assert_eq!(
++            active(
++                status(UsbState::Suspended, BleState::Connected, 0),
++                OutputSelection::Wired
++            ),
++            Some(ConnectionType::Usb)
++        );
++    }
++    #[test]
++    fn bluetooth_ignores_configured_usb_and_the_wrong_peer() {
++        assert_eq!(
++            active(
++                status(UsbState::Configured, BleState::Inactive, 0),
++                OutputSelection::Bluetooth
++            ),
++            None
++        );
++        assert_eq!(
++            active(
++                status(UsbState::Configured, BleState::Connected, 0),
++                OutputSelection::Bluetooth
++            ),
++            Some(ConnectionType::Ble)
++        );
++        assert_eq!(
++            active(
++                status(UsbState::Configured, BleState::Connected, crate::NUM_BLE_PROFILE as u8),
++                OutputSelection::Bluetooth
++            ),
++            None
++        );
++    }
++    #[cfg(feature = "dongle")]
++    #[test]
++    fn dongle_ignores_usb_and_host_ble_until_the_dongle_connects() {
++        assert_eq!(
++            active(
++                status(UsbState::Configured, BleState::Connected, 0),
++                OutputSelection::Dongle
++            ),
++            None
++        );
++        assert_eq!(
++            active(
++                status(
++                    UsbState::Configured,
++                    BleState::Connected,
++                    crate::ble::profile::DONGLE_PROFILE
++                ),
++                OutputSelection::Dongle
++            ),
++            Some(ConnectionType::Ble)
++        );
++    }
++}
++
++/// Clear only the dedicated dongle bond; queued profile switches cannot change its target.
++#[cfg(all(feature = "_ble", feature = "dongle"))]
++pub async fn clear_dongle_bond() {
++    crate::channel::BLE_PROFILE_CHANNEL
++        .send(crate::ble::profile::BleProfileAction::ClearSlot(
++            crate::ble::profile::DONGLE_PROFILE,
++        ))
++        .await;
++}
++
++#[cfg(all(test, feature = "_ble", feature = "dongle"))]
++#[test]
++fn dongle_clear_target_is_fixed_after_a_queued_host_switch() {
++    use crate::{
++        ble::profile::{BleProfileAction, DONGLE_PROFILE},
++        channel::BLE_PROFILE_CHANNEL,
++        test_support::test_block_on,
++    };
++    test_block_on(crate::futures::future::join(
++        async {
++            BLE_PROFILE_CHANNEL.send(BleProfileAction::SwitchLastHost).await;
++            clear_dongle_bond().await;
++        },
++        async {
++            assert!(matches!(
++                BLE_PROFILE_CHANNEL.receive().await,
++                BleProfileAction::SwitchLastHost
++            ));
++            // The host selection reaches the manager before the pending clear command.
++            crate::state::set_ble_profile(0, true);
++            assert!(
++                matches!(BLE_PROFILE_CHANNEL.receive().await, BleProfileAction::ClearSlot(slot) if slot == DONGLE_PROFILE)
++            );
++        },
++    ));
++}
+--- a/rmk/src/ble/profile.rs
++++ b/rmk/src/ble/profile.rs
+@@ -91,6 +91,7 @@
+ #[derive(Debug)]
+ pub(crate) enum BleProfileAction {
+     Switch(u8),
++    SwitchLastHost,
+     Previous,
+     Next,
+     ClearBond,
+@@ -309,6 +310,13 @@
+ 
+     /// Switch to the specified profile, return true if the profile is switched
+     pub(crate) async fn switch_profile(&mut self, profile: u8) -> bool {
++        let selection = crate::state::output_selection();
++        if (selection == crate::output_selection::OutputSelection::Bluetooth && profile as usize >= NUM_BLE_PROFILE)
++            || (selection == crate::output_selection::OutputSelection::Dongle && profile as usize != NUM_BLE_PROFILE)
++        {
++            return false;
++        }
++
+         let current = current_profile();
+         if profile == current {
+             return false;
+@@ -320,7 +328,9 @@
+         self.update_stack_bonds();
+ 
+         #[cfg(feature = "storage")]
+-        if store(StorageItem::ActiveBleProfile(profile)).await.is_err() {
++        if !(selection != crate::output_selection::OutputSelection::Automatic && profile as usize >= NUM_BLE_PROFILE)
++            && store(StorageItem::ActiveBleProfile(profile)).await.is_err()
++        {
+             error!("Failed to save active profile");
+         }
+ 
+@@ -345,6 +355,11 @@
+             {
+                 Either3::First(action) => {
+                     match action {
++                        BleProfileAction::SwitchLastHost => {
++                            if !self.switch_profile(crate::state::last_host_profile()).await {
++                                continue;
++                            }
++                        }
+                         BleProfileAction::Switch(profile) => {
+                             if !self.switch_profile(profile).await {
+                                 // If the profile is the same as the current profile, do nothing
+--- a/rmk/src/config/storage.rs
++++ b/rmk/src/config/storage.rs
+@@ -8,6 +8,7 @@
+     pub num_sectors: u8,
+     pub clear_storage: bool,
+     pub clear_layout: bool,
++    pub layout_id: Option<u32>,
+ }
+ 
+ impl Default for StorageConfig {
+@@ -17,6 +18,7 @@
+             num_sectors: 2,
+             clear_storage: false,
+             clear_layout: false,
++            layout_id: None,
+         }
+     }
+ }
+--- a/rmk/src/storage/mod.rs
++++ b/rmk/src/storage/mod.rs
+@@ -370,6 +370,13 @@
+     hash
+ };
+ 
++const fn expected_schema(layout_id: Option<u32>) -> u32 {
++    match layout_id {
++        Some(id) => fnv_hash(SCHEMA_HASH, &id.to_le_bytes()),
++        None => SCHEMA_HASH,
++    }
++}
++
+ pub struct Storage<
+     F: AsyncNorFlash,
+     const ROW: usize,
+@@ -456,17 +463,24 @@
+             clear_layout: false,
+         };
+ 
++        let expected_schema = expected_schema(storage_config.layout_id);
+         let stored = storage.fetch(StorageKey::StorageConfig).await;
+         if storage_config.clear_storage
+-            || !matches!(stored, Ok(Some(StorageValue::StorageConfig(schema_hash))) if schema_hash == SCHEMA_HASH)
++            || !matches!(stored, Ok(Some(StorageValue::StorageConfig(schema_hash))) if schema_hash == expected_schema)
+         {
+             debug!("Clearing storage!");
+             // An erase never invalidates the cache the probing `fetch` filled, so rebuild the map
+             // with a fresh one. Nothing else is written back: reads now miss and the RAM defaults stand.
+             let (mut raw, _) = storage.flash.destroy();
+-            let _ = raw.erase(storage_range.start, storage_range.end).await;
++            assert!(
++                raw.erase(storage_range.start, storage_range.end).await.is_ok(),
++                "Storage erase failed; initialization stopped"
++            );
+             storage.flash = MapStorage::new(raw, MapConfig::new(storage_range), cache());
+-            let _ = storage.put(StorageItem::StorageConfig(SCHEMA_HASH)).await;
++            assert!(
++                storage.put(StorageItem::StorageConfig(expected_schema)).await.is_ok(),
++                "Storage schema write failed; initialization stopped"
++            );
+             // The erase already handed the compiled-in layout the win: reads miss and the RAM
+             // defaults stand, so there is nothing for `clear_layout` to overwrite.
+         } else {
+@@ -859,6 +873,160 @@
+         });
+     }
+ 
++    #[test]
++    fn default_schema_is_unchanged_and_layout_ids_are_distinct() {
++        assert_eq!(expected_schema(None), SCHEMA_HASH);
++        let schemas = [None, Some(2), Some(3), Some(4)].map(expected_schema);
++        for (index, schema) in schemas.iter().enumerate() {
++            assert!(!schemas[..index].contains(schema));
++        }
++    }
++
++    #[cfg(feature = "host")]
++    #[test]
++    fn same_layout_keeps_keys_but_equal_sized_other_layout_resets_them() {
++        use crate::keymap::KeymapData;
++        use rmk_types::action::Action;
++        use rmk_types::keycode::{HidKeyCode, KeyCode};
++
++        let saved = KeyAction::Single(Action::Key(KeyCode::Hid(HidKeyCode::A)));
++        let default = KeyAction::Single(Action::Key(KeyCode::Hid(HidKeyCode::B)));
++        let iso = RuntimeStorageConfig {
++            layout_id: Some(2),
++            ..RuntimeStorageConfig::default()
++        };
++        let jis = RuntimeStorageConfig {
++            layout_id: Some(4),
++            ..RuntimeStorageConfig::default()
++        };
++        block_on(async {
++            // Both physical layouts have 85 keys; matrix dimensions cannot identify them.
++            let mut storage = Box::pin(Storage::<TestFlash, 1, 85, 1, 0>::new(
++                async_flash_wrapper(Part::new()),
++                &iso,
++            ))
++            .await;
++            storage
++                .put(StorageItem::Keymap {
++                    layer: 0,
++                    row: 0,
++                    col: 84,
++                    action: saved,
++                })
++                .await
++                .unwrap();
++            let (flash, _) = storage.flash.destroy();
++            let mut storage = Box::pin(Storage::<TestFlash, 1, 85, 1, 0>::new(flash, &iso)).await;
++            let mut data = KeymapData::new([[[default; 85]]]);
++            let mut behavior = RuntimeBehaviorConfig::default();
++            storage.read_keymap(&mut data, &mut behavior).await.unwrap();
++            assert_eq!(data.keymap[0][0][84], saved);
++
++            let (flash, _) = storage.flash.destroy();
++            let mut storage = Box::pin(Storage::<TestFlash, 1, 85, 1, 0>::new(flash, &jis)).await;
++            let mut data = KeymapData::new([[[default; 85]]]);
++            storage.read_keymap(&mut data, &mut behavior).await.unwrap();
++            assert_eq!(data.keymap[0][0][84], default);
++            assert!(matches!(storage.fetch(StorageKey::StorageConfig).await,
++                Ok(Some(StorageValue::StorageConfig(hash))) if hash == expected_schema(jis.layout_id)));
++        });
++    }
++
++    // Production Storage::new over a real RMK test flash, with erase failure injected.
++    struct EraseFault {
++        part: Part,
++        fail: bool,
++    }
++    impl embedded_storage::nor_flash::ErrorType for EraseFault {
++        type Error = embedded_storage::nor_flash::NorFlashErrorKind;
++    }
++    impl embedded_storage::nor_flash::ReadNorFlash for EraseFault {
++        const READ_SIZE: usize = 1;
++        fn read(&mut self, offset: u32, bytes: &mut [u8]) -> Result<(), Self::Error> {
++            embedded_storage::nor_flash::ReadNorFlash::read(&mut self.part, offset, bytes)
++        }
++        fn capacity(&self) -> usize {
++            16384
++        }
++    }
++    impl embedded_storage::nor_flash::NorFlash for EraseFault {
++        const WRITE_SIZE: usize = 1;
++        const ERASE_SIZE: usize = 4096;
++        fn erase(&mut self, from: u32, to: u32) -> Result<(), Self::Error> {
++            if self.fail {
++                Err(Self::Error::Other)
++            } else {
++                embedded_storage::nor_flash::NorFlash::erase(&mut self.part, from, to)
++            }
++        }
++        fn write(&mut self, offset: u32, bytes: &[u8]) -> Result<(), Self::Error> {
++            embedded_storage::nor_flash::NorFlash::write(&mut self.part, offset, bytes)
++        }
++    }
++    #[test]
++    fn patched_erase_failure_cannot_stamp_new_layout_or_load_old_keys() {
++        let part = Part::new();
++        let iso = RuntimeStorageConfig {
++            layout_id: Some(2),
++            ..Default::default()
++        };
++        let jis = RuntimeStorageConfig {
++            layout_id: Some(4),
++            ..Default::default()
++        };
++        block_on(async {
++            let mut old = Box::pin(Storage::<_, 1, 85, 1, 0>::new(
++                async_flash_wrapper(EraseFault {
++                    part: part.clone(),
++                    fail: false,
++                }),
++                &iso,
++            ))
++            .await;
++            old.put(StorageItem::UserData {
++                slot: 1,
++                data: heapless::Vec::from_slice(b"saved").unwrap(),
++            })
++            .await
++            .unwrap();
++        });
++        let before = part.writes();
++        let failure = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
++            block_on(async {
++                Box::pin(Storage::<_, 1, 85, 1, 0>::new(
++                    async_flash_wrapper(EraseFault {
++                        part: part.clone(),
++                        fail: true,
++                    }),
++                    &jis,
++                ))
++                .await
++            })
++        }));
++        assert!(
++            failure.is_err(),
++            "Failed erase must stop before returning storage to keymap initialization"
++        );
++        assert_eq!(
++            part.writes(),
++            before,
++            "No new schema marker can be written after failed erase"
++        );
++        block_on(async {
++            let mut old = Box::pin(Storage::<_, 1, 85, 1, 0>::new(
++                async_flash_wrapper(EraseFault {
++                    part: part.clone(),
++                    fail: false,
++                }),
++                &iso,
++            ))
++            .await;
++            assert!(matches!(old.fetch(StorageKey::StorageConfig).await,
++                Ok(Some(StorageValue::StorageConfig(hash))) if hash == expected_schema(iso.layout_id)));
++            assert!(matches!(old.fetch(StorageKey::UserData(1)).await,
++                Ok(Some(StorageValue::UserData(data))) if data.as_slice() == b"saved"));
++        });
++    }
+     /// A schema mismatch is the only thing that erases. It has to take the pairings with
+     /// it, because an item written under another schema can decode as the wrong variant.
+     #[test]
+--- a/rmk/src/host/via/keycode_convert.rs
++++ b/rmk/src/host/via/keycode_convert.rs
+@@ -1,4 +1,4 @@
+-use rmk_types::action::{Action, KeyAction, KeyboardAction};
++use rmk_types::action::{Action, KeyAction, KeyboardAction, LightAction};
+ use rmk_types::keycode::{HidKeyCode, KeyCode, SpecialKey};
+ use rmk_types::modifier::ModifierCombination;
+ 
+@@ -84,6 +84,15 @@
+                     0
+                 }
+             },
++            Action::Light(light) => match light {
++                LightAction::BacklightOn => 0x7800,
++                LightAction::BacklightOff => 0x7801,
++                LightAction::BacklightToggle => 0x7802,
++                LightAction::BacklightDown => 0x7803,
++                LightAction::BacklightUp => 0x7804,
++                LightAction::BacklightStep => 0x7805,
++                _ => 0,
++            },
+             Action::User(id) => (id as u16 & 0x1F) | 0x7E00,
+             _ => {
+                 warn!("Action: {:?} in vial is not supported yet", a);
+@@ -216,7 +225,13 @@
+             KeyAction::No
+         }
+         0x7700..=0x77FF => KeyAction::Single(Action::TriggerMacro(via_keycode as u8)),
+-        0x7800..=0x783F => {
++        0x7800 => KeyAction::Single(Action::Light(LightAction::BacklightOn)),
++        0x7801 => KeyAction::Single(Action::Light(LightAction::BacklightOff)),
++        0x7802 => KeyAction::Single(Action::Light(LightAction::BacklightToggle)),
++        0x7803 => KeyAction::Single(Action::Light(LightAction::BacklightDown)),
++        0x7804 => KeyAction::Single(Action::Light(LightAction::BacklightUp)),
++        0x7805 => KeyAction::Single(Action::Light(LightAction::BacklightStep)),
++        0x7806..=0x783F => {
+             // TODO: backlight and rgb configuration
+             warn!("Backlight and RGB configuration key not supported");
+             KeyAction::No
+@@ -908,3 +923,24 @@
+         assert_eq!(from_ascii(ascii), (keycode, shifted));
+     }
+ }
++
++#[cfg(test)]
++mod behavior_gap_proof {
++    use super::*;
++    #[test]
++    fn patched_vial_roundtrips_backlight_actions() {
++        use rmk_types::action::LightAction;
++        for (code, action) in [
++            (0x7800, LightAction::BacklightOn),
++            (0x7801, LightAction::BacklightOff),
++            (0x7802, LightAction::BacklightToggle),
++            (0x7803, LightAction::BacklightDown),
++            (0x7804, LightAction::BacklightUp),
++            (0x7805, LightAction::BacklightStep),
++        ] {
++            let action = KeyAction::Single(Action::Light(action));
++            assert_eq!(to_via_keycode(action), code);
++            assert_eq!(from_via_keycode(code), action);
++        }
++    }
++}
+--- a/rmk-macro/src/codegen/chip/flash.rs
++++ b/rmk-macro/src/codegen/chip/flash.rs
+@@ -35,7 +35,7 @@
+                 num_sectors: #num_sectors,
+                 start_addr: #storage_start_addr,
+                 clear_storage: #clear_storage,
+-                clear_layout: #clear_layout
++                clear_layout: #clear_layout, layout_id: None
+             };
+         }
+     });
+--- a/rmk/Cargo.toml
++++ b/rmk/Cargo.toml
+@@ -145,6 +145,8 @@
+ 
+ ## Enable custom message support.
+ custom_message = ["rmk-types/custom_message"]
++# Receive custom messages without a dongle-to-keyboard custom channel.
++custom_message_receive_only = ["custom_message"]
+ 
+ ## Enable the storage. The storage is optional to save memory
+ storage = [
+--- a/rmk/src/dongle/mod.rs
++++ b/rmk/src/dongle/mod.rs
+@@ -44,7 +44,9 @@
+ use crate::channel::send_hid_report;
+ use crate::core_traits::Runnable;
+ #[cfg(feature = "custom_message")]
+-use crate::dongle::event::{CUSTOM_TO_DONGLE_UUID, CUSTOM_TO_KEYBOARD_UUID};
++use crate::dongle::event::CUSTOM_TO_DONGLE_UUID;
++#[cfg(all(feature = "custom_message", not(feature = "custom_message_receive_only")))]
++use crate::dongle::event::CUSTOM_TO_KEYBOARD_UUID;
+ use crate::dongle::event::{DONGLE_EVENT_CHAR_UUID, DONGLE_EVENT_SERVICE_UUID, DongleEvent};
+ use crate::event::{
+     DongleState, DongleStateEvent, EventSubscriber, LedIndicatorEvent, SubscribableEvent, publish_event,
+@@ -553,9 +555,9 @@
+ 
+         // Three independent loops, not one combined one: an LED update must not
+         // wait behind a config write, or the other way around.
+-        #[cfg(not(feature = "custom_message"))]
++        #[cfg(any(not(feature = "custom_message"), feature = "custom_message_receive_only"))]
+         select3(keyboard_to_host, led_to_keyboard, request_to_keyboard).await;
+-        #[cfg(feature = "custom_message")]
++        #[cfg(all(feature = "custom_message", not(feature = "custom_message_receive_only")))]
+         embassy_futures::select::select4(keyboard_to_host, led_to_keyboard, request_to_keyboard, async {
+             let Some(characteristic) = chars.custom_to_keyboard.as_ref() else {
+                 return core::future::pending().await;
+@@ -589,7 +591,7 @@
+     /// `None` on a keyboard built without `custom_message`.
+     #[cfg(feature = "custom_message")]
+     custom_to_dongle: Option<Characteristic<[u8]>>,
+-    #[cfg(feature = "custom_message")]
++    #[cfg(all(feature = "custom_message", not(feature = "custom_message_receive_only")))]
+     custom_to_keyboard: Option<Characteristic<[u8]>>,
+ }
+ 
+@@ -639,7 +641,7 @@
+         let mut event = None;
+         #[cfg(feature = "custom_message")]
+         let mut custom_to_dongle = None;
+-        #[cfg(feature = "custom_message")]
++        #[cfg(all(feature = "custom_message", not(feature = "custom_message_receive_only")))]
+         let mut custom_to_keyboard = None;
+         if let Ok(services) = client.services_by_uuid(&DONGLE_EVENT_SERVICE_UUID.into()).await
+             && let Some(service) = services.into_iter().next()
+@@ -654,10 +656,13 @@
+                     .characteristic_by_uuid::<[u8]>(&service, &CUSTOM_TO_DONGLE_UUID.into())
+                     .await
+                     .ok();
+-                custom_to_keyboard = client
+-                    .characteristic_by_uuid::<[u8]>(&service, &CUSTOM_TO_KEYBOARD_UUID.into())
+-                    .await
+-                    .ok();
++                #[cfg(not(feature = "custom_message_receive_only"))]
++                {
++                    custom_to_keyboard = client
++                        .characteristic_by_uuid::<[u8]>(&service, &CUSTOM_TO_KEYBOARD_UUID.into())
++                        .await
++                        .ok();
++                }
+             }
+         }
+ 
+@@ -672,7 +677,7 @@
+             event,
+             #[cfg(feature = "custom_message")]
+             custom_to_dongle,
+-            #[cfg(feature = "custom_message")]
++            #[cfg(all(feature = "custom_message", not(feature = "custom_message_receive_only")))]
+             custom_to_keyboard,
+         })
+     }

@@ -1,0 +1,31 @@
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -452,6 +452,7 @@
+ ]
+ 
+ [features]
++preserve-uicr = []
+ _dppi = []
+ _gpio-p1 = []
+ _gpio-p2 = []
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -771,6 +771,10 @@
+         return WriteResult::Noop;
+     }
+ 
++    #[cfg(feature = "preserve-uicr")]
++    { return WriteResult::Failed; }
++    #[cfg(not(feature = "preserve-uicr"))]
++    {
+     // We can only change `1` bits to `0` bits.
+     if curr_val & value & mask != value & mask {
+         return WriteResult::Failed;
+@@ -790,6 +794,7 @@
+     });
+ 
+     WriteResult::Written
++    }
+ }
+ 
+ /// Initialize the `embassy-nrf` HAL with the provided configuration.

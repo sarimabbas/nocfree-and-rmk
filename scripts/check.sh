@@ -31,6 +31,7 @@ while [ "$#" -gt 0 ]; do
     esac
 done
 cd "$(dirname "$0")/.."
+python3 scripts/prepare_migration.py
 if [ "$mode" != build ]; then
     work=$(mktemp -d)
     trap 'rm -rf "$work"' EXIT HUP INT TERM
