@@ -1094,8 +1094,11 @@ impl Companion {
             &self.device_key,
             &self.firmware_versions,
             self.bundled_version.as_deref().filter(|_| {
-                self.versions_seen
-                    .is_some_and(|t| t.elapsed() < Duration::from_secs(15))
+                // Trial images can share a version with a different production build.
+                !cfg!(feature = "firmware-trial")
+                    && self
+                        .versions_seen
+                        .is_some_and(|t| t.elapsed() < Duration::from_secs(15))
             }),
             self.discovery_seen
                 .is_some_and(|t| t.elapsed() < Duration::from_secs(5)),
@@ -1353,6 +1356,23 @@ impl Companion {
         };
         if self.navigation.page() == Page::Firmware {
             body = body.child(self.layout_picker(cx));
+            if self.native_bundle
+                && (self.firmware_versions.iter().any(|firmware| {
+                    firmware.factory
+                        || semver::Version::parse(&firmware.version)
+                            .is_ok_and(|version| version < semver::Version::new(0, 1, 2))
+                }) || self.latest_discovery.as_ref().is_some_and(|snapshot| {
+                    snapshot
+                        .devices
+                        .iter()
+                        .any(|device| device.factory_left() || device.factory_dongle())
+                }))
+            {
+                body = body.child(instruction_line(
+                    "This update resets saved key mappings and wireless pairings. Pair Bluetooth and the dongle again after installation.",
+                    false, cx,
+                ));
+            }
         }
         let enabled = self.navigation.can_start()
             && !self.operation.busy()
@@ -1647,6 +1667,14 @@ impl Companion {
                             }
                             if this.navigation.page() == Page::Recovery {
                                 this.cancel_recovery();
+                                this.navigation.reset();
+                                cx.notify();
+                            } else if this.navigation.page() == Page::Pairing {
+                                if let Some(install) = this.install.as_mut() {
+                                    install.cancel();
+                                }
+                                this.install = None;
+                                this.typing_input = None;
                                 this.navigation.reset();
                                 cx.notify();
                             } else {
@@ -2179,7 +2207,13 @@ impl Companion {
             InstallStage::Setup(mode) | InstallStage::Typing(mode) => {
                 let typing = matches!(stage, InstallStage::Typing(_));
                 let ticket = self.install.as_ref().expect("active install").ticket();
-                let instruction = if typing {
+                let instruction = if typing
+                    && mode == crate::device_status::Mode::Wired
+                    && self.install.as_ref().is_some_and(|machine| {
+                        machine.target() == crate::install_journey::Target::Rmk
+                    }) {
+                    "Keep LEFT USB connected. If keys do not type, press LEFT Fn + Space once to select USB."
+                } else if typing {
                     "Keep this connection while you type the test text."
                 } else {
                     self.install
@@ -2370,7 +2404,7 @@ impl Companion {
         });
         if !factory && !self.native_bundle {
             self.operation
-                .fail("This draft needs the upstream firmware package.".into());
+                .fail("The bundled firmware could not be loaded. Reinstall Companion.".into());
             cx.notify();
             return;
         }
@@ -2593,6 +2627,11 @@ impl Companion {
                     error.clone(),
                     None,
                     cx,
+                )
+                .child(
+                    button("restore-after-failure", "Restore factory")
+                        .disabled(self.operation.busy())
+                        .on_click(cx.listener(|this, _, _, cx| this.navigate(Page::Restore, cx))),
                 ),
                 actions: Some(
                     self.footer(

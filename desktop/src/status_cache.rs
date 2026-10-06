@@ -1,4 +1,5 @@
-//! Display history only. Never grants recovery, backup or firmware-write eligibility.
+//! Display history and previously confirmed recovery serials.
+//! Recovery reuse also requires one live drive and reviewed bootloader metadata.
 use crate::{battery::Levels, runtime_recovery::Role};
 use nusb::MaybeFuture;
 use serde::{Deserialize, Serialize};

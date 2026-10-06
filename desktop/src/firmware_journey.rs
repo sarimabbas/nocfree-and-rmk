@@ -352,12 +352,9 @@ impl StatigState<FirmwareData> for Phase {
         if !returned {
             data.wired_ack = false;
         }
-        let return_allowed = data.role() != Role::Left
-            || if data.release.factory() {
-                data.wired_ack
-            } else {
-                *mode == Some(crate::device_status::Mode::Wired)
-            };
+        // This proves application startup on the bound USB port. Transport
+        // selection is checked separately by the isolated typing journey.
+        let return_allowed = data.role() != Role::Left || !data.release.factory() || data.wired_ack;
         if matches!(event, FirmwareEvent::Observe(..))
             && matches!(
                 phase,
@@ -545,7 +542,7 @@ fn superseded(prior: &Path, raw_intent: &[u8], role: Role) -> Result<bool, Strin
     let old: serde_json::Value = serde_json::from_slice(raw_intent)
         .map_err(|_| "Original operation record is unreadable.")?;
     if marker["schema"].as_u64() != Some(1)
-        || !rmk_intent(&old)
+        || !(rmk_intent(&old) || old["kind"].as_str() == Some("factory"))
         || marker["old_intent_sha256"].as_str() != Some(hash(raw_intent).as_str())
         || marker["role"] != old["role"]
         || marker["location"] != old["location"]
@@ -592,7 +589,7 @@ fn record_factory_supersession(
         return Err("Check that the firmware matches the factory backup before replacing the earlier installation record.".into());
     }
     let root = folder.parent().ok_or("Backup folder is unavailable.")?;
-    let proof = serde_json::json!({"schema":1,"role":format!("{role:?}"),"location":location,"target_sha256":image.sha(),"readback_sha256":hash(actual),"readback":readback,"classification":"factory readback exact; preceding RMK result remains uncertain"});
+    let proof = serde_json::json!({"schema":1,"role":format!("{role:?}"),"location":location,"target_sha256":image.sha(),"readback_sha256":hash(actual),"readback":readback,"classification":"factory readback exact; preceding transfer remains unverified"});
     let proof_path = folder.join("factory-verified.json");
     if proof_path.exists() {
         let old: serde_json::Value =
@@ -628,7 +625,7 @@ fn record_factory_supersession(
         let old: serde_json::Value = serde_json::from_slice(&raw)
             .map_err(|_| "Could not read the earlier RMK installation record.")?;
         if old["schema"].as_u64() != Some(1)
-            || !rmk_intent(&old)
+            || !(rmk_intent(&old) || old["kind"].as_str() == Some("factory"))
             || old["role"].as_str() != Some(format!("{role:?}").as_str())
             || old["location"].as_u64() != Some(location)
         {
@@ -704,19 +701,34 @@ fn reconcile_target(
         if record["role"].as_str() != Some(format!("{role:?}").as_str()) {
             continue;
         }
-        if matches!(image, TargetImage::Factory(_)) && rmk_intent(&record) {
-            // Explicit undo uses a new fresh full backup and its own one-shot
-            // intent. Keep the old RMK attempt uncertain; never replay or claim
-            // it verified merely because a different restore was requested.
-            image.target()?;
-            flash_bytes(actual)?;
-            continue;
-        }
         if superseded(
             &prior,
             &device::read_bounded(&prior.join("install-intent.json"), 8192)?,
             role,
         )? {
+            continue;
+        }
+        if matches!(image, TargetImage::Factory(_))
+            && (rmk_intent(&record) || record["kind"].as_str() == Some("factory"))
+        {
+            if record["kind"].as_str() == Some("factory") {
+                if record["location"].as_u64() != Some(location)
+                    || record["target_sha256"].as_str() != Some(image.sha())
+                {
+                    return Err(
+                        "Use the same factory backup and USB port to retry this restore.".into(),
+                    );
+                }
+                let previous = device::read_bounded(&prior.join("CURRENT.UF2"), ARCHIVE_LIMIT)?;
+                if record["backup_sha256"].as_str() != Some(hash(&previous).as_str()) {
+                    return Err("The earlier installation backup changed.".into());
+                }
+            }
+            // Explicit undo uses a new fresh full backup and its own one-shot
+            // intent. Keep the old attempt unverified; never replay or claim
+            // it verified merely because a different restore was requested.
+            image.target()?;
+            flash_bytes(actual)?;
             continue;
         }
         // A completed factory restore must be reconciled against that attempt's
@@ -739,6 +751,13 @@ fn reconcile_target(
         let previous = device::read_bounded(&prior.join("CURRENT.UF2"), ARCHIVE_LIMIT)?;
         if record["backup_sha256"].as_str() != Some(hash(&previous).as_str()) {
             return Err("The earlier installation backup changed.".into());
+        }
+        // The same target may be retried in a new journey only after a full
+        // readback proves the original backup is intact. Keep this attempt
+        // unverified: unchanged firmware is not installation success.
+        if actual == previous && matches!(image, TargetImage::Rmk(_)) {
+            flash_bytes(actual)?;
+            continue;
         }
         let storage = reconciliation_image.verify(actual, &previous)?;
         durable(&prior,"install-verified.json",&serde_json::to_vec_pretty(&serde_json::json!({"schema":1,"readback_sha256":hash(actual),"settings_changed_bytes":storage,"reconciled_after_restart":true})).map_err(|_| "Could not save the installation check.")?)?;
@@ -843,7 +862,7 @@ impl FirmwareJourney {
             ),
             Phase::Disconnect if self.role() == Role::Left => (
                 "Start the left half",
-                "Move left to middle WIRED. If the recovery drive is open, unplug USB; otherwise keep it connected.",
+                "Move LEFT to middle WIRED. If the recovery drive is open, unplug USB; otherwise keep it connected.",
             ),
             Phase::Disconnect => (
                 "Start the dongle",
@@ -862,11 +881,11 @@ impl FirmwareJourney {
             Phase::Reconnect => ("Reconnect USB", "Reconnect it to the same USB port."),
             Phase::Complete if self.is_factory() => (
                 "Factory firmware restored",
-                "All three parts are running factory firmware.",
+                "The selected parts are running factory firmware.",
             ),
             Phase::Complete => (
                 "You’re up to date",
-                "All three parts are running the installed firmware.",
+                "The selected parts are running the installed firmware.",
             ),
             Phase::Failed => (
                 "Check your connection",
@@ -931,11 +950,13 @@ impl FirmwareJourney {
         let folder = session.save_backup()?;
         let bytes = device::read_bounded(&folder.join("CURRENT.UF2"), ARCHIVE_LIMIT)?;
         device::inspect_archive(&bytes)?;
-        let stock_noop = self.is_factory() && already_factory(role, &bytes, stock_origin)?;
+        let stock_noop = self.is_factory()
+            && already_factory(role, &bytes, stock_origin)?
+            && self.machine.inner().release.image(role)?.exact(&bytes)?;
         if FactoryRelease::archive_role(&bytes).is_some_and(|actual| actual != role) {
             return Err("The recovery drive contains another part's factory firmware. Connect the selected part before continuing.".into());
         }
-        if !stock_noop {
+        {
             reconcile_target(
                 &folder,
                 role,
@@ -1080,7 +1101,7 @@ impl FirmwareJourney {
         self.can_next_at(Instant::now())
     }
     fn can_next_at(&self, now: Instant) -> bool {
-        let Some((snapshot, seen, mode)) = &self.machine.inner().latest else {
+        let Some((snapshot, seen, _mode)) = &self.machine.inner().latest else {
             return false;
         };
         if now.saturating_duration_since(*seen) > Duration::from_secs(5) {
@@ -1090,10 +1111,7 @@ impl FirmwareJourney {
             return false;
         };
         let normal = normal_return(snapshot, self.role(), baseline.location, self.is_factory());
-        let returned = normal
-            && (self.role() != Role::Left
-                || self.is_factory()
-                || *mode == Some(crate::device_status::Mode::Wired));
+        let returned = normal;
         let connected = snapshot
             .devices
             .iter()
@@ -1343,26 +1361,22 @@ mod tests {
         journey.next_at(now + Duration::from_secs(5));
     }
     #[test]
-    fn left_return_requires_live_wired_and_explicit_next() {
-        use crate::device_status::Mode;
+    fn native_left_return_needs_fresh_bound_usb_and_explicit_next() {
         let mut journey = model(Role::Left);
         let now = Instant::now();
-        for mode in [None, Some(Mode::Dongle), Some(Mode::Bluetooth)] {
-            journey.observe_mode_at(Ok(normal(Role::Left, 10)), mode, now);
-            assert!(!journey.can_next_at(now));
-            assert!(!journey.next_at(now));
-            assert!(!journey.view().complete);
-        }
-        journey.observe_mode_at(Ok(normal(Role::Left, 10)), Some(Mode::Wired), now);
+        let mut wrong = normal(Role::Left, 11);
+        journey.observe_mode_at(Ok(wrong.clone()), None, now);
+        journey.next_at(now);
+        assert!(!journey.view().complete);
+        wrong.devices.clear();
+        journey.observe_mode_at(Ok(wrong), None, now);
+        journey.observe_mode_at(Ok(normal(Role::Left, 10)), None, now);
         assert!(journey.can_next_at(now));
         assert!(!journey.view().complete);
-        journey.observe_mode_at(Ok(normal(Role::Left, 10)), Some(Mode::Dongle), now);
-        assert!(!journey.next_at(now));
-        journey.observe_mode_at(Ok(normal(Role::Left, 10)), Some(Mode::Wired), now);
         assert!(!journey.next_at(now + Duration::from_secs(6)));
         journey.observe_mode_at(
             Ok(normal(Role::Left, 10)),
-            Some(Mode::Wired),
+            None,
             now + Duration::from_secs(7),
         );
         assert!(journey.next_at(now + Duration::from_secs(7)));
@@ -1834,6 +1848,25 @@ mod tests {
             }
             assert!(image.exact(&archive).unwrap());
             assert_eq!(image.verify(&archive, &archive).unwrap(), 0);
+            let retry = root.join(format!("{role:?}-partial-factory"));
+            fs::create_dir(&retry).unwrap();
+            fs::write(retry.join("CURRENT.UF2"), &archive).unwrap();
+            let pending = serde_json::to_vec(&serde_json::json!({"schema":1,"kind":"factory","role":format!("{role:?}"),"location":10,"target_sha256":image.sha(),"backup_sha256":hash(&archive)})).unwrap();
+            fs::write(retry.join("install-intent.json"), &pending).unwrap();
+            let mut partial_settings = archive.clone();
+            for block in partial_settings.as_chunks_mut::<512>().0 {
+                if u32::from_le_bytes(block[12..16].try_into().unwrap()) == 0x65000 {
+                    block[32 + 100] ^= 1;
+                }
+            }
+            assert!(already_factory(role, &partial_settings, None).unwrap());
+            assert!(!image.exact(&partial_settings).unwrap());
+            reconcile_target(&next, role, 10, &partial_settings, &image).unwrap();
+            assert!(!retry.join("install-verified.json").exists());
+            assert!(reconcile_target(&next, role, 11, &partial_settings, &image).is_err());
+            record_factory_supersession(&current, &current, role, 10, &archive, &image).unwrap();
+            assert!(superseded(&retry, &pending, role).unwrap());
+            reconcile_target(&next, role, 11, &archive, &image).unwrap();
             for address in [0x1000, 0x27000, 0x65000] {
                 let mut wrong = archive.clone();
                 for b in wrong.as_chunks_mut::<512>().0 {
@@ -1845,69 +1878,6 @@ mod tests {
                 assert!(image.verify(&wrong, &archive).is_err());
             }
         }
-        fs::remove_dir_all(root).unwrap();
-    }
-    #[test]
-    #[ignore = "requires private original and official ANSI 2.4.5 fixtures; offline only"]
-    fn factory_version_difference_is_noop_without_selected_target_verification() {
-        let root = std::env::temp_dir().join(format!(
-            "factory-version-noop-{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        let evidence = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .unwrap()
-            .join(".evidence");
-        let original = evidence.join("factory-left/CURRENT.UF2");
-        let mut release = FactoryRelease::at(root.clone()).unwrap();
-        release.import(Role::Left, &original).unwrap();
-        release
-            .import(
-                Role::Left,
-                &evidence.join("factory-version-skip/left-official.uf2"),
-            )
-            .unwrap();
-        let archive = fs::read(original).unwrap();
-        let target = TargetImage::Factory(release.image(Role::Left).unwrap().clone());
-        assert!(!target.exact(&archive).unwrap());
-        assert!(already_factory(Role::Left, &archive, Some(Role::Left)).unwrap());
-        let mut journey = FirmwareJourney {
-            machine: FirmwareData {
-                release: TargetRelease::Factory(release),
-                plan: vec![Role::Left],
-                index: 0,
-                baseline: None,
-                error: None,
-                attempted: false,
-                already_current: false,
-                install_authorized: true,
-                verified_locations: vec![],
-                retry_phase: None,
-                wired_ack: false,
-                wired_ack_available: false,
-                latest: None,
-                absent_since: None,
-            }
-            .state_machine(),
-        };
-        let baseline = Baseline {
-            location: 10,
-            mount: BootMount {
-                path: PathBuf::new(),
-                info: String::new(),
-            },
-            folder: root.clone(),
-            bytes: archive,
-        };
-        journey
-            .machine
-            .handle(&FirmwareEvent::RecoverySaved(&baseline, true));
-        assert_eq!(journey.view().title, "Already on factory firmware");
-        assert!(!journey.view().can_transfer);
-        assert!(!root.join("factory-verified.json").exists());
         fs::remove_dir_all(root).unwrap();
     }
     #[test]
@@ -2035,6 +2005,12 @@ mod tests {
         fs::write(prior.join("CURRENT.UF2"), &old).unwrap();
         let raw = serde_json::to_vec(&serde_json::json!({"schema":1,"kind":"factory","role":"Receiver","location":10,"target_sha256":factory.sha256,"backup_sha256":hash(&old)})).unwrap();
         fs::write(prior.join("install-intent.json"), &raw).unwrap();
+        let factory_target = TargetImage::Factory(factory.clone());
+        let mut partial = actual.clone();
+        partial[32 + 100] ^= 1;
+        assert!(reconcile_target(&current, role, 11, &partial, &factory_target).is_err());
+        reconcile_target(&current, role, 10, &partial, &factory_target).unwrap();
+        assert!(!prior.join("install-verified.json").exists());
         let rmk = TargetImage::Rmk(Box::new(crate::release::fixture().image(role).clone()));
         assert!(reconcile_target(&current, role, 11, &actual, &rmk).is_err());
         let mut mismatch = actual.clone();
@@ -2047,11 +2023,21 @@ mod tests {
         reconcile_target(&current, role, 10, &actual, &rmk).unwrap();
         assert!(prior.join("install-verified.json").exists());
         assert_eq!(fs::read(prior.join("install-intent.json")).unwrap(), raw);
+        fs::remove_file(prior.join("install-verified.json")).unwrap();
+        fs::write(current.join("CURRENT.UF2"), &actual).unwrap();
+        record_factory_supersession(&current, &current, role, 10, &actual, &factory_target)
+            .unwrap();
+        assert!(superseded(&prior, &raw, role).unwrap());
+        assert!(!prior.join("install-verified.json").exists());
+        reconcile_target(&current, role, 11, &actual, &factory_target).unwrap();
+        reconcile_target(&current, role, 10, &actual, &rmk).unwrap();
+        fs::write(current.join("CURRENT.UF2"), &partial).unwrap();
+        assert!(superseded(&prior, &raw, role).is_err());
         fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
-    fn interrupted_transfer_requires_exact_original_backup_and_cannot_be_blindly_retried() {
+    fn interrupted_transfer_allows_only_verified_unchanged_retry_or_exact_target() {
         let root = std::env::temp_dir().join(format!(
             "nocfree-install-test-{}",
             std::time::SystemTime::now()
@@ -2075,9 +2061,13 @@ mod tests {
             &serde_json::to_vec(&intent).unwrap(),
         )
         .unwrap();
-        // No exact target yet: the saved one-shot intent remains unresolved.
-        assert!(reconcile_prior(&current, Role::Left, 10, &baseline, image).is_err());
+        // A fresh full readback proves a failed copy left the backup unchanged.
+        reconcile_prior(&current, Role::Left, 10, &baseline, image).unwrap();
         assert!(!prior.join("install-verified.json").exists());
+        assert!(reconcile_prior(&current, Role::Left, 11, &baseline, image).is_err());
+        let mut partial = baseline.clone();
+        partial[32 + 100] ^= 1;
+        assert!(reconcile_prior(&current, Role::Left, 10, &partial, image).is_err());
         let actual = archive_with(image);
         assert!(reconcile_prior(&current, Role::Left, 11, &actual, image).is_err());
         fs::write(prior.join("CURRENT.UF2"), &actual).unwrap();

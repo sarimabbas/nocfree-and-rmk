@@ -112,13 +112,13 @@ impl Mode {
     pub(crate) fn install_instruction(self) -> &'static str {
         match self {
             Self::Wired => {
-                "Connect LEFT by USB. Unplug RIGHT USB and the dongle. Disconnect NocFree RMK in Bluetooth settings. Keep RIGHT ON."
+                "Connect LEFT by USB. Unplug RIGHT USB and the dongle. Turn off Bluetooth on this computer. Keep RIGHT ON. If keys do not type through USB, press LEFT Fn + Space once to select USB."
             }
             Self::Bluetooth => {
-                "Unplug both USB cables and the dongle. Keep both halves powered: move LEFT to a wireless position and keep RIGHT ON. Press LEFT Fn + 1 to select Bluetooth profile 1, then connect NocFree RMK in Bluetooth settings. If pairing fails, forget the old Bluetooth entry, hold LEFT Fn + 1 for five seconds, then pair again."
+                "Unplug both USB cables and the dongle. Move LEFT to either top or bottom to turn it on; keep RIGHT ON. Press LEFT Fn + 1 to select Bluetooth profile 1. Turn on Bluetooth on this computer, then connect NocFree RMK in Bluetooth settings. If pairing fails, forget the old entry, hold LEFT Fn + 1 for five seconds, then pair again."
             }
             Self::Dongle => {
-                "Unplug both USB cables and connect the dongle. Keep both halves powered: move LEFT to a wireless position and keep RIGHT ON. Disconnect NocFree RMK in Bluetooth settings. Press LEFT Fn + Tab to select the dongle. If it does not connect, hold LEFT Fn + Tab for five seconds, then replug the dongle."
+                "Unplug both USB cables and connect the dongle. Move LEFT to either top or bottom to turn it on; keep RIGHT ON. Turn off Bluetooth on this computer. Press LEFT Fn + Tab to select the dongle. If it does not connect, hold LEFT Fn + Tab for five seconds, then replug the dongle."
             }
         }
     }

@@ -3,32 +3,46 @@ set -eu
 cd "$(dirname "$0")"
 version=$(cargo metadata --locked --no-deps --format-version 1 | python3 -c 'import json,sys; print(next(p["version"] for p in json.load(sys.stdin)["packages"] if p["name"] == "nocfree-companion"))')
 profile=debug
+trial=0
 export MACOSX_DEPLOYMENT_TARGET=13.0
 case "${BUILD_NUMBER:-1}" in *[!0-9]*|'') echo 'BUILD_NUMBER must be numeric.' >&2; exit 2 ;; esac
 
 case "${1:-}" in
   -h|--help)
     echo 'Build the local NocFree RMK Companion macOS app.'
-    echo 'Usage: desktop/build-macos.sh [--release | --help | --version]'
+    echo 'Usage: desktop/build-macos.sh [--release | --trial | --help | --version]'
     echo 'Requires Rust, macOS and Apple command-line tools. Creates dist/NocFree RMK Companion.app.'
     echo 'Put the firmware package in dist/companion-firmware/. The script checks it before adding it to the app.'
     exit 0 ;;
   -v|--version) echo "NocFree RMK Companion $version"; exit 0 ;;
   -r|--release) profile=release ;;
+  -t|--trial) trial=1 ;;
   '') ;;
   *) echo 'Unknown option. Use --help.' >&2; exit 2 ;;
 esac
 [ "$#" -le 1 ] || { echo 'Unexpected arguments. Use --help.' >&2; exit 2; }
 [ "$(uname -s)" = Darwin ] || { echo 'Run this script on macOS.' >&2; exit 1; }
 echo 'Building NocFree RMK Companion…'
-if [ "$profile" = release ]; then cargo build --locked --release; else cargo build --locked; fi
-firmware='../dist/companion-firmware'
+if [ "$trial" = 1 ]; then
+    cargo build --locked --features firmware-trial
+    firmware='../dist/native-trial-candidates/companion'
+else
+    if [ "$profile" = release ]; then cargo build --locked --release; else cargo build --locked; fi
+    firmware='../dist/companion-firmware'
+fi
+binary="${CARGO_TARGET_DIR:-target}/$profile/nocfree-companion"
 # A bundle without its pinned package must never look like a successful build.
-"target/$profile/nocfree-companion" --check-firmware "$firmware"
-bundle='../dist/NocFree RMK Companion.app'
+"$binary" --check-firmware "$firmware"
+name='NocFree RMK Companion'
+identifier='io.github.sarimabbas.nocfree-companion'
+if [ "$trial" = 1 ]; then
+    name='NocFree RMK Companion Trial'
+    identifier="$identifier.trial"
+fi
+bundle="../dist/$name.app"
 # Preserve the existing generated bundle when adopting its visible product name.
 legacy_bundle='../dist/NocFree Companion.app'
-if [ ! -d "$bundle" ] && [ -d "$legacy_bundle" ]; then
+if [ "$trial" = 0 ] && [ ! -d "$bundle" ] && [ -d "$legacy_bundle" ]; then
     mv "$legacy_bundle" "$bundle"
 fi
 mkdir -p "$bundle/Contents/MacOS" "$bundle/Contents/Resources"
@@ -49,17 +63,17 @@ mkdir -p "$bundle/Contents/Resources/Firmware"
 for file in manifest.json left.uf2 left.bin right.uf2 right.bin receiver.uf2 receiver.bin; do
     cp "$firmware/$file" "$bundle/Contents/Resources/Firmware/$file"
 done
-cp "target/$profile/nocfree-companion" "$bundle/Contents/MacOS/nocfree-companion.new"
+cp "$binary" "$bundle/Contents/MacOS/nocfree-companion.new"
 mv "$bundle/Contents/MacOS/nocfree-companion.new" "$bundle/Contents/MacOS/nocfree-companion"
 cat > "$bundle/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
 <key>CFBundleExecutable</key><string>nocfree-companion</string>
-<key>CFBundleIdentifier</key><string>io.github.sarimabbas.nocfree-companion</string>
-<key>CFBundleName</key><string>NocFree RMK Companion</string>
+<key>CFBundleIdentifier</key><string>$identifier</string>
+<key>CFBundleName</key><string>$name</string>
 <key>NSRemovableVolumesUsageDescription</key><string>Save a backup and install firmware on your keyboard’s recovery drive.</string>
-<key>CFBundleDisplayName</key><string>NocFree RMK Companion</string>
+<key>CFBundleDisplayName</key><string>$name</string>
 <key>CFBundleIconFile</key><string>Companion.icns</string>
 <key>CFBundlePackageType</key><string>APPL</string>
 <key>CFBundleShortVersionString</key><string>$version</string>
@@ -70,9 +84,9 @@ cat > "$bundle/Contents/Info.plist" <<PLIST
 PLIST
 /usr/bin/plutil -lint "$bundle/Contents/Info.plist"
 /usr/bin/codesign --force --sign - "$bundle"
-if [ "${REGISTER_APP:-1}" = 1 ]; then
+if [ "$trial" = 0 ] && [ "${REGISTER_APP:-1}" = 1 ]; then
 # Refresh this bundle only so Launch Services sees the new name and Dock icon.
 /usr/bin/touch "$bundle"
 /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$bundle"
 fi
-echo 'Ready: dist/NocFree RMK Companion.app (local development signature)'
+echo "Ready: $bundle (local development signature)"

@@ -47,7 +47,6 @@ pub struct Session {
     backup_path: Option<PathBuf>,
     return_flow: ReturnFlow,
     archived_location: Option<u64>,
-    left_mode: Option<crate::device_status::Mode>,
     wired_ack: bool,
     observed_at: Option<Instant>,
 }
@@ -55,8 +54,8 @@ impl Session {
     pub fn new() -> Self {
         Self::default()
     }
-    /// Adopt the USB location of a freshly validated, role-specific local USB endpoint.
-    /// The caller must arm that endpoint first; product strings alone are not evidence.
+    /// Bind a role-specific runtime endpoint, or a unique recovery serial previously
+    /// confirmed for this part. The caller validates live identity and drive metadata.
     pub fn bind_recovery(&mut self, location: u64) {
         self.location = Some(location);
         self.rmk_left = self.role == Some(Role::Left);
@@ -168,10 +167,9 @@ impl Session {
     fn observe_mode_at(
         &mut self,
         observation: Result<Snapshot, String>,
-        mode: Option<crate::device_status::Mode>,
+        _mode: Option<crate::device_status::Mode>,
         now: Instant,
     ) {
-        self.left_mode = mode;
         let fresh = observation.is_ok();
         self.observed_at = fresh.then_some(now);
         self.observe_snapshot(observation);
@@ -311,12 +309,7 @@ impl Session {
             connected: self.connection_present,
             normal: self.normal_present,
             fresh_return,
-            completion_allowed: self.role != Some(Role::Left)
-                || if self.rmk_left {
-                    self.left_mode == Some(crate::device_status::Mode::Wired)
-                } else {
-                    self.wired_ack
-                },
+            completion_allowed: self.role != Some(Role::Left) || self.rmk_left || self.wired_ack,
             needs_power_on: self.role == Some(Role::Right) || self.legacy_left_start,
         });
     }
@@ -774,6 +767,24 @@ mod tests {
         session.select(Role::Left);
         session.observe(Ok(normal()));
         session
+    }
+    #[test]
+    fn native_backup_return_uses_bound_normal_usb_without_private_mode() {
+        let now = Instant::now();
+        let mut session = Session::new();
+        session.select_recovery_role(Role::Left);
+        session.bind_recovery(7);
+        session.backup_path = Some("/saved".into());
+        session.archived_location = Some(7);
+        session.return_flow.restart();
+        let mut usb = normal();
+        usb.devices[0].vendor = 0x4c4b;
+        usb.devices[0].product = 0x4643;
+        usb.devices[0].name = "NocFree RMK".into();
+        session.observe_at(Ok(usb.clone()), now);
+        assert!(!session.view().return_complete);
+        complete_return(&mut session, usb, now, None);
+        assert!(session.view().return_complete);
     }
     #[test]
     fn modern_return_requires_same_port_and_explicit_next() {

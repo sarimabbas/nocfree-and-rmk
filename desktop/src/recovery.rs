@@ -92,6 +92,17 @@ fn run_with(
             } else { None };
             ready_drive = false;
             if cancelled.load(Ordering::Relaxed) { return Err("Recovery cancelled.".into()); }
+            // Reuse only a recovery serial whose role was confirmed by an
+            // earlier local request. This also survives Companion restarting
+            // after an interrupted transfer; a generic archive grants no role.
+            if !archive_only && requested_location.is_none() {
+                let known = crate::status_cache::recovery_locations();
+                if let Some(location) = resume_location(role, &known, &snapshot)? {
+                    requested_location = Some(location);
+                    mounting_at = Some(Instant::now());
+                    let _ = progress.send(Procedure::RuntimeApp);
+                }
+            }
             if archive_only && requested_location.is_none() && (archive_adopted || snapshot.devices.iter().any(|d|d.bootloader())) {
                 mounting_at.get_or_insert_with(Instant::now);
                 let known=crate::status_cache::recovery_locations();
@@ -144,6 +155,39 @@ fn run_with(
         crate::status_cache::confirm(role, location);
     }
     result
+}
+
+fn resume_location(
+    role: Role,
+    known: &[Option<u64>; 3],
+    snapshot: &device::Snapshot,
+) -> Result<Option<u64>, String> {
+    let index = match role {
+        Role::Left => 0,
+        Role::Right => 1,
+        Role::Receiver => 2,
+    };
+    let Some(location) = known[index] else {
+        return if recovery_part_conflicts(role, known, snapshot) {
+            Err("This recovery drive belongs to another part.".into())
+        } else {
+            Ok(None)
+        };
+    };
+    let boots: Vec<_> = snapshot.devices.iter().filter(|d| d.bootloader()).collect();
+    if boots.is_empty() && snapshot.mounts.is_empty() {
+        return Ok(None);
+    }
+    if boots.len() != 1 || snapshot.mounts.len() > 1 || boots[0].location != location {
+        return Err("Connect only this part's recovery drive, then try again.".into());
+    }
+    if recovery_part_conflicts(role, known, snapshot) {
+        return Err("This recovery drive belongs to another part.".into());
+    }
+    if let Some(mount) = snapshot.mounts.first() {
+        crate::session::validate_metadata(&mount.info)?;
+    }
+    Ok(Some(location))
 }
 
 fn recovery_part_conflicts(
@@ -719,6 +763,14 @@ mod tests {
         wrong_port.observe(Ok(snapshot.clone()));
         assert!(!wrong_port.view().can_save);
         assert!(wrong_port.view().error.is_some());
+        let empty = device::Snapshot {
+            devices: vec![],
+            mounts: vec![],
+        };
+        assert_eq!(
+            resume_location(Role::Left, &[Some(7), None, None], &empty).unwrap(),
+            None
+        );
         snapshot.devices.push(snapshot.devices[0].clone());
         session.observe(Ok(snapshot.clone()));
         assert!(!session.view().can_save);
@@ -852,5 +904,49 @@ mod tests {
         runtime.shutdown_timeout(Duration::from_millis(100));
         release.send(()).unwrap();
         assert!(cancelled_at.elapsed() < Duration::from_secs(1));
+    }
+}
+
+#[cfg(test)]
+mod resume_tests {
+    use super::*;
+    #[test]
+    fn mounted_recovery_requires_confirmed_role_unique_drive_and_reviewed_metadata() {
+        let mut snapshot = device::Snapshot {
+            devices: vec![device::Device {
+                location: 7,
+                vendor: 0x239a,
+                product: 0x29,
+                name: "NocFree &".into(),
+            }],
+            mounts: vec![device::BootMount {
+                path: "/test/recovery".into(),
+                info: "UF2 Bootloader 0.9.2-39-g0147d71\nModel: NocFree &\nBoard-ID: NocFree &\n"
+                    .into(),
+            }],
+        };
+        assert_eq!(
+            resume_location(Role::Left, &[Some(7), None, None], &snapshot).unwrap(),
+            Some(7)
+        );
+        assert!(resume_location(Role::Right, &[Some(7), None, None], &snapshot).is_err());
+        assert_eq!(
+            resume_location(Role::Left, &[None; 3], &snapshot).unwrap(),
+            None
+        );
+        assert!(resume_location(Role::Left, &[Some(8), None, None], &snapshot).is_err());
+        let empty = device::Snapshot {
+            devices: vec![],
+            mounts: vec![],
+        };
+        assert_eq!(
+            resume_location(Role::Left, &[Some(7), None, None], &empty).unwrap(),
+            None
+        );
+        snapshot.devices.push(snapshot.devices[0].clone());
+        assert!(resume_location(Role::Left, &[Some(7), None, None], &snapshot).is_err());
+        snapshot.devices.pop();
+        snapshot.mounts[0].info = "Different bootloader".into();
+        assert!(resume_location(Role::Left, &[Some(7), None, None], &snapshot).is_err());
     }
 }
