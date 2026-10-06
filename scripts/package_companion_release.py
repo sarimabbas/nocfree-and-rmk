@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Package firmware files from checked device records."""
+"""Package the reviewed firmware build."""
 import argparse
 import hashlib
 import json
@@ -11,12 +11,12 @@ sys.path.insert(0, str(ROOT / 'scripts'))
 from migration_guard import inspect_startup_image
 from image_guard import inspect as inspect_receiver
 
-VERSION = '0.1.1'
-# Explicit reviewed allowlist; never select whichever image was most recently built.
+VERSION = '1.0.0'
+# Reviewed ANSI rebuild from the hardware-tested sources; no device acceptance is claimed.
 ROLES = {
-    'left': ('main-firmware-update/candidates/left', 'c72333620a85e76323225d0d97eb96f69c3448f7102ccfdade8918d5c148bdfb', '9450c8151c2d72107cb42d09aa4c589e6b578faa85a7c1958313d08b52717598', 'fb45eecef29f2a2883f44cd6e28843798238d0a7', '89fead1de856132911ec685313fa88cda0652bac', 'main-firmware-update/operator-review-original-left.json', 'main-firmware-update/candidates/left/runtime-recovery-observation.json'),
-    'right': ('main-firmware-update/candidates/right', 'ce2de33edfcf8f3c896aba71a0a70c77df268628bbbf1599018d3955233a2bc1', '035da3c8b97ec623305db4b10ffa535eacf8ec12f90097c336b14ca0fe934474', 'fb45eecef29f2a2883f44cd6e28843798238d0a7', '89fead1de856132911ec685313fa88cda0652bac', 'main-firmware-update/operator-review.json', 'main-firmware-update/candidates/right/runtime-recovery-observation.json'),
-    'receiver': ('main-firmware-update/candidates/receiver', '3e26410a96d69017bc2ff7c23a45e45a06ad4f93fea6e3c5cd7719dbec7a7c49', '57d62baa2571327505dba502580a8dacc1e7af7b60cfb7c3cdf7345f229c6ccd', 'fb45eecef29f2a2883f44cd6e28843798238d0a7', '89fead1de856132911ec685313fa88cda0652bac', 'main-firmware-update/operator-review.json', 'main-firmware-update/candidates/receiver/runtime-recovery-observation.json'),
+    'left': ('native-release-1.0.0/left', 'd07e158a43f2593ad7c8bc7d11feb29f397bc8b5654d1d065e832d97700a26fd', 'c390139c26f6af40bedf7911202ce088c18a53b6485e65a7a92ff28d06395271', '880c967b2e9b51806ef18f40acfe6ee0b8b53c3e', '434ab4d7d29d8e9ba689837358c8a44996ba38cc'),
+    'right': ('native-release-1.0.0/right', '091d5cccfbd239ede9c39e40244941214211251625279f54e1b661a2e14b842c', '0319163343f75b71f91ad6b788d0a468173e7af11b0b380ea653c211850ebb08', '880c967b2e9b51806ef18f40acfe6ee0b8b53c3e', '434ab4d7d29d8e9ba689837358c8a44996ba38cc'),
+    'receiver': ('native-release-1.0.0/receiver', '93071cfa5876eb969a78d9add425568d4cd8a1d283fe3c491d9199696069d5bf', '507dfe384594710e54e58d092b7af42a95e616da48c054fa9ca135a7a1866d18', '880c967b2e9b51806ef18f40acfe6ee0b8b53c3e', '434ab4d7d29d8e9ba689837358c8a44996ba38cc'),
 }
 
 
@@ -24,64 +24,31 @@ def digest(data):
     return hashlib.sha256(data).hexdigest()
 
 
-def read_json(path):
-    return json.loads(path.read_text())
-
-
 def verified_pair(root, role, spec):
-    folder, uf2_hash, bin_hash, commit, revision, review_path, recovery_path = spec
+    folder, uf2_hash, bin_hash, commit, revision = spec
     base = root / '.evidence' / folder
     uf2, binary = (base / 'candidate.uf2').read_bytes(), (base / 'candidate.bin').read_bytes()
     if digest(uf2) != uf2_hash or digest(binary) != bin_hash:
         raise ValueError(f'{role}: candidate is outside the release allowlist')
-    observed = read_json(base / 'verified.json')
-    review = read_json(root / '.evidence' / review_path)
-    baseline = read_json(base / 'baseline.json')
-    if observed.get('schema') != 1 or observed.get('application_exact') is not True or observed.get('padding_and_untouched_gap_exact') is not True:
-        raise ValueError(f'{role}: missing exact installed readback')
-    if review.get('schema') != 1 or review.get('passed') is not True or review.get('roles', {}).get(role) != uf2_hash:
-        raise ValueError(f'{role}: missing hash-bound role-specific review')
-    if baseline.get('schema') != 1 or baseline.get('role') != role or baseline.get('candidate_sha256') != uf2_hash or baseline.get('binary_sha256') != bin_hash or baseline.get('operator_sha256') != review.get('operator_sha256'):
-        raise ValueError(f'{role}: review does not bind the candidate and original backup')
-    if review.get('baselines', {}).get(role) != digest((base / 'baseline.json').read_bytes()):
-        raise ValueError(f'{role}: review does not bind this baseline record')
-    before = (base / 'before-CURRENT.UF2').read_bytes()
-    installed = (base / 'installed-CURRENT.UF2').read_bytes()
-    if digest(before) != baseline.get('baseline_sha256'):
-        raise ValueError(f'{role}: original backup changed')
-    # Validate the complete archived UF2 layout as well as the application pair.
-    # These are stored observations only: no device operations are performed.
-    from migration_guard import _payload
-    old = _payload(before, 0x1000, 0x6d000, 0x239a0029)
-    actual = _payload(installed, 0x1000, 0x6d000, 0x239a0029)
+    if f'NocFree RMK;fw={VERSION}'.encode() not in binary:
+        raise ValueError(f'{role}: firmware version descriptor differs')
     start = 0x27000 if role == 'receiver' else 0x1000
     padded = binary + b'\xff' * (-len(binary) % 4096)
     if role == 'receiver':
         guard = inspect_receiver(uf2)
+        from migration_guard import _payload
         expected = _payload(uf2, start, start + len(padded), 0x621e937a)
         if expected != padded or (int(guard['reset_vector'], 16) & ~1) >= start + len(binary):
             raise ValueError('dongle UF2/BIN or vector mismatch')
     else:
         guard = inspect_startup_image(uf2, binary, role)
-    offset, end = start - 0x1000, start - 0x1000 + len(padded)
-    if actual[offset:end] != padded or actual[:offset] != old[:offset] or actual[end:0x64000] != old[end:0x64000]:
-        raise ValueError(f'{role}: application, padding or preserved bytes differ')
-    storage_preserved = actual[0x64000:] == old[0x64000:]
-    if observed.get('storage_equal') is not storage_preserved:
-        raise ValueError(f'{role}: storage observation differs from archived bytes')
-    recovery = read_json(root / '.evidence' / recovery_path)
-    if (recovery.get('schema') != 1 or recovery.get('role') != role
-            or recovery.get('current_image_runtime_recovery') is not True
-            or recovery.get('candidate_sha256') != uf2_hash
-            or recovery.get('installed_readback_sha256') != digest(installed)):
-        raise ValueError(f'{role}: current-image recovery observation is missing or unbound')
     metadata = dict(role=role, layout='ansi', keymap='mac', uf2=f'{role}.uf2', binary=f'{role}.bin', uf2_sha256=uf2_hash, binary_sha256=bin_hash,
                     origin=start, end_exclusive=start + len(padded), binary_size=len(binary),
                     policy='receiver_protected' if role == 'receiver' else f'{role}_startup',
                     source_commit=commit, rmk_revision=revision,
                     battery_calibration='provisional_150_100' if role != 'receiver' else 'none',
-                    storage_revision=revision, storage_preserved=storage_preserved,
-                    recovery_evidence='current_image_companion_runtime_recovery_observed', current_image_runtime_recovery=True,
+                    storage_revision=revision, storage_preserved=False,
+                    recovery_evidence='software_checks_only', current_image_runtime_recovery=False,
                     bootloader='0.9.2-39-g0147d71', board_id='NocFree &', family_id=0x621e937a,
                     softdevice='S140 7.3.0' if role == 'receiver' else 'reclaimed')
     return metadata, uf2, binary

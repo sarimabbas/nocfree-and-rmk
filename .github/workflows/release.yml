@@ -8,8 +8,7 @@ on:
         required: true
         type: string
       firmware_source_tag:
-        description: App release holding companion-firmware.zip
-        default: v0.1.3
+        description: Release tag holding companion-firmware.zip, including this release draft
         required: true
         type: string
       firmware_zip_sha256:
@@ -64,6 +63,8 @@ jobs:
           cargo_version="$(cargo metadata --manifest-path desktop/Cargo.toml --locked --no-deps --format-version 1 | python3 -c 'import json,sys; print(next(p["version"] for p in json.load(sys.stdin)["packages"] if p["name"] == "nocfree-companion"))')"
           [[ "$REQUESTED_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
           [[ "$REQUESTED_VERSION" == "$cargo_version" ]]
+          firmware_version="$(python3 -c 'import tomllib; print(tomllib.load(open("firmware/Cargo.toml", "rb"))["package"]["version"])')"
+          [[ "$REQUESTED_VERSION" == "$firmware_version" ]]
           [[ "$(uname -m)" == arm64 ]]
           tag="v${REQUESTED_VERSION}"
           if draft="$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft 2>/dev/null)"; then
@@ -99,6 +100,7 @@ jobs:
           [[ "$FIRMWARE_SHA256" =~ ^[a-f0-9]{64}$ ]]
           gh release download "$FIRMWARE_TAG" --repo "$GITHUB_REPOSITORY" --pattern companion-firmware.zip --dir "$RUNNER_TEMP/firmware-input"
           python3 scripts/unpack_companion_release.py --input "$RUNNER_TEMP/firmware-input/companion-firmware.zip" --sha256 "$FIRMWARE_SHA256" --output dist/companion-firmware
+          python3 -c 'import json,tomllib; assert json.load(open("dist/companion-firmware/manifest.json"))["version"] == tomllib.load(open("desktop/Cargo.toml", "rb"))["package"]["version"]'
 
       - name: Validate publication notices and release notes
         env:
@@ -121,13 +123,15 @@ jobs:
           cp "$RUNNER_TEMP/firmware-input/companion-firmware.zip" "$RUNNER_TEMP/release-input/companion-firmware.zip"
           ditto -c -k --keepParent "dist/NocFree RMK Companion.app" "$RUNNER_TEMP/release-input/nocfree-rmk-companion-unsigned.zip"
           cat > "$RUNNER_TEMP/release-input/${VERSION}.md" <<'NOTES'
-          Companion now shows an Update available link when a newer version is ready. Select it to open the GitHub download page.
+          Install RMK with the guided app. Companion saves the original keyboard software and checks USB, Bluetooth and dongle typing.
 
-          Use Star on GitHub at the bottom of the sidebar to visit the project.
+          Choose a connection with LEFT Fn+Tab for the dongle or LEFT Fn+1 through Fn+5 for Bluetooth. With LEFT USB connected, Fn+Space switches between USB and wireless. The left switch controls power.
+
+          Change keys in Vial through LEFT USB. The keyboard saves your changes for all three connection modes. F5 lowers the backlight and F6 raises it.
 
           Download the app for Mac with Apple Silicon, Windows or Linux. On Mac and Windows, open the ZIP file. On Linux, extract the archive and follow README.txt.
 
-          For help, select Help → Export diagnostic logs and attach the ZIP file to a GitHub issue.
+          To return to the original keyboard software, select Restore factory in Companion.
           NOTES
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -379,4 +383,3 @@ jobs:
               --title "NocFree RMK Companion ${VERSION}" --draft \
               --notes-file "$RUNNER_TEMP/input/${VERSION}.md"
           fi
-

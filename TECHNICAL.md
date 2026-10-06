@@ -1,6 +1,6 @@
 # Technical guide
 
-The published Companion and its bundled firmware use the factory bootloader. The upstream RMK spike below is a separate draft. Its images are not release inputs. Sections marked production describe the published firmware; the source map and development checks describe this branch.
+Companion and its included ANSI firmware use version 1.0.0. The firmware uses upstream RMK and keeps the factory bootloader. This guide covers board code, recovery, builds and releases.
 
 ## Keyboard setup
 
@@ -29,7 +29,7 @@ Check all mappings and production builds without connecting a keyboard:
 ./scripts/check.sh --all-layouts --backlight-active-high
 ```
 
-The production fork records physical layout identity in its storage schema. This draft uses the upstream schema and needs an explicit settings reset when changing physical layout. Check pairing and saved key assignments after a reset or revision change.
+The firmware uses the upstream storage schema and needs an explicit settings reset when changing physical layout. Check pairing and saved key assignments after a reset or revision change.
 
 An owner of each layout must then check every physical key in Vial, Fn and Shift across halves, simultaneous input, release after disconnect, wake on the first key, wired/Bluetooth/dongle typing, saved remaps after restart, and recovery entry and exit. Record those observations separately from host tests and cross-builds before adding the images to an app package.
 
@@ -41,11 +41,11 @@ Right inputs → board scanner → RMK split BLE → Left keymap
                                                 ├→ Bluetooth keyboard
                                                 └→ RMK dongle → USB keyboard
 
-Production Companion → local USB recovery request → selected part’s factory bootloader
+Companion → local USB recovery request → selected part’s factory bootloader
 Companion/Vial → left USB, or dongle relay → left configuration
 ```
 
-RMK owns key actions, debounce, transports, Bluetooth profiles and storage. Board code adapts PCA9555 expanders, battery ADC, PWM, indicator pins, USB control-pipe behavior and startup checks. The upstream draft leaves the switch inputs unused.
+RMK owns key actions, debounce, transports, Bluetooth profiles and storage. Board code adapts PCA9555 expanders, battery ADC, PWM, indicator pins, USB control-pipe behavior and startup checks. The switch selector inputs are unused; the switch still controls board power.
 
 | Concern | Source |
 | --- | --- |
@@ -72,23 +72,27 @@ Dependabot checks all four Cargo projects and GitHub Actions monthly. Security u
 
 ## Upstream RMK with factory recovery
 
-This draft uses untouched [RMK `434ab4d7`](https://github.com/rmk-rs/rmk/tree/434ab4d7d29d8e9ba689837358c8a44996ba38cc) and published Embassy nRF 0.11.0. It has no fork dependencies or dependency patches. It keeps the factory MBR and bootloader. It contains no bootloader installer or `rmk-boot` image. Companion still packages the approved production firmware.
+The firmware uses untouched [RMK `434ab4d7`](https://github.com/rmk-rs/rmk/tree/434ab4d7d29d8e9ba689837358c8a44996ba38cc) and published Embassy nRF 0.11.0. It has no fork dependencies or dependency patches. It keeps the factory MBR and bootloader. It contains no bootloader installer or `rmk-boot` image. Companion packages the reviewed ANSI firmware images.
 
 RMK owns key processing, debounce, USB/BLE routing, profiles, bonds, storage and normal watchdog feeding. Board code supplies the PCA9555 scanner, battery ADC, PWM, indicator and nRF52833 USB control-pipe adapter. Image startup checks reject UICR changes and convert watchdog resets into a request for the existing recovery bootloader.
 
 The startup gate requires the saved reset-pin setting and GPIO mode for LEFT's LED pins. Unused NFC pins can remain GPIO: published Embassy cannot change the saved NFC bit from zero to one and continues without programming it.
 
-The physical selector inputs are unused. RMK chooses the ready transport; when USB and BLE are ready together, its saved preference decides. This does not establish the switch's power behavior. Native dongle pairing replaces private peer repair. Battery sampling feeds RMK, but the private Companion battery, mode and pairing reports are absent. Companion tests each transport in isolation. It asks for the USB and host Bluetooth connections needed for that test, then checks typing from both halves. It does not require private mode or peer reports.
+The physical switch controls power, not the connection mode. Without USB, either top or bottom powers LEFT; middle turns it off. RMK uses the available connection. When USB and wireless are both ready, its saved preference decides. RMK owns dongle pairing. Battery sampling feeds RMK, but the private Companion battery, mode and pairing reports are absent. Companion tests each transport in isolation. It asks for the USB and host Bluetooth connections needed for that test, then checks typing from both halves. It does not require private mode or peer reports.
 
 | Control | Action |
 | --- | --- |
 | LEFT Fn+Tab | Select the dongle profile; hold five seconds to clear its bond |
-| LEFT Fn+Space | Toggle saved USB/BLE preference |
-| Fn+1 through Fn+5 | Select a Bluetooth host profile; hold five seconds to replace its bond |
+| LEFT Fn+Space | Toggle USB/wireless preference when USB is connected; keep the selected wireless profile |
+| LEFT Fn+1 through Fn+5 | Select a Bluetooth host profile; hold five seconds to replace its bond |
+
+With USB unplugged, selecting a wireless profile is enough; Fn+Space is not needed.
 
 LEFT Fn+Esc and RIGHT Fn+0 held at CPU startup request local recovery at the scanner seam. No runtime key is bound to recovery. There is no single-tap bond-clear key. RIGHT's runtime keys are processed on LEFT, so a normal bootloader key cannot target RIGHT. Dongle host commands also relay to LEFT; recovery must use the dongle's local USB interface.
 
-Backlight uses RMK User actions, events, user-data storage and split messages. Board PWM supplies 400 Hz output with 16 levels. Existing Vial lighting assignments need remapping to the new actions. Physical layouts compile separately. Changing physical layout requires a settings reset because this draft uses the upstream storage schema.
+Backlight uses RMK User actions, events, user-data storage and split messages. Board PWM supplies 400 Hz output with 16 levels. Backlight controls use User actions 11 (down), 12 (up), 13 (on), 14 (off), 15 (toggle) and 16 (cycle). Each press changes one level. Physical layouts compile separately. Changing physical layout requires a settings reset because the firmware uses the upstream storage schema.
+
+Configure keys in Vial through LEFT USB. Saved mappings also apply to Bluetooth and dongle typing. ANSI USB Matrix Tester, remapping and persistence after restart passed. Dongle Vial layout reads can exceed the client’s 500 ms timeout; retries can then read stale replies. Read-only checks with a 2 s timeout returned the complete 796-byte layout. Keep this transport issue upstream; do not patch RMK to change its connection policy.
 
 ### Local USB recovery
 
@@ -96,7 +100,7 @@ LEFT and dongle use RMK's standard runtime DFU DETACH interface. It accepts entr
 
 RIGHT uses Embassy's standard runtime DFU class and a callback to RMK's bootloader request. Its local USB identity is distinct from LEFT and dongle. This class has no download partition: the app requests recovery; the factory bootloader handles subsequent transfers. Windows receives the standard WinUSB descriptor.
 
-Companion requests LEFT recovery with upstream VIA's BootloaderJump command over LEFT's direct USB raw-HID interface. RIGHT and dongle recovery use local DFU DETACH. Each request checks the selected role, physical USB connection and interface before submission. Requests share the native HID owner thread and stop on cancellation or expiry. An unanswered submitted request waits for the recovery drive; an unsent request stays available to retry. The approved production package remains unchanged. The default build rejects unaccepted packages. The separate trial build pins the ANSI upstream candidates for board testing. Factory restoration remains available.
+Companion requests LEFT recovery with upstream VIA's BootloaderJump command over LEFT's direct USB raw-HID interface. RIGHT and dongle recovery use local DFU DETACH. Each request checks the selected role, physical USB connection and interface before submission. Requests share the native HID owner thread and stop on cancellation or expiry. An unanswered submitted request waits for the recovery drive; an unsent request stays available to retry. The default build accepts only the pinned ANSI release package. The separate trial build pins candidates for board testing. Factory restoration remains available.
 
 ### Image boundaries
 
@@ -105,11 +109,9 @@ Companion requests LEFT recovery with upstream VIA's BootloaderJump command over
 | LEFT and RIGHT | `0x1000..0x65000` | `0x65000..0x6d000` |
 | Dongle | `0x27000..0x65000` | `0x65000..0x6d000` |
 
-The guarded ANSI Mac-keymap builds use 372,052 bytes for LEFT, 231,788 for RIGHT and 248,172 for the dongle. The dongle's slot has 253,952 bytes; its UF2 page padding also fits. The complete layout/keymap build matrix is checked separately.
+The guarded ANSI Mac-keymap builds use 372,484 bytes for LEFT, 231,780 for RIGHT and 248,332 for the dongle. The dongle's slot has 253,952 bytes; its UF2 page padding also fits. The complete layout/keymap build matrix is checked separately.
 
-Compared with main, project source changes by +122 net lines. Retiring 2,962 lines from the pinned RMK and Embassy forks reduces maintained source by 2,840 lines overall. This count includes board code and tests, and excludes lockfiles, documentation, generated binaries and dependency code.
-
-The lower half images replace the resident SoftDevice while preserving the MBR. The dongle keeps the resident SoftDevice. All images exclude the factory filesystem at `0x6d000..0x74000`, the bootloader above it and UICR. These are the existing guarded project boundaries; they are not inferred from a generic Adafruit example.
+The lower half images replace the resident SoftDevice while preserving the MBR. The dongle keeps the resident SoftDevice. All images exclude the factory filesystem at `0x6d000..0x74000`, the bootloader above it and UICR. The image guards enforce these board-specific boundaries.
 
 The startup reserve at application offset `0x200` stays erased. It does not request recovery on every normal startup. Address, vector, board-family and BIN/UF2 equivalence checks remain mandatory. Passing them proves image structure, not recovery on a device. Factory backups contain the recovery drive's exported user-flash data, not a full chip or UICR dump. Keeping the original bootloader avoids needing a bootloader restoration image.
 
@@ -117,8 +119,6 @@ The startup reserve at application offset `0x200` stays erased. It does not requ
 ./scripts/check.sh --host-only --all-layouts
 ./scripts/check.sh --build-only --all-layouts --backlight-active-high
 ```
-
-The Companion UX layer removes 1,092 source lines compared with the preceding draft. Ten independent reviewers checked route isolation, recovery dispatch, platform APIs, copy and release boundaries. Desktop checks cover manual transitions, recovery identity, interrupted transfers and package validation. Simulated UI checks validate layout and manual Next behavior, not device connections.
 
 ### Companion trial
 
@@ -131,15 +131,17 @@ desktop/build-macos.sh --trial
 
 The manifest must match the reviewed trial hash in `desktop/src/release.rs`. A rebuild that changes the manifest needs a new review and pin. The trial has a separate app name and bundle ID. Its package records software checks only; it is not a production release.
 
-Installing this firmware resets saved mappings, macros, lighting settings and wireless pairings. Use the guided typing tests to check USB, Bluetooth and dongle operation. Normal USB enumeration confirms startup; it does not prove the selected typing route.
+Moving from the older fork firmware to the upstream storage schema resets saved mappings, macros, lighting settings and wireless pairings. Updating within a compatible schema preserves settings. Use the guided typing tests to check USB, Bluetooth and dongle operation. Normal USB enumeration confirms startup; it does not prove the selected typing route.
 
 An interrupted transfer can reuse a recovery serial previously confirmed for that part. Companion requires one live recovery drive and the expected bootloader metadata. Unknown or conflicting drives cannot authorize a write. Factory restore uses the retained original, a fresh backup and a new transfer record. Retrying an interrupted factory restore requires the same target and USB port. Only exact readback closes that attempt; the earlier record remains unverified.
 
 ### Device acceptance
 
-Check local recovery on each part, watchdog entry and long transfers, interrupted application updates, startup failure, and return to the original firmware without opening the case. A healthy watchdog feeder cannot detect every stalled task; the startup hook also cannot recover if its own executable code is corrupt. Neither a USB request acknowledgement nor a successful cross-build establishes these recovery routes.
+The accepted ANSI package passed exact application readback, recovery entry, USB/Bluetooth/dongle typing, cross-half Shift, backlight synchronization, profile selection, sleep/wake and dongle reconnection. LEFT USB Vial remapping survived a restart.
 
-Then check every key and remap, pairing and reconnection, disconnect releases, simultaneous input, wake latency and wired/Bluetooth/dongle typing. Owners must test ISO, JIS and KR. Keep hardware observations separate from host checks.
+Factory restore tests use the retained original archives for all three parts. They check the complete SoftDevice, application and settings target, wrong-role rejection, immutable originals and interrupted restores. These tests run without a device. A physical factory roundtrip remains a separate hardware check.
+
+Before accepting a new package, check local recovery, watchdog entry, interrupted updates, all keys and modifiers, sleep/wake, remap persistence and each typing route. Owners of ISO, JIS and KR must perform the same checks on their boards.
 
 ## Board reference
 
@@ -157,31 +159,27 @@ These GPIO mappings come from the [vendor porting guide](https://github.com/NocF
 | Battery ADC | P0.04 | P0.04 |
 | Divider enable, active high | P0.05 | P0.31 |
 
-Use pull-ups for interrupt and selector inputs. Use open-drain output for a shared charging/status line. Expanders use addresses `0x20`, `0x22`, `0x24`; read both ports in order. The vendor’s KR mapping also uses `0x21/P0`.
+Use pull-ups for expander interrupt inputs. Use open-drain output for a shared charging/status line. Expanders use addresses `0x20`, `0x22`, `0x24`; read both ports in order. The vendor’s KR mapping also uses `0x21/P0`.
 
 After input reads, the scanner parks each expander’s command pointer at register 2 before accessing another slave. This writes the register address. Preserve this behavior: [TI PCA9555 datasheet, section 8.4.1.1](https://www.ti.com/lit/ds/symlink/pca9555.pdf) documents an interrupt-reset erratum when the input register remains selected. Keep the last input state when a read fails.
 
-In production, the physical left switch selects top dongle, middle wired and bottom Bluetooth. The upstream draft ignores its selector inputs and uses the RMK controls listed above.
+## Power and lighting
 
-Tap Fn+1 through Fn+5 to select a Bluetooth host profile. Hold the combination for five seconds without another key to replace that profile’s pairing. In RMK, Fn+0 clears the selected host pairing. Use Companion to enter recovery mode.
-
-## Production power and lighting
-
-A USB-powered half stays awake regardless of the selected connection mode. On battery, the right follows the left’s sleep request. The configured idle period is 1,800 seconds. The board stays powered during sleep.
+RMK controls sleep. The central idle timeout is 1,800 seconds, set in `firmware/keyboard.toml`. The right follows the left’s sleep state. USB power does not add a separate stay-awake rule.
 
 `async-scanner` waits for the expander interrupt when idle. Active keys, unfinished debounce and read failures continue scanning. The board scanner reads keys through I²C.
 
-Backlights use 400 Hz PWM with 16 brightness levels, saved brightness and split synchronization. Zero brightness stops and disables the PWM generator; wake or nonzero brightness restarts it. The DMA buffer remains valid through cancellation. A battery-powered disconnected right darkens while seeking the left, and disconnect cancels brightness holds.
+Backlights use 400 Hz PWM with 16 brightness levels, saved brightness and split synchronization. Zero brightness stops and disables the PWM generator; wake or nonzero brightness restarts it. The DMA buffer remains valid through cancellation. The right backlight darkens when its link is disconnected or its brightness snapshot expires. Brightness changes are per press; holding a brightness key does not repeat.
 
-The left blue indicator blinks while seeking either wireless route. After connection it stays on for 30 seconds, then turns off. Wired mode uses the shared red indicator’s existing behavior. Charging can mix red with blue. The right has no host-mode indicator because it only links to the left.
+The left blue light blinks while seeking the selected wireless host. After connection it stays on for 30 seconds, then turns off. The red light shows charging, not USB mode. Charging can mix red with blue. The right has no host-mode indicator because it only links to the left.
 
 Battery conversion uses `BatteryProcessor::new(100, 150)`. Calibration work is tracked in [issue #7](https://github.com/sarimabbas/nocfree-and-rmk/issues/7). To adjust the conversion, compare raw ADC counts with cell voltage and discharge measurements.
 
-## Production recovery and backup
+## Recovery and backup
 
-Use **Companion → Enter recovery mode**, choose a part, and follow the instructions. Compatible RMK images expose a local USB DFU runtime DETACH interface. Companion addresses the selected part directly. The unchanged factory bootloader presents the **NocFree &** drive.
+Use **Companion → Enter recovery mode**, choose a part, and follow the instructions. Companion uses LEFT’s local VIA bootloader request and local DFU DETACH on RIGHT and the dongle. The unchanged factory bootloader presents the **NocFree &** drive.
 
-Keep a separate original backup for each half and the dongle. Backups contain the application and system settings. The MBR, bootloader and UICR stay on the board. When restoring an application-only factory UF2, Companion can use the original backup to restore system settings. Use the backup for the selected part.
+Install RMK keeps a separate original backup for each half and the dongle. Backups contain the application and system settings. The MBR, bootloader and UICR stay on the board. When restoring an application-only factory UF2, Companion can use the original backup to restore system settings. Use the backup for the selected part.
 
 USB can power the right MCU while its battery switch is OFF. If the right remains in recovery after a write, turn it OFF and remove USB before restarting as instructed. For the factory right-half Fn+0 recovery procedure, keep the left connected.
 
@@ -199,7 +197,7 @@ tccutil reset SystemPolicyRemovableVolumes io.github.sarimabbas.nocfree-companio
 
 Reopen Companion and allow access when macOS asks.
 
-## Production app state machines
+## App state machines
 
 Companion uses Statig state machines. The UI derives the screen and available buttons from the machine state. Parent journeys reuse recovery, transfer and backup machines. Generation tickets reject stale or duplicate results after cancellation or a change of part.
 
@@ -244,21 +242,19 @@ On macOS, with a validated release firmware package in `dist/companion-firmware/
 
 Each app download includes the firmware for both halves and the dongle. The same app release also contains `companion-firmware.zip` for builds. Use `scripts/unpack_companion_release.py` to extract this package for local app builds. `scripts/package_companion_release.py` creates firmware packages from images and device test records.
 
-Firmware roles are `left`, `right`, `receiver`; select exactly one role and the factory-compatible layout on this branch. Production halves use the lower application layout; the receiver preserves resident S140. Role builds share an output name, so use separate target directories or save each ELF before another build.
+Firmware roles are `left`, `right`, `receiver`; select exactly one role and physical layout. The halves use the lower application layout; the receiver preserves resident S140. Role builds share an output name, so use separate target directories or save each ELF before another build.
 
-The production image tools are `scripts/image_guard.py` for receiver images and `scripts/migration_guard.py` for lower-layout halves. They check addresses, vectors and board family. They also guard the draft’s factory-compatible images. Candidate generation does not add them to the approved release package.
+The image tools are `scripts/image_guard.py` for receiver images and `scripts/migration_guard.py` for lower-layout halves. They check addresses, vectors and board family. Candidate generation does not add them to the approved release package.
 
 Before transport or scanner changes, run the host harness and cross-build all supported roles. Test disconnect and key release, simultaneous input, wake on the first key, recovery entry and all connection modes on the keyboard. Record build results separately from device tests. Use primary sources for pin, memory and radio claims, and distinguish assumptions from device observations.
 
 For automated work, do not flash, erase, unlock, change bootloaders, write UICR or run `probe-rs recover`. Images must pass the address, vector and family checks and have device-specific bootloader evidence and a tested recovery route. Do not add a generic `cargo run` flash runner.
 
-## Production USB protocol reference
+## USB protocol reference
 
-The development runtime identities are `4c4b:4643` (left), `4c4b:4671` (right) and `4c4b:4644` (dongle). The observed factory UF2 identity is `239a:0029`. Discover the DFU interface number from its `fe/01/01` descriptors; do not hard-code it. DFU DETACH targets the local part, while Vial requests through the dongle target the left.
+The runtime identities are `4c4b:4643` (left), `4c4b:4671` (right) and `4c4b:4644` (dongle). The observed factory UF2 identity is `239a:0029`. Discover the DFU interface number from its `fe/01/01` descriptors; do not hard-code it. DFU DETACH targets the local part, while Vial requests through the dongle target the left.
 
-Read-only custom Vial getters use usage page `ff60`, usage `61`, and 32-byte reports. Headers identify battery/status (`NCBT`), selected mode (`NCMO`) and raw ADC (`NCAD`). The published firmware also exposes mode and ADC reports; the native draft does not. Companion no longer uses private pairing reports. Use the versioned battery serializers and validators in the source. Mark an unsupported or inconsistent reply as unknown.
-
-Status separates USB power, selected connection policy, active typing route and recovery. Battery values use cached measurements. Connection observations and battery estimates have separate expiry times. Mark a missing USB reply as unknown.
+Vial uses usage page `ff60`, usage `61`, and 32-byte reports. The current firmware has no private Companion battery, mode or pairing protocol. RMK receives board battery samples; Companion uses host USB and Bluetooth observations for its journeys. The desktop retains read-only getters for older firmware and treats unsupported replies as unknown.
 
 ## Diagnostics and bug reports
 

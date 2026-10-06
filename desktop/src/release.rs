@@ -13,9 +13,9 @@ use std::path::PathBuf;
 use std::path::{Component, Path};
 
 #[cfg(not(feature = "firmware-trial"))]
-const MANIFEST_SHA256: &str = "e9da15aebe486cb879eb62c65628d85d12b33ca587cbb32564c17a0b824d70af";
+const MANIFEST_SHA256: &str = "cc538954694b8bfb7b80467c2214de69957d62b09d75979896578194c66a6cd5";
 #[cfg(feature = "firmware-trial")]
-const MANIFEST_SHA256: &str = "0bb860432b827ed6c84b82aff11d55d1baacd89bf40ac6b4c581958b891a6496";
+const MANIFEST_SHA256: &str = "5f724aadc8bab459dc5e39e0a341c1066a2eddbfb048b28197ae184fb578576e";
 const MAX_FILE: u64 = 1024 * 1024;
 
 #[derive(Clone, Debug, Deserialize)]
@@ -124,7 +124,7 @@ impl FirmwareRelease {
     pub fn bundled_for(layout: KeyboardLayout) -> Result<Self, String> {
         let release = Self::bundled()?;
         if !release.native_controls() {
-            return Err("This draft needs the upstream firmware package.".into());
+            return Err("The bundled firmware could not be loaded. Reinstall Companion.".into());
         }
         if !release.supports_layout(layout) {
             return Err(format!(

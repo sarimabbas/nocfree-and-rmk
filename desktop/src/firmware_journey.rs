@@ -752,6 +752,13 @@ fn reconcile_target(
         if record["backup_sha256"].as_str() != Some(hash(&previous).as_str()) {
             return Err("The earlier installation backup changed.".into());
         }
+        // The same target may be retried in a new journey only after a full
+        // readback proves the original backup is intact. Keep this attempt
+        // unverified: unchanged firmware is not installation success.
+        if actual == previous && matches!(image, TargetImage::Rmk(_)) {
+            flash_bytes(actual)?;
+            continue;
+        }
         let storage = reconciliation_image.verify(actual, &previous)?;
         durable(&prior,"install-verified.json",&serde_json::to_vec_pretty(&serde_json::json!({"schema":1,"readback_sha256":hash(actual),"settings_changed_bytes":storage,"reconciled_after_restart":true})).map_err(|_| "Could not save the installation check.")?)?;
     }
@@ -874,11 +881,11 @@ impl FirmwareJourney {
             Phase::Reconnect => ("Reconnect USB", "Reconnect it to the same USB port."),
             Phase::Complete if self.is_factory() => (
                 "Factory firmware restored",
-                "All three parts are running factory firmware.",
+                "The selected parts are running factory firmware.",
             ),
             Phase::Complete => (
                 "You’re up to date",
-                "All three parts are running the installed firmware.",
+                "The selected parts are running the installed firmware.",
             ),
             Phase::Failed => (
                 "Check your connection",
@@ -2030,7 +2037,7 @@ mod tests {
     }
 
     #[test]
-    fn interrupted_transfer_requires_exact_original_backup_and_cannot_be_blindly_retried() {
+    fn interrupted_transfer_allows_only_verified_unchanged_retry_or_exact_target() {
         let root = std::env::temp_dir().join(format!(
             "nocfree-install-test-{}",
             std::time::SystemTime::now()
@@ -2054,9 +2061,13 @@ mod tests {
             &serde_json::to_vec(&intent).unwrap(),
         )
         .unwrap();
-        // No exact target yet: the saved one-shot intent remains unresolved.
-        assert!(reconcile_prior(&current, Role::Left, 10, &baseline, image).is_err());
+        // A fresh full readback proves a failed copy left the backup unchanged.
+        reconcile_prior(&current, Role::Left, 10, &baseline, image).unwrap();
         assert!(!prior.join("install-verified.json").exists());
+        assert!(reconcile_prior(&current, Role::Left, 11, &baseline, image).is_err());
+        let mut partial = baseline.clone();
+        partial[32 + 100] ^= 1;
+        assert!(reconcile_prior(&current, Role::Left, 10, &partial, image).is_err());
         let actual = archive_with(image);
         assert!(reconcile_prior(&current, Role::Left, 11, &actual, image).is_err());
         fs::write(prior.join("CURRENT.UF2"), &actual).unwrap();
