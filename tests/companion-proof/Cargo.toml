@@ -1,0 +1,21 @@
+[package]
+name = "nocfree-companion-tests"
+version = "0.0.0"
+edition = "2024"
+
+[workspace]
+
+[features]
+left = ["rmk/dongle", "rmk/_ble"]
+right = ["rmk/_ble"]
+receiver = ["rmk/dongle", "rmk/_ble"]
+
+[dependencies]
+rmk = { path = "../../dependencies/rmk/rmk", default-features = false, features = ["vial", "split", "custom_message", "std"] }
+embassy-usb = "0.6"
+embassy-sync = "0.8"
+embassy-time = "0.5"
+static_cell = "2"
+critical-section = { version = "1", features = ["std"] }
+embassy-usb-driver = "=0.2.2"
+futures = "0.3"

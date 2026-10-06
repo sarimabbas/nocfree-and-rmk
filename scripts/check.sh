@@ -46,6 +46,9 @@ if [ "$mode" != build ]; then
         fi
     done
     KEYBOARD_TOML_PATH="$PWD/crates/backlight-tests/keyboard.toml" cargo nextest run --locked --manifest-path crates/backlight-tests/Cargo.toml
+    for role in left right receiver; do
+        cargo nextest run --locked --manifest-path tests/companion-proof/Cargo.toml --features "$role"
+    done
     cargo fmt --manifest-path crates/nocfree-input/Cargo.toml -- --check
     cargo fmt --manifest-path firmware/Cargo.toml -- --check
     python3 firmware/presets/test_presets.py
