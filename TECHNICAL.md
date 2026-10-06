@@ -95,7 +95,7 @@ These proofs establish API access and software behavior. They do not establish a
 
 ### Minimal dependency migration
 
-Ten adversarial review rounds tested each proposal against a concrete failure case. These decisions revise the earlier full-parity recommendation above; they are a plan, not changes to production firmware.
+Twenty adversarial review rounds tested each proposal against concrete failure cases. These decisions revise the earlier full-parity recommendation above; they are a plan, not changes to production firmware.
 
 | Round | Decision after review |
 | --- | --- |
@@ -104,19 +104,34 @@ Ten adversarial review rounds tested each proposal against a concrete failure ca
 | 3. Pairing | Use upstream pairing with guided physical actions, link checks and typing tests. Replace the identity-based journey; remove targeted repair without claiming exact-peer verification. |
 | 4. Switch | Preserve the printed positions with a narrow absolute-output hook. Reject synthetic keys and false USB-state updates. Ignoring the switch remains an optional product change. |
 | 5. Sleep | Use stock idle sleep and explicit key-to-wake instructions. Remove the USB-awake extension only after testing the revised journeys. A zero idle timeout changes battery behavior and does not remove advertising timeouts. |
-| 6. Backlight | Put brightness, PWM, save debounce and split snapshots in a small board module using public RMK actions, storage and messages. Proposed controls use named Vial user actions and one step per press. Migrate old lighting assignments; do not silently drop them. |
+| 6. Backlight | Put brightness, PWM, save debounce and split snapshots in a small board module using public RMK actions, storage and messages. Keep one step per press. Round 15 selects standard Vial lighting codes to avoid a larger import migration. |
 | 7. Chip drivers | Use published Embassy with the tested USB/PWM adapters. Retain the small no-write UICR change. Keep the factory bootloader. |
 | 8. Layout storage | Keep native layout identity and fail-closed erase handling. Smaller per-layout flash stores lack capacity and migration proof; a separate marker adds a crash protocol. |
 | 9. Dependencies | Pin exact tested sources. Local patches and temporary forks both require maintenance. Include their identity in candidate source hashes; do not vendor whole frameworks to hide a fork. |
 | 10. Combined design | Keep RMK's key, radio, bond and storage implementations. Board modules own physical outputs and Companion reports. Retain only changes with no small public-interface replacement. |
 
-Implement in three checkpoints: first USB/PWM and status/recovery adapters with current behavior; then board lighting/LEDs and ordinary pairing/sleep journeys; finally the smaller dependency patch set. The proposed simplifications remove held brightness repeat, one-click pairing repair and USB-power-specific wake behavior. Saved brightness, Vial remapping, all typing modes, meaningful switch positions and guarded recovery remain requirements. Test Vial export/import before choosing custom lighting actions over the small standard-code converter.
+Implement in three checkpoints: first USB/PWM and status/recovery adapters with current behavior; then board lighting/LEDs and ordinary pairing/sleep journeys; finally the smaller dependency patch set. The proposed simplifications remove held brightness repeat, targeted pairing repair and USB-power-specific wake behavior. Saved brightness, standard Vial lighting codes, remapping, all typing modes, meaningful switch positions and guarded recovery remain requirements.
 
-The expected remaining RMK changes are absolute output selection, layout/error handling and the small macro-bounds guard until equivalent upstream behavior is tested. Embassy still needs UICR preservation. Zero forks depends on equivalent upstream changes; moving code to a local patch does not remove that dependency. Each checkpoint requires host tests, every role/layout build and physical acceptance before replacing the approved images. Do not change the bootloader or expand the reserved flash area.
+The expected remaining RMK changes are absolute output/profile control, the small Vial lighting converter, layout/error handling and the small macro-bounds guard until equivalent upstream behavior is tested. Pairing may need a narrow native-action request if a safe LEFT-only key control is more complex. Embassy still needs UICR preservation. Zero forks depends on equivalent upstream changes; moving code to a local patch does not remove that dependency. Each checkpoint requires host tests, every role/layout build and physical acceptance before replacing the approved images. Do not change the bootloader or expand the reserved flash area.
 
 The completed migration must reduce maintained custom code on balance. Count board and desktop changes, dependency patches, new helpers and tests together; report implementation and test changes separately. Moving code between repositories, vendoring, formatting or removing documentation does not count as a reduction. Remove each superseded implementation and its compatibility path once the replacement passes acceptance. Keep useful regression tests. If a replacement adds more maintenance than it removes, retain the simpler current implementation.
 
 The Rust source baseline at `bf88e29` is 981 lines in firmware, 823 in `nocfree-input` and 21,429 in desktop, plus a net 2,842 lines of RMK fork changes and 120 lines of Embassy changes. These physical-line counts include tests and comments, not generated sources. RMK is compared with fork base `92a626cf`; Embassy is compared with published 0.11.0. Compare custom changes against each dependency's own upstream base, so unrelated upstream additions do not become our code. Include any new non-Rust implementation or test helpers in the final change report.
+
+The second ten rounds refine the implementation gates:
+
+| Round | Decision after review |
+| --- | --- |
+| 11. Existing firmware | Keep a thin legacy Vial/DFU adapter for 0.1.1, sharing report parsing and journeys with the new HID adapter. Count compatibility code in the total. |
+| 12. Recovery races | Preserve enumerated device identity, cancellation and one-shot submission. Bound acknowledgment/reset handling. An acknowledgment is not recovery-drive verification; never resend an uncertain request automatically. |
+| 13. Reachable pairing | Current Fn+0 uses RIGHT and is not the dedicated dongle action. Require a LEFT-only native pairing control and a safe path for existing remaps before retiring targeted repair. |
+| 14. Lighting concurrency | LEFT owns brightness. Keep input handling short; save and verify through a separate worker. Queued writes are not durable saves. Resend absolute snapshots on reconnect and prevent late startup reads from overwriting input. |
+| 15. Vial migration | Retain the small standard lighting converter. Custom user codes add labels, preset changes and old-export migration that can exceed the converter's cost. |
+| 16. Routes and idle | Apply absolute switch policy before typing starts; resolve profiles after storage loads. Keep release handling inside RMK. Test held keys during route changes and journeys paused beyond advertising timeout. |
+| 17. Storage failures | Check both erase and schema-marker write before returning initialized storage. Test partial erase, interrupted writes and reopening old/new layouts; revision changes can reset bonds. |
+| 18. Hardware waits | Bound PWM waits and stop safely on timeout. Read required UICR settings before using dependent pins; HAL continuing after a rejected write does not prove pin configuration. Preserve one watchdog owner. |
+| 19. Source accounting | Count formatted code, retained compatibility, helpers and tests. Preserve patch provenance and include it in image hashes. Version numbers alone do not identify tested sources. |
+| 20. Release gate | Require actual integrated code reduction, complete builds and physical acceptance. Source review and prototype compilation cannot certify a smaller or working replacement. |
 
 ## Board reference
 
