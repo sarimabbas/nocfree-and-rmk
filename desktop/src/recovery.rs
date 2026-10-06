@@ -74,8 +74,8 @@ fn run_with(
                     let _ = progress.send(Procedure::RuntimeApp);
                     // A successful reset may disconnect before acknowledgement.
                     // Only the subsequently correlated drive determines success.
-                    match request.request_detach(&cancelled).await {
-                        Err(crate::runtime_recovery::DispatchError::NotSent(message)) => return Err(message.into()),
+                    match request.request_detach(cancelled.clone()).await {
+                        Err(crate::runtime_recovery::DispatchError::NotSent(message)) => return Err(message),
                         Ok(()) | Err(crate::runtime_recovery::DispatchError::OutcomeUnknown(_)) => {},
                     }
                 } else { entry_gate.reset(); }

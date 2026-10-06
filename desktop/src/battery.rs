@@ -145,9 +145,19 @@ pub(crate) fn native_task<T: Send + 'static>(
     task: impl FnOnce(Instant) -> Result<T, String> + Send + 'static,
 ) -> Result<T, String> {
     let started = Instant::now();
+    let guard = loop {
+        if let Ok(guard) = QueryGuard::acquire() {
+            break guard;
+        }
+        if started.elapsed() >= Duration::from_secs(2) {
+            return Err(NATIVE_BUSY.to_owned());
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    };
     let (send, receive) = mpsc::sync_channel(1);
     battery_worker()?
         .try_send(Box::new(move || {
+            let _guard = guard;
             let _ = send.send(task(started));
         }))
         .map_err(|error| match error {
@@ -156,9 +166,11 @@ pub(crate) fn native_task<T: Send + 'static>(
                 "The keyboard connection worker stopped.".to_owned()
             }
         })?;
-    receive.recv_timeout(Duration::from_secs(5)).map_err(|_| {
-        "The keyboard request timed out. Check its state before continuing.".to_owned()
-    })?
+    receive
+        .recv_timeout(Duration::from_secs(5).saturating_sub(started.elapsed()))
+        .map_err(|_| {
+            "The keyboard request timed out. Check its state before continuing.".to_owned()
+        })?
 }
 
 fn read_on_worker(started: Instant) -> Result<Readings, String> {
