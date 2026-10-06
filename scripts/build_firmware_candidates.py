@@ -22,7 +22,7 @@ LAYOUTS = ('ansi', 'iso', 'jis', 'kr')
 def features(role, layout='ansi'):
     if layout not in LAYOUTS:
         raise ValueError('Unknown keyboard layout')
-    result = ['defmt-logging', role, 'runtime-recovery']
+    result = ['defmt-logging', role, 'runtime-recovery', 'startup-watchdog']
     if role != 'receiver':
         result.append('mac-keymap')
         if layout != 'ansi':
