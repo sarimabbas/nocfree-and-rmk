@@ -94,7 +94,7 @@ LEFT and dongle use RMK's standard runtime DFU DETACH interface. It accepts entr
 
 RIGHT uses Embassy's standard runtime DFU class and a callback to RMK's bootloader request. Its local USB identity is distinct from LEFT and dongle. This class has no download partition: the app requests recovery; the factory bootloader handles subsequent transfers. Windows receives the standard WinUSB descriptor.
 
-Companion requests LEFT recovery with upstream VIA's BootloaderJump command over LEFT's direct USB raw-HID interface. RIGHT and dongle recovery use local DFU DETACH. Each request checks the selected role, physical USB connection and interface before submission. Requests share the native HID owner thread and stop on cancellation or expiry. An unanswered submitted request waits for the recovery drive; an unsent request stays available to retry. The approved production package remains unchanged. This spike blocks RMK installs and standalone native connection tests until a package pinned to the upstream revision is accepted. Factory restoration remains available.
+Companion requests LEFT recovery with upstream VIA's BootloaderJump command over LEFT's direct USB raw-HID interface. RIGHT and dongle recovery use local DFU DETACH. Each request checks the selected role, physical USB connection and interface before submission. Requests share the native HID owner thread and stop on cancellation or expiry. An unanswered submitted request waits for the recovery drive; an unsent request stays available to retry. The approved production package remains unchanged. The default build rejects unaccepted packages. The separate trial build pins the ANSI upstream candidates for board testing. Factory restoration remains available.
 
 ### Image boundaries
 
@@ -105,7 +105,7 @@ Companion requests LEFT recovery with upstream VIA's BootloaderJump command over
 
 The guarded ANSI Mac-keymap builds use 372,052 bytes for LEFT, 231,788 for RIGHT and 248,172 for the dongle. The dongle's slot has 253,952 bytes; its UF2 page padding also fits. The complete layout/keymap build matrix is checked separately.
 
-Compared with main, project source removes 85 net lines. Retiring 2,962 lines from the pinned RMK and Embassy forks reduces maintained source by 3,047 lines overall. This count includes board code and tests, and excludes lockfiles, documentation, generated binaries and dependency code.
+Compared with main, project source changes by +122 net lines. Retiring 2,962 lines from the pinned RMK and Embassy forks reduces maintained source by 2,840 lines overall. This count includes board code and tests, and excludes lockfiles, documentation, generated binaries and dependency code.
 
 The lower half images replace the resident SoftDevice while preserving the MBR. The dongle keeps the resident SoftDevice. All images exclude the factory filesystem at `0x6d000..0x74000`, the bootloader above it and UICR. These are the existing guarded project boundaries; they are not inferred from a generic Adafruit example.
 
@@ -116,7 +116,22 @@ The startup reserve at application offset `0x200` stays erased. It does not requ
 ./scripts/check.sh --build-only --all-layouts --backlight-active-high
 ```
 
-The Companion UX layer removes 1,092 source lines compared with the preceding draft. Ten independent reviewers checked route isolation, recovery dispatch, platform APIs, copy and release boundaries. Desktop checks pass 249 unit tests and two integration tests; six tests remain ignored. Simulated UI checks validate layout and manual Next behavior, not device connections.
+The Companion UX layer removes 1,092 source lines compared with the preceding draft. Ten independent reviewers checked route isolation, recovery dispatch, platform APIs, copy and release boundaries. Desktop checks cover manual transitions, recovery identity, interrupted transfers and package validation. Simulated UI checks validate layout and manual Next behavior, not device connections.
+
+### Companion trial
+
+Build the ANSI package and trial app:
+
+```sh
+python3 scripts/build_firmware_candidates.py --output dist/native-trial-candidates --companion-trial
+desktop/build-macos.sh --trial
+```
+
+The manifest must match the reviewed trial hash in `desktop/src/release.rs`. A rebuild that changes the manifest needs a new review and pin. The trial has a separate app name and bundle ID. Its package records software checks only; it is not a production release.
+
+Installing this firmware resets saved mappings, macros, lighting settings and wireless pairings. Use the guided typing tests to check USB, Bluetooth and dongle operation. Normal USB enumeration confirms startup; it does not prove the selected typing route.
+
+An interrupted transfer can reuse a recovery serial previously confirmed for that part. Companion requires one live recovery drive and the expected bootloader metadata. Unknown or conflicting drives cannot authorize a write. Factory restore uses the retained original, a fresh backup and a new transfer record. Retrying an interrupted factory restore requires the same target and USB port. Only exact readback closes that attempt; the earlier record remains unverified.
 
 ### Device acceptance
 

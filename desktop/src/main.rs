@@ -77,7 +77,14 @@ fn main() {
                         cx,
                     ))),
                     titlebar: Some(TitlebarOptions {
-                        title: Some("NocFree RMK Companion".into()),
+                        title: Some(
+                            if cfg!(feature = "firmware-trial") {
+                                "NocFree RMK Companion Trial"
+                            } else {
+                                "NocFree RMK Companion"
+                            }
+                            .into(),
+                        ),
                         ..Default::default()
                     }),
                     window_min_size: Some(size(px(800.), px(560.))),

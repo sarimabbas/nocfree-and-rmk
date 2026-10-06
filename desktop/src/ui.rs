@@ -1353,6 +1353,12 @@ impl Companion {
         };
         if self.navigation.page() == Page::Firmware {
             body = body.child(self.layout_picker(cx));
+            if cfg!(feature = "firmware-trial") {
+                body = body.child(instruction_line(
+                    "This update resets saved key mappings and wireless pairings. Pair Bluetooth and the dongle again after installation.",
+                    false, cx,
+                ));
+            }
         }
         let enabled = self.navigation.can_start()
             && !self.operation.busy()
@@ -2593,6 +2599,11 @@ impl Companion {
                     error.clone(),
                     None,
                     cx,
+                )
+                .child(
+                    button("restore-after-failure", "Restore factory")
+                        .disabled(self.operation.busy())
+                        .on_click(cx.listener(|this, _, _, cx| this.navigate(Page::Restore, cx))),
                 ),
                 actions: Some(
                     self.footer(

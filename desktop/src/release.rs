@@ -12,7 +12,10 @@ use sha2::{Digest, Sha256};
 use std::path::PathBuf;
 use std::path::{Component, Path};
 
+#[cfg(not(feature = "firmware-trial"))]
 const MANIFEST_SHA256: &str = "e9da15aebe486cb879eb62c65628d85d12b33ca587cbb32564c17a0b824d70af";
+#[cfg(feature = "firmware-trial")]
+const MANIFEST_SHA256: &str = "c63a63fbc78ff361bc32d46f5a2824884cac8e7c4f2493a00d44b1b4aa700f34";
 const MAX_FILE: u64 = 1024 * 1024;
 
 #[derive(Clone, Debug, Deserialize)]
@@ -106,9 +109,12 @@ impl FirmwareRelease {
         }
         #[cfg(debug_assertions)]
         {
-            Self::load_from(
-                &PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../dist/companion-firmware"),
-            )
+            let directory = if cfg!(feature = "firmware-trial") {
+                "../dist/native-trial-candidates/companion"
+            } else {
+                "../dist/companion-firmware"
+            };
+            Self::load_from(&PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(directory))
         }
         #[cfg(not(debug_assertions))]
         {

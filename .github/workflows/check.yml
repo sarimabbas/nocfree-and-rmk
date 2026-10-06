@@ -135,8 +135,8 @@ jobs:
       - name: Desktop tests and lint
         working-directory: desktop
         run: |
-          cargo test --locked
-          cargo clippy --locked --all-targets -- -D warnings
+          cargo test --locked --all-features
+          cargo clippy --locked --all-features --all-targets -- -D warnings
           cargo fmt --check
 
   ci:
