@@ -5,7 +5,6 @@ use statig::prelude::*;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kind {
-    Pairing,
     PrepareFirmware,
     Firmware,
     Backup,
@@ -174,7 +173,7 @@ mod tests {
     fn duplicate_and_old_completions_cannot_finish_a_new_job() {
         let mut flow = Operation::default();
         let first = flow.begin(Kind::Backup, Some(Role::Right), None).unwrap();
-        assert!(flow.begin(Kind::Pairing, None, None).is_none());
+        assert!(flow.begin(Kind::Backup, None, None).is_none());
         assert!(flow.complete(first));
         let next = flow.begin(Kind::Firmware, Some(Role::Left), None).unwrap();
         assert!(!flow.complete(first));

@@ -117,6 +117,9 @@ impl FirmwareRelease {
     }
     pub fn bundled_for(layout: KeyboardLayout) -> Result<Self, String> {
         let release = Self::bundled()?;
+        if !release.native_controls() {
+            return Err("This draft needs the upstream firmware package.".into());
+        }
         if !release.supports_layout(layout) {
             return Err(format!(
                 "{} firmware is not available in this app yet",
@@ -124,6 +127,13 @@ impl FirmwareRelease {
             ));
         }
         Ok(release)
+    }
+
+    pub(crate) fn native_controls(&self) -> bool {
+        !self.images.is_empty()
+            && self.images.iter().all(|image| {
+                image.metadata.rmk_revision == "434ab4d7d29d8e9ba689837358c8a44996ba38cc"
+            })
     }
 
     pub fn supports_layout(&self, layout: KeyboardLayout) -> bool {
@@ -293,6 +303,19 @@ pub(crate) fn fixture() -> FirmwareRelease {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn native_controls_require_every_pinned_image() {
+        let mut release = fixture();
+        assert!(!release.native_controls());
+        for image in &mut release.images {
+            image.metadata.rmk_revision = "434ab4d7d29d8e9ba689837358c8a44996ba38cc".into();
+        }
+        assert!(release.native_controls());
+        release.images[0].metadata.rmk_revision = "legacy".into();
+        assert!(!release.native_controls());
+        release.images.clear();
+        assert!(!release.native_controls());
+    }
     #[test]
     fn release_layout_requires_both_halves_to_agree_with_a_shared_receiver() {
         let mut release = fixture();

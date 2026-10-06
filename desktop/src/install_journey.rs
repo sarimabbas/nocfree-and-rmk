@@ -1,5 +1,5 @@
 //! Install coordinates child completion and three observable typing checks.
-//! Firmware and pairing retain their own machines; this parent performs no IO.
+//! Firmware retains its own machine; this parent performs no IO.
 use crate::{device_status::Mode, scope::Scope, status_strip::Connection};
 use statig::prelude::*;
 use std::{
@@ -44,7 +44,6 @@ pub(crate) struct Ticket {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Stage {
     Installing,
-    Pairing,
     Setup(Mode),
     Typing(Mode),
     Complete,
@@ -59,9 +58,9 @@ pub(crate) struct Evidence {
     pub left_usb: Option<bool>,
     pub right_usb: Option<bool>,
     pub dongle_usb: Option<bool>,
-    pub right_link: Option<bool>,
     pub bluetooth_connected: Option<bool>,
     pub factory_usb_count: Option<usize>,
+    pub usb_identity: u64,
     pub fresh: bool,
     pub observed_at: Instant,
 }
@@ -92,55 +91,34 @@ impl Evidence {
         self.fresh
             && self.observed_at.elapsed() <= EVIDENCE_AGE
             && self.right_usb == Some(false)
-            && match mode {
-                Mode::Wired => {
-                    self.mode == Some(mode)
-                        && self.right_link == Some(true)
-                        && self.route == Connection::Usb
-                        && self.left_usb == Some(true)
-                }
-                Mode::Bluetooth => {
-                    // With USB absent there is no firmware status producer. The
-                    // live macOS link proves this route; the owner's exact token
-                    // checks the split and shared modifier without inventing telemetry.
-                    self.mode.is_none_or(|selected| selected == mode)
-                        && self.right_link.is_none_or(|connected| connected)
-                        && self.route == Connection::Bluetooth
-                        && self.left_usb == Some(false)
-                        && self.dongle_usb == Some(false)
-                }
-                Mode::Dongle => {
-                    self.mode == Some(mode)
-                        && self.right_link == Some(true)
-                        && self.route == Connection::Dongle
-                        && self.left_usb == Some(false)
-                        && self.dongle_usb == Some(true)
-                }
-            }
+            && self.left_usb == Some(mode == Mode::Wired)
+            && self.dongle_usb == Some(mode == Mode::Dongle)
+            && self.bluetooth_connected == Some(mode == Mode::Bluetooth)
     }
-    fn same_setup(self, other: Self) -> bool {
-        self.mode == other.mode
-            && self.route == other.route
+    fn same_setup(self, other: Self, target: Target) -> bool {
+        (target == Target::Rmk
+            || (self.mode == other.mode
+                && self.route == other.route
+                && self.factory_usb_count == other.factory_usb_count))
+            && self.usb_identity == other.usb_identity
             && self.left_usb == other.left_usb
             && self.right_usb == other.right_usb
             && self.dongle_usb == other.dongle_usb
-            && self.right_link == other.right_link
             && self.fresh == other.fresh
             && self.bluetooth_connected == other.bluetooth_connected
-            && self.factory_usb_count == other.factory_usb_count
     }
 }
 impl Mode {
     pub(crate) fn install_instruction(self) -> &'static str {
         match self {
             Self::Wired => {
-                "Connect the left USB cable and move its switch to middle WIRED. Keep the right half ON with USB unplugged."
+                "Connect LEFT by USB. Unplug RIGHT USB and the dongle. Disconnect NocFree RMK in Bluetooth settings. Keep RIGHT ON."
             }
             Self::Bluetooth => {
-                "Unplug both USB cables and the dongle. Move the left switch to bottom Bluetooth and keep the right half ON. Connect NocFree RMK in Bluetooth settings. If it is not listed, hold Fn + 1 for five seconds, then connect."
+                "Unplug both USB cables and the dongle. Keep both halves powered: move LEFT to a wireless position and keep RIGHT ON. Press LEFT Fn + 1 to select Bluetooth profile 1, then connect NocFree RMK in Bluetooth settings. If pairing fails, forget the old Bluetooth entry, hold LEFT Fn + 1 for five seconds, then pair again."
             }
             Self::Dongle => {
-                "Unplug both USB cables. Plug in the dongle and move the left switch to top DONGLE. Keep the right half ON."
+                "Unplug both USB cables and connect the dongle. Keep both halves powered: move LEFT to a wireless position and keep RIGHT ON. Disconnect NocFree RMK in Bluetooth settings. Press LEFT Fn + Tab to select the dongle. If it does not connect, hold LEFT Fn + Tab for five seconds, then replug the dongle."
             }
         }
     }
@@ -158,7 +136,6 @@ mod machine {
     pub enum Event {
         Installed(Ticket, Result<(), String>),
         CheckFactoryDongle,
-        Paired(Ticket, Result<(), String>),
         Observed(Ticket, Evidence),
         Input(Ticket, String),
         Next(Ticket),
@@ -191,7 +168,12 @@ mod machine {
                                 return Transition(State::complete());
                             }
                             match self.target {
-                                Target::Rmk => Transition(State::pairing()),
+                                Target::Rmk => Transition(State::checking(
+                                    Mode::Wired,
+                                    None,
+                                    String::new(),
+                                    false,
+                                )),
                                 Target::Factory => Transition(State::checking(
                                     Mode::Wired,
                                     None,
@@ -199,22 +181,6 @@ mod machine {
                                     false,
                                 )),
                             }
-                        }
-                        Err(error) => Transition(State::failed(error.clone())),
-                    }
-                }
-                _ => Super,
-            }
-        }
-        #[state(superstate = "cancellable")]
-        fn pairing(&mut self, event: &Event, context: &mut bool) -> Outcome<State> {
-            match event {
-                Event::Paired(ticket, result) if self.current(*ticket) => {
-                    *context = true;
-                    match result {
-                        Ok(()) => {
-                            self.advance();
-                            Transition(State::checking(Mode::Wired, None, String::new(), false))
                         }
                         Err(error) => Transition(State::failed(error.clone())),
                     }
@@ -237,7 +203,7 @@ mod machine {
                 Event::Observed(ticket, latest) if self.current(*ticket) => {
                     *context = true;
                     let changed = evidence.is_some_and(|old| {
-                        !old.same_setup(*latest)
+                        !old.same_setup(*latest, self.target)
                             || old.ready(*mode, self.target) != latest.ready(*mode, self.target)
                     });
                     if changed {
@@ -249,7 +215,7 @@ mod machine {
                     let keep = evidence.is_some_and(|old| {
                         old.ready(*mode, self.target)
                             && latest.ready(*mode, self.target)
-                            && old.same_setup(*latest)
+                            && old.same_setup(*latest, self.target)
                     });
                     Transition(State::checking(
                         *mode,
@@ -282,7 +248,7 @@ mod machine {
                         && evidence.is_some_and(|e| e.ready(*mode, self.target))
                         && *armed
                         && self.route_ready
-                        && input.trim() == TOKEN =>
+                        && input == TOKEN =>
                 {
                     *context = true;
                     self.advance();
@@ -343,6 +309,11 @@ impl Machine {
     pub fn factory() -> Self {
         Self::scoped(Target::Factory, Scope::Whole)
     }
+    pub fn rmk_check() -> Self {
+        let mut machine = Self::new();
+        machine.installed(machine.ticket(), Ok(()));
+        machine
+    }
     pub fn factory_dongle_check() -> Self {
         let mut machine = Self::scoped(Target::Factory, Scope::Whole);
         machine.dispatch(machine::Event::CheckFactoryDongle);
@@ -377,7 +348,6 @@ impl Machine {
     pub fn stage(&self) -> Stage {
         match self.machine.state() {
             machine::State::Installing {} => Stage::Installing,
-            machine::State::Pairing {} => Stage::Pairing,
             machine::State::Checking {
                 mode,
                 evidence,
@@ -401,7 +371,7 @@ impl Machine {
     pub fn can_next(&self) -> bool {
         matches!(self.machine.state(), machine::State::Checking {mode, evidence, input, armed}
             if self.machine.inner().route_ready && evidence.is_some_and(|e| e.ready(*mode, self.target()))
-                && ((!*armed) || (*armed && input.trim() == TOKEN)))
+                && ((!*armed) || (*armed && input == TOKEN)))
     }
     pub fn text(&self) -> &str {
         match self.machine.state() {
@@ -416,9 +386,6 @@ impl Machine {
     }
     pub fn installed(&mut self, ticket: Ticket, result: Result<(), String>) -> bool {
         self.dispatch(machine::Event::Installed(ticket, result))
-    }
-    pub fn paired(&mut self, ticket: Ticket, result: Result<(), String>) -> bool {
-        self.dispatch(machine::Event::Paired(ticket, result))
     }
     pub fn observe(&mut self, ticket: Ticket, evidence: Evidence) -> bool {
         self.dispatch(machine::Event::Observed(ticket, evidence))
@@ -437,345 +404,200 @@ impl Machine {
 #[cfg(test)]
 mod tests {
     use super::*;
-    impl Machine {
-        // Existing acceptance tests simulate the owner's pause between screens.
-        fn observe_settled(&mut self, ticket: Ticket, mut evidence: Evidence) -> bool {
-            let now = Instant::now();
-            if now.saturating_duration_since(evidence.observed_at) > EVIDENCE_AGE {
-                return self.observe(ticket, evidence);
-            }
-            evidence.observed_at = now;
-            let accepted = self.observe(ticket, evidence);
-            evidence.observed_at = now + Duration::from_secs(5);
-            self.observe(self.ticket(), evidence);
-            if self.target() == Target::Rmk
-                && matches!(self.stage(), Stage::Setup(_))
-                && self.can_next()
-            {
-                self.next(self.ticket());
-            }
-            accepted
-        }
-    }
-    #[test]
-    fn standalone_factory_check_starts_at_dongle_setup_without_installing() {
-        let mut machine = Machine::factory_dongle_check();
-        assert_eq!(machine.target(), Target::Factory);
-        assert_eq!(machine.stage(), Stage::Setup(Mode::Dongle));
-        assert!(!machine.can_next());
-        assert!(!machine.next(machine.ticket()));
-        assert_eq!(machine.stage(), Stage::Setup(Mode::Dongle));
-    }
-    #[test]
-    fn observed_valid_route_waits_for_next_and_correct_typing_enables_next_immediately() {
-        let mut machine = checks();
-        machine.observe(machine.ticket(), evidence(Mode::Wired));
-        assert_eq!(machine.stage(), Stage::Setup(Mode::Wired));
-        assert!(machine.can_next());
-        assert!(!machine.input(machine.ticket(), TOKEN.into()));
-        machine.next(machine.ticket());
-        assert_eq!(machine.stage(), Stage::Typing(Mode::Wired));
-        machine.input(machine.ticket(), TOKEN.into());
-        assert!(machine.can_next());
-        assert_eq!(machine.stage(), Stage::Typing(Mode::Wired));
-        let old = machine.ticket();
-        machine.observe(machine.ticket(), evidence(Mode::Dongle));
-        assert_eq!(machine.stage(), Stage::Setup(Mode::Wired));
-        assert!(!machine.can_next());
-        machine.observe(machine.ticket(), evidence(Mode::Wired));
-        assert_eq!(machine.stage(), Stage::Setup(Mode::Wired));
-        assert!(!machine.input(old, TOKEN.into()));
-        machine.next(machine.ticket());
-        machine.input(machine.ticket(), TOKEN.into());
-        assert!(machine.can_next());
-        machine.next(machine.ticket());
-        assert_eq!(machine.stage(), Stage::Setup(Mode::Bluetooth));
-    }
     fn evidence(mode: Mode) -> Evidence {
         Evidence {
-            mode: Some(mode),
-            route: match mode {
-                Mode::Wired => Connection::Usb,
-                Mode::Bluetooth => Connection::Bluetooth,
-                Mode::Dongle => Connection::Dongle,
-            },
+            mode: None,
+            route: Connection::Unknown,
             left_usb: Some(mode == Mode::Wired),
             right_usb: Some(false),
             dongle_usb: Some(mode == Mode::Dongle),
-            right_link: Some(true),
             bluetooth_connected: Some(mode == Mode::Bluetooth),
             factory_usb_count: None,
+            usb_identity: 0,
             fresh: true,
             observed_at: Instant::now(),
         }
     }
-    fn checks() -> Machine {
-        let mut machine = Machine::new();
-        assert!(machine.installed(machine.ticket(), Ok(())));
-        assert!(machine.paired(machine.ticket(), Ok(())));
-        machine
-    }
-    fn factory_evidence(mode: Mode) -> Evidence {
-        let mut result = evidence(mode);
-        result.mode = None;
-        result.right_link = None;
-        result.left_usb = None;
-        result.dongle_usb = None;
-        result.factory_usb_count = Some(usize::from(mode != Mode::Bluetooth));
-        if mode != Mode::Bluetooth {
-            result.route = Connection::Unknown;
-        }
-        result
+    fn arm(machine: &mut Machine, mode: Mode) {
+        assert!(machine.observe(machine.ticket(), evidence(mode)));
+        assert_eq!(machine.stage(), Stage::Setup(mode));
+        assert!(machine.can_next());
+        assert!(!machine.input(machine.ticket(), TOKEN.into()));
+        assert!(machine.next(machine.ticket()));
+        assert_eq!(machine.stage(), Stage::Typing(mode));
     }
     #[test]
-    fn part_install_completes_without_pairing_or_whole_keyboard_checks() {
-        for target in [Target::Rmk, Target::Factory] {
-            for role in Scope::Whole.roles() {
-                let mut machine = Machine::scoped(target, Scope::Part(role));
-                let ticket = machine.ticket();
-                assert_eq!(machine.stage(), Stage::Installing);
-                assert!(!machine.paired(ticket, Ok(())));
-                assert!(machine.installed(ticket, Ok(())));
-                assert_eq!(machine.stage(), Stage::Complete);
-                assert!(!machine.paired(machine.ticket(), Ok(())));
-                assert!(!machine.observe_settled(machine.ticket(), evidence(Mode::Wired)));
-                assert!(!machine.input(machine.ticket(), TOKEN.into()));
+    fn installation_and_each_check_need_explicit_completion() {
+        let mut machine = Machine::new();
+        assert!(!machine.next(machine.ticket()));
+        assert!(machine.installed(machine.ticket(), Ok(())));
+        for mode in [Mode::Wired, Mode::Bluetooth, Mode::Dongle] {
+            arm(&mut machine, mode);
+            for wrong in ["qwert hjkl h", "qwert HJKL h ", "qwert HJKL", ""] {
+                assert!(machine.input(machine.ticket(), wrong.into()));
+                assert!(!machine.can_next());
+            }
+            assert!(machine.input(machine.ticket(), TOKEN.into()));
+            assert!(machine.can_next());
+            assert_eq!(machine.stage(), Stage::Typing(mode));
+            assert!(machine.next(machine.ticket()));
+            assert!(!machine.next(machine.ticket()));
+        }
+        assert_eq!(machine.stage(), Stage::Complete);
+    }
+    #[test]
+    fn every_route_requires_known_isolated_host_connections() {
+        for mode in [Mode::Wired, Mode::Bluetooth, Mode::Dongle] {
+            assert!(evidence(mode).ready(mode, Target::Rmk));
+            for change in 0..10 {
+                let mut invalid = evidence(mode);
+                match change {
+                    0 => invalid.left_usb = None,
+                    1 => invalid.right_usb = None,
+                    2 => invalid.dongle_usb = None,
+                    3 => invalid.bluetooth_connected = None,
+                    4 => invalid.left_usb = Some(mode != Mode::Wired),
+                    5 => invalid.right_usb = Some(true),
+                    6 => invalid.dongle_usb = Some(mode != Mode::Dongle),
+                    7 => invalid.bluetooth_connected = Some(mode != Mode::Bluetooth),
+                    8 => invalid.fresh = false,
+                    _ => {
+                        invalid.observed_at = Instant::now() - EVIDENCE_AGE - Duration::from_secs(1)
+                    }
+                }
+                assert!(!invalid.ready(mode, Target::Rmk));
+                let mut machine = Machine::rmk_check();
+                machine.observe(machine.ticket(), invalid);
+                assert!(!machine.can_next());
                 assert!(!machine.next(machine.ticket()));
-                assert!(!machine.installed(ticket, Ok(())));
-                let mut failed = Machine::scoped(target, Scope::Part(role));
-                assert!(failed.installed(failed.ticket(), Err("verification failed".into())));
-                assert!(matches!(failed.stage(), Stage::Failed(_)));
             }
         }
     }
     #[test]
-    fn factory_skips_rmk_pairing_and_requires_setup_ack_then_typing_for_every_mode() {
-        let mut machine = Machine::factory();
-        assert_eq!(machine.target(), Target::Factory);
-        assert!(machine.installed(machine.ticket(), Ok(())));
-        assert_eq!(machine.stage(), Stage::Setup(Mode::Wired));
-        assert!(!machine.paired(machine.ticket(), Ok(())));
-        for mode in [Mode::Wired, Mode::Bluetooth, Mode::Dongle] {
-            assert!(machine.observe_settled(machine.ticket(), factory_evidence(mode)));
-            assert_eq!(machine.stage(), Stage::Setup(mode));
-            assert!(machine.can_next());
-            assert!(!machine.input(machine.ticket(), TOKEN.into()));
-            let setup_ticket = machine.ticket();
-            assert!(machine.next(setup_ticket));
-            assert_eq!(machine.stage(), Stage::Typing(mode));
-            assert!(!machine.next(setup_ticket));
-            assert!(!machine.can_next());
-            assert!(machine.input(machine.ticket(), TOKEN.into()));
-            assert!(machine.next(machine.ticket()));
-        }
-        assert_eq!(machine.stage(), Stage::Complete);
+    fn private_telemetry_does_not_block_or_reset_native_checks() {
+        let mut machine = Machine::rmk_check();
+        arm(&mut machine, Mode::Wired);
+        let ticket = machine.ticket();
+        machine.input(ticket, TOKEN.into());
+        let mut changed = evidence(Mode::Wired);
+        changed.mode = Some(Mode::Dongle);
+        changed.route = Connection::Disconnected;
+        changed.factory_usb_count = Some(9);
+        assert!(machine.observe(ticket, changed));
+        assert_eq!(machine.ticket(), ticket);
+        assert_eq!(machine.text(), TOKEN);
+        assert!(machine.next(ticket));
     }
     #[test]
-    fn factory_setup_requires_known_usb_and_bluetooth_facts_and_resets_after_route_loss() {
-        let mut machine = Machine::factory();
-        machine.installed(machine.ticket(), Ok(()));
-        for change in 0..4 {
-            let mut invalid = factory_evidence(Mode::Wired);
-            match change {
-                0 => invalid.bluetooth_connected = None,
-                1 => invalid.bluetooth_connected = Some(true),
-                2 => invalid.factory_usb_count = None,
-                _ => invalid.factory_usb_count = Some(2),
-            }
-            machine.observe_settled(machine.ticket(), invalid);
-            assert!(!machine.can_next());
-            assert!(!machine.next(machine.ticket()));
-        }
-        machine.observe_settled(machine.ticket(), factory_evidence(Mode::Wired));
-        assert!(machine.next(machine.ticket()));
-        let typing_ticket = machine.ticket();
-        let mut unplugged = factory_evidence(Mode::Wired);
-        unplugged.factory_usb_count = Some(0);
-        machine.observe_settled(typing_ticket, unplugged);
-        machine.observe_settled(machine.ticket(), factory_evidence(Mode::Wired));
-        assert_eq!(machine.stage(), Stage::Setup(Mode::Wired));
-        assert!(!machine.input(typing_ticket, TOKEN.into()));
-        assert!(!machine.input(machine.ticket(), TOKEN.into()));
-        assert!(machine.next(machine.ticket()));
-        assert!(machine.input(machine.ticket(), TOKEN.into()));
-        assert!(machine.next(machine.ticket()));
-    }
-    #[test]
-    fn factory_shared_identity_requires_unique_count_and_owner_ack_without_role_guessing() {
-        for mode in [Mode::Wired, Mode::Bluetooth, Mode::Dongle] {
-            let valid = factory_evidence(mode);
-            assert!(valid.left_usb.is_none());
-            assert!(valid.dongle_usb.is_none());
-            assert!(valid.ready(mode, Target::Factory));
-            for count in [None, Some(2), Some(usize::from(mode == Mode::Bluetooth))] {
-                let mut invalid = valid;
-                invalid.factory_usb_count = count;
-                assert!(!invalid.ready(mode, Target::Factory));
-            }
-        }
-        let mut machine = Machine::factory();
-        machine.installed(machine.ticket(), Ok(()));
-        let mut ambiguous = factory_evidence(Mode::Wired);
-        ambiguous.factory_usb_count = None;
-        machine.observe_settled(machine.ticket(), ambiguous);
-        assert!(!machine.next(machine.ticket()));
-        machine.observe_settled(machine.ticket(), factory_evidence(Mode::Wired));
-        assert_eq!(machine.stage(), Stage::Setup(Mode::Wired));
-        assert!(!machine.input(machine.ticket(), TOKEN.into()));
-        assert!(machine.next(machine.ticket()));
-        let acknowledged = machine.ticket();
-        machine.input(acknowledged, TOKEN.into());
-        let mut two = factory_evidence(Mode::Wired);
-        two.factory_usb_count = Some(2);
-        machine.observe_settled(acknowledged, two);
-        assert_eq!(machine.text(), "");
-        assert!(!machine.next(machine.ticket()));
-        machine.observe_settled(machine.ticket(), factory_evidence(Mode::Wired));
-        assert_eq!(machine.stage(), Stage::Setup(Mode::Wired));
-        assert!(!machine.input(acknowledged, TOKEN.into()));
-    }
-    #[test]
-    fn children_and_each_transport_require_explicit_completion() {
-        let mut machine = Machine::new();
-        assert!(!machine.paired(machine.ticket(), Ok(())));
-        assert!(!machine.next(machine.ticket()));
-        let old = machine.ticket();
-        assert!(machine.installed(old, Ok(())));
-        assert!(!machine.installed(old, Ok(())));
-        assert!(machine.paired(machine.ticket(), Ok(())));
-        for mode in [Mode::Wired, Mode::Bluetooth, Mode::Dongle] {
-            assert_eq!(machine.stage(), Stage::Setup(mode));
-            assert!(!machine.input(machine.ticket(), TOKEN.into()));
-            assert!(!machine.next(machine.ticket()));
-            assert!(machine.observe_settled(machine.ticket(), evidence(mode)));
-            assert_eq!(machine.stage(), Stage::Typing(mode));
-            assert!(machine.input(machine.ticket(), "qwert hjkl h".into()));
-            assert!(!machine.next(machine.ticket()));
-            assert!(machine.input(machine.ticket(), TOKEN.into()));
-            assert!(machine.can_next());
-            assert!(machine.next(machine.ticket()));
-            assert!(!machine.next(machine.ticket()));
-        }
-        assert_eq!(machine.stage(), Stage::Complete);
-        assert!(!machine.cancel());
-        assert!(!machine.observe_settled(machine.ticket(), evidence(Mode::Dongle)));
-    }
-    #[test]
-    fn changed_route_and_unknown_or_old_evidence_clear_confirmation() {
-        let mut machine = checks();
-        machine.observe_settled(machine.ticket(), evidence(Mode::Wired));
-        machine.input(machine.ticket(), TOKEN.into());
-        let mut wrong = evidence(Mode::Wired);
-        wrong.route = Connection::Bluetooth;
-        machine.observe_settled(machine.ticket(), wrong);
-        assert_eq!(machine.text(), "");
-        assert!(!machine.can_next());
-        machine.observe_settled(machine.ticket(), evidence(Mode::Wired));
-        assert!(!machine.can_next());
-        for change in 0..5 {
-            let mut invalid = evidence(Mode::Wired);
-            match change {
-                0 => invalid.mode = None,
-                1 => invalid.left_usb = None,
-                2 => invalid.right_usb = Some(true),
-                3 => invalid.right_link = None,
-                _ => invalid.observed_at = Instant::now() - EVIDENCE_AGE - Duration::from_secs(1),
-            }
-            machine.observe_settled(machine.ticket(), invalid);
-            assert!(!machine.input(machine.ticket(), TOKEN.into()));
-            assert!(!machine.next(machine.ticket()));
-        }
-    }
-    #[test]
-    fn bluetooth_uses_live_os_route_and_owner_typing_without_usb_telemetry() {
-        let mut machine = checks();
-        let wired = machine.ticket();
-        machine.observe_settled(wired, evidence(Mode::Wired));
-        let wired = machine.ticket();
-        machine.input(wired, TOKEN.into());
-        assert!(machine.next(wired));
-        let mut bluetooth = evidence(Mode::Bluetooth);
-        bluetooth.mode = None;
-        bluetooth.right_link = None;
-        for usb in 0..3 {
-            let mut plugged = bluetooth;
-            match usb {
-                0 => plugged.left_usb = Some(true),
-                1 => plugged.right_usb = Some(true),
-                _ => plugged.dongle_usb = Some(true),
-            }
-            machine.observe_settled(machine.ticket(), plugged);
-            assert_eq!(machine.stage(), Stage::Setup(Mode::Bluetooth));
-            assert!(!machine.input(machine.ticket(), TOKEN.into()));
-            assert!(!machine.next(machine.ticket()));
-        }
-        let mut stale = bluetooth;
-        stale.fresh = false;
-        machine.observe_settled(machine.ticket(), stale);
-        assert!(!machine.input(machine.ticket(), TOKEN.into()));
-        machine.observe_settled(machine.ticket(), bluetooth);
-        assert_eq!(machine.stage(), Stage::Typing(Mode::Bluetooth));
-        assert!(!machine.next(machine.ticket()));
-        assert!(machine.input(machine.ticket(), TOKEN.into()));
-        assert!(machine.next(machine.ticket()));
-        assert_eq!(machine.stage(), Stage::Setup(Mode::Dongle));
-    }
-    #[test]
-    fn route_changes_invalidate_old_typing_callbacks_but_stable_polls_do_not() {
-        let mut machine = checks();
-        machine.observe_settled(machine.ticket(), evidence(Mode::Wired));
-        let original = machine.ticket();
-        machine.observe_settled(original, evidence(Mode::Wired));
-        assert_eq!(machine.ticket(), original);
+    fn lost_then_restored_setup_requires_new_ack_and_new_typing() {
+        let mut machine = Machine::rmk_check();
+        arm(&mut machine, Mode::Wired);
+        let previous = machine.ticket();
+        machine.input(previous, TOKEN.into());
         let mut lost = evidence(Mode::Wired);
-        lost.route = Connection::Disconnected;
-        machine.observe_settled(original, lost);
-        assert_ne!(machine.ticket(), original);
-        let lost_ticket = machine.ticket();
-        machine.observe_settled(lost_ticket, evidence(Mode::Wired));
-        assert_ne!(machine.ticket(), lost_ticket);
-        assert!(!machine.input(original, TOKEN.into()));
-        assert!(!machine.input(lost_ticket, TOKEN.into()));
-        assert!(!machine.next(original));
-        assert!(machine.input(machine.ticket(), TOKEN.into()));
+        lost.left_usb = Some(false);
+        machine.observe(previous, lost);
+        assert_eq!(machine.text(), "");
+        assert!(!machine.can_next());
+        machine.observe(machine.ticket(), evidence(Mode::Wired));
+        assert_eq!(machine.stage(), Stage::Setup(Mode::Wired));
+        assert!(!machine.input(previous, TOKEN.into()));
+        assert!(!machine.next(previous));
         assert!(machine.next(machine.ticket()));
-    }
-    #[test]
-    fn prolonged_route_fluctuations_do_not_exhaust_the_ticket_epoch() {
-        let mut machine = checks();
-        machine.observe_settled(machine.ticket(), evidence(Mode::Wired));
-        let original = machine.ticket();
-        for _ in 0..300 {
-            let mut lost = evidence(Mode::Wired);
-            lost.route = Connection::Disconnected;
-            assert!(machine.observe_settled(machine.ticket(), lost));
-            assert!(machine.observe_settled(machine.ticket(), evidence(Mode::Wired)));
-        }
-        assert!(machine.ticket().phase > 256);
-        assert!(!machine.input(original, TOKEN.into()));
+        assert!(!machine.can_next());
         assert!(machine.input(machine.ticket(), TOKEN.into()));
+        assert!(machine.can_next());
+    }
+    #[test]
+    fn usb_replacement_clears_typing_even_with_same_presence() {
+        let mut machine = Machine::rmk_check();
+        arm(&mut machine, Mode::Wired);
+        let old = machine.ticket();
+        machine.input(old, TOKEN.into());
+        let mut replacement = evidence(Mode::Wired);
+        replacement.usb_identity = 1;
+        machine.observe(old, replacement);
+        assert_eq!(machine.stage(), Stage::Setup(Mode::Wired));
+        assert_eq!(machine.text(), "");
+        assert!(!machine.next(old));
+        assert!(!machine.input(old, TOKEN.into()));
+    }
+
+    #[test]
+    fn factory_replacement_also_requires_new_typing() {
+        let mut machine = Machine::factory_dongle_check();
+        let mut ready = evidence(Mode::Dongle);
+        ready.factory_usb_count = Some(1);
+        machine.observe(machine.ticket(), ready);
         assert!(machine.next(machine.ticket()));
+        let ticket = machine.ticket();
+        machine.input(ticket, TOKEN.into());
+        assert!(machine.can_next());
+        ready.usb_identity = 2;
+        machine.observe(ticket, ready);
+        assert_eq!(machine.stage(), Stage::Setup(Mode::Dongle));
+        assert_eq!(machine.text(), "");
+        assert!(!machine.next(ticket));
     }
     #[test]
-    fn replacing_the_parent_rejects_callbacks_from_an_earlier_install() {
-        let earlier = Machine::new();
-        let mut current = Machine::new();
-        assert_ne!(earlier.ticket(), current.ticket());
-        assert!(!current.installed(earlier.ticket(), Ok(())));
-        assert_eq!(current.stage(), Stage::Installing);
+    fn stale_observation_and_recreated_machine_reject_old_callbacks() {
+        let mut machine = Machine::rmk_check();
+        arm(&mut machine, Mode::Wired);
+        let previous = machine.ticket();
+        let mut stale = evidence(Mode::Wired);
+        stale.observed_at = Instant::now() - EVIDENCE_AGE - Duration::from_secs(1);
+        machine.observe(previous, stale);
+        assert!(!machine.input(previous, TOKEN.into()));
+        assert!(!machine.next(machine.ticket()));
+        let mut replacement = Machine::rmk_check();
+        assert!(!replacement.observe(previous, evidence(Mode::Wired)));
+        assert!(!replacement.input(previous, TOKEN.into()));
     }
     #[test]
-    fn cancellation_failures_and_cross_phase_callbacks_are_terminal() {
-        let mut machine = checks();
+    fn cancellation_and_install_failure_are_terminal() {
+        let mut machine = Machine::rmk_check();
         let ticket = machine.ticket();
         assert!(machine.cancel());
         assert_eq!(machine.stage(), Stage::Cancelled);
-        assert!(!machine.observe_settled(ticket, evidence(Mode::Wired)));
-        assert!(!machine.input(ticket, TOKEN.into()));
-        assert!(!machine.paired(ticket, Ok(())));
+        assert!(!machine.observe(ticket, evidence(Mode::Wired)));
+        assert!(!machine.next(ticket));
         let mut failed = Machine::new();
-        assert!(failed.installed(failed.ticket(), Err("copy failed".into())));
+        assert!(failed.installed(failed.ticket(), Err("verification failed".into())));
         assert!(matches!(failed.stage(), Stage::Failed(_)));
         assert!(!failed.installed(failed.ticket(), Ok(())));
+    }
+    #[test]
+    fn single_part_install_does_not_require_whole_keyboard_checks() {
+        for target in [Target::Rmk, Target::Factory] {
+            for role in Scope::Whole.roles() {
+                let mut machine = Machine::scoped(target, Scope::Part(role));
+                assert!(machine.installed(machine.ticket(), Ok(())));
+                assert_eq!(machine.stage(), Stage::Complete);
+            }
+        }
+    }
+    #[test]
+    fn factory_shared_identity_still_requires_count_and_owner_ack() {
+        let mut machine = Machine::factory();
+        machine.installed(machine.ticket(), Ok(()));
+        for count in [None, Some(0), Some(2)] {
+            let mut invalid = evidence(Mode::Wired);
+            invalid.factory_usb_count = count;
+            machine.observe(machine.ticket(), invalid);
+            assert!(!machine.can_next());
+        }
+        let mut valid = evidence(Mode::Wired);
+        valid.left_usb = None;
+        valid.dongle_usb = None;
+        valid.factory_usb_count = Some(1);
+        machine.observe(machine.ticket(), valid);
+        assert!(machine.can_next());
+        assert!(!machine.input(machine.ticket(), TOKEN.into()));
+        assert!(machine.next(machine.ticket()));
+        assert!(machine.input(machine.ticket(), TOKEN.into()));
+        assert!(machine.next(machine.ticket()));
+        assert_eq!(machine.stage(), Stage::Setup(Mode::Bluetooth));
+        let dongle = Machine::factory_dongle_check();
+        assert_eq!(dongle.stage(), Stage::Setup(Mode::Dongle));
     }
 }

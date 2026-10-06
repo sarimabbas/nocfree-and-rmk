@@ -76,7 +76,7 @@ This draft uses untouched [RMK `434ab4d7`](https://github.com/rmk-rs/rmk/tree/43
 
 RMK owns key processing, debounce, USB/BLE routing, profiles, bonds, storage and normal watchdog feeding. Board code supplies the PCA9555 scanner, battery ADC, PWM, indicator and nRF52833 USB control-pipe adapter. Image startup checks reject UICR changes and convert watchdog resets into a request for the existing recovery bootloader.
 
-The physical selector inputs are unused. RMK chooses the ready transport; when USB and BLE are ready together, its saved preference decides. This does not establish the switch's power behavior. Native dongle pairing replaces private peer repair. Battery sampling feeds RMK, but the private Companion battery, mode and pairing reports are absent. The existing switch-driven Companion tests still need adaptation before these candidates can replace the bundled firmware.
+The physical selector inputs are unused. RMK chooses the ready transport; when USB and BLE are ready together, its saved preference decides. This does not establish the switch's power behavior. Native dongle pairing replaces private peer repair. Battery sampling feeds RMK, but the private Companion battery, mode and pairing reports are absent. Companion tests each transport in isolation. It asks for the USB and host Bluetooth connections needed for that test, then checks typing from both halves. It does not require private mode or peer reports.
 
 | Control | Action |
 | --- | --- |
@@ -94,7 +94,7 @@ LEFT and dongle use RMK's standard runtime DFU DETACH interface. It accepts entr
 
 RIGHT uses Embassy's standard runtime DFU class and a callback to RMK's bootloader request. Its local USB identity is distinct from LEFT and dongle. This class has no download partition: the app requests recovery; the factory bootloader handles subsequent transfers. Windows receives the standard WinUSB descriptor.
 
-Companion accepts both its production runtime descriptor and upstream RMK's descriptor, while retaining local role, interface and USB-port checks. Its recovery worker sends only DETACH. It does not send a firmware download to the running application. LEFT's native host request and the startup-window instructions still need integration into the installer. Until then, the approved production package remains the installation input.
+Companion requests LEFT recovery with upstream VIA's BootloaderJump command over LEFT's direct USB raw-HID interface. RIGHT and dongle recovery use local DFU DETACH. Each request checks the selected role, physical USB connection and interface before submission. Requests share the native HID owner thread and stop on cancellation or expiry. An unanswered submitted request waits for the recovery drive; an unsent request stays available to retry. The approved production package remains unchanged. This spike blocks RMK installs and standalone native connection tests until a package pinned to the upstream revision is accepted. Factory restoration remains available.
 
 ### Image boundaries
 
@@ -105,7 +105,7 @@ Companion accepts both its production runtime descriptor and upstream RMK's desc
 
 The guarded ANSI Mac-keymap builds use 372,052 bytes for LEFT, 231,788 for RIGHT and 248,172 for the dongle. The dongle's slot has 253,952 bytes; its UF2 page padding also fits. The complete layout/keymap build matrix is checked separately.
 
-Compared with main, project source adds 1,158 net lines. Retiring 2,962 lines from the pinned RMK and Embassy forks reduces maintained source by 1,804 lines overall. This count includes board code and tests, and excludes lockfiles, documentation, generated binaries and dependency code.
+Compared with main, project source removes 85 net lines. Retiring 2,962 lines from the pinned RMK and Embassy forks reduces maintained source by 3,047 lines overall. This count includes board code and tests, and excludes lockfiles, documentation, generated binaries and dependency code.
 
 The lower half images replace the resident SoftDevice while preserving the MBR. The dongle keeps the resident SoftDevice. All images exclude the factory filesystem at `0x6d000..0x74000`, the bootloader above it and UICR. These are the existing guarded project boundaries; they are not inferred from a generic Adafruit example.
 
@@ -115,6 +115,8 @@ The startup reserve at application offset `0x200` stays erased. It does not requ
 ./scripts/check.sh --host-only --all-layouts
 ./scripts/check.sh --build-only --all-layouts --backlight-active-high
 ```
+
+The Companion UX layer removes 1,092 source lines compared with the preceding draft. Ten independent reviewers checked route isolation, recovery dispatch, platform APIs, copy and release boundaries. Desktop checks pass 249 unit tests and two integration tests; six tests remain ignored. Simulated UI checks validate layout and manual Next behavior, not device connections.
 
 ### Device acceptance
 
@@ -182,7 +184,7 @@ Reopen Companion and allow access when macOS asks.
 
 ## Production app state machines
 
-Companion uses Statig state machines. The UI derives the screen and available buttons from the machine state. Parent journeys reuse recovery, transfer, backup and pairing machines. Generation tickets reject stale or duplicate results after cancellation or a change of part.
+Companion uses Statig state machines. The UI derives the screen and available buttons from the machine state. Parent journeys reuse recovery, transfer and backup machines. Generation tickets reject stale or duplicate results after cancellation or a change of part.
 
 Opening a page shows the first step. Click Next to move through each step. Next becomes available when the step is complete, and the spinner stops. Completed progress stays visible. A successful typing test enables Next as soon as the connection conditions are met.
 
@@ -190,7 +192,7 @@ RMK installation orders dongle → right → left. Factory restoration orders le
 
 Each transfer saves a fresh backup, writes the image once, reads it back to check the bytes, and checks normal startup. If a transfer stops, the app checks the original backup and a new readback before another write. This record persists when you reopen the app or switch pages.
 
-Check pairing reads the connection state. Repair clears and replaces the dongle pairing when requested. It keeps the Bluetooth host profiles. A successful check confirms the left-to-dongle and left-to-right connections, their device identities and link encryption.
+Test connections checks USB, Bluetooth and dongle typing in separate steps. Only Next advances the journey. Fresh host observations enable the typing field; an exact test string enables Next immediately. Competing USB and Bluetooth connections must be removed for each test. A connection change clears that test. RMK owns bonding; Companion does not clear bonds or send private pairing commands.
 
 Whole-keyboard installation ends with wired, Bluetooth and dongle typing checks. The test `qwert HJKL h` exercises left input, right input, cross-half Shift and modifier release.
 
@@ -237,7 +239,7 @@ For automated work, do not flash, erase, unlock, change bootloaders, write UICR 
 
 The development runtime identities are `4c4b:4643` (left), `4c4b:4671` (right) and `4c4b:4644` (dongle). The observed factory UF2 identity is `239a:0029`. Discover the DFU interface number from its `fe/01/01` descriptors; do not hard-code it. DFU DETACH targets the local part, while Vial requests through the dongle target the left.
 
-Read-only custom Vial getters use usage page `ff60`, usage `61`, and 32-byte reports. Headers identify battery/status (`NCBT`), selected mode (`NCMO`) and raw ADC (`NCAD`). Dedicated pairing uses `NCPR`. Use the versioned serializers and validators in the source. Mark an unsupported or inconsistent reply as unknown.
+Read-only custom Vial getters use usage page `ff60`, usage `61`, and 32-byte reports. Headers identify battery/status (`NCBT`), selected mode (`NCMO`) and raw ADC (`NCAD`). The published firmware also exposes mode and ADC reports; the native draft does not. Companion no longer uses private pairing reports. Use the versioned battery serializers and validators in the source. Mark an unsupported or inconsistent reply as unknown.
 
 Status separates USB power, selected connection policy, active typing route and recovery. Battery values use cached measurements. Connection observations and battery estimates have separate expiry times. Mark a missing USB reply as unknown.
 
