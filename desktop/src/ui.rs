@@ -1094,8 +1094,11 @@ impl Companion {
             &self.device_key,
             &self.firmware_versions,
             self.bundled_version.as_deref().filter(|_| {
-                self.versions_seen
-                    .is_some_and(|t| t.elapsed() < Duration::from_secs(15))
+                // Trial images can share a version with a different production build.
+                !cfg!(feature = "firmware-trial")
+                    && self
+                        .versions_seen
+                        .is_some_and(|t| t.elapsed() < Duration::from_secs(15))
             }),
             self.discovery_seen
                 .is_some_and(|t| t.elapsed() < Duration::from_secs(5)),
