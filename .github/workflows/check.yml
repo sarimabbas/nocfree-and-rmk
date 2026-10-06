@@ -40,6 +40,7 @@ jobs:
               - 'rust-toolchain.toml'
               - '.cargo/**'
               - 'scripts/check.sh'
+              - 'scripts/check_native.py'
               - 'scripts/build_firmware_candidates.py'
               - '.github/workflows/check.yml'
             companion:
@@ -98,6 +99,8 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Install Arm build dependencies
         run: sudo apt-get update && sudo apt-get install -y gcc-arm-none-eabi libnewlib-arm-none-eabi
+      - name: Build pinned upstream bootloader and verify memory maps
+        run: python3 scripts/check_native.py
       - name: Cross-build all native RMK roles and layouts
         run: ./scripts/check.sh --build-only --all-layouts
 
