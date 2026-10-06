@@ -285,7 +285,7 @@ The notice generator checks the recorded source hashes and license texts. Update
 
 Release jobs build the app first. A protected job signs the build with a temporary keychain in the main-branch release environment. Verify the archive checksums, bundled firmware manifest and license notices. On macOS, also check the Developer ID signature, notarization ticket and Gatekeeper result.
 
-When starting the release workflow, select an app release that holds the firmware package and provide its SHA256. For new firmware, put the checked package in a draft of the new app release and select that draft as the source. The workflow checks the package, bundles it in all three apps, and adds the app downloads to the same draft. When reusing firmware, it copies the package from an earlier app release. Firmware and app downloads share one release.
+Use the same version for Companion and firmware. Put the checked firmware package in a draft of the new app release, then start the release workflow with that draft's tag and the package SHA256. A staging job retrieves the draft asset; the read-only builds check it and bundle it in all three apps. The signing job adds the app downloads to the same draft. Firmware and app downloads share one release.
 
 ## Windows and Linux
 
