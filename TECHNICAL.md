@@ -76,6 +76,8 @@ This draft uses untouched [RMK `434ab4d7`](https://github.com/rmk-rs/rmk/tree/43
 
 RMK owns key processing, debounce, USB/BLE routing, profiles, bonds, storage and normal watchdog feeding. Board code supplies the PCA9555 scanner, battery ADC, PWM, indicator and nRF52833 USB control-pipe adapter. Image startup checks reject UICR changes and convert watchdog resets into a request for the existing recovery bootloader.
 
+The startup gate requires the saved reset-pin setting and GPIO mode for LEFT's LED pins. Unused NFC pins can remain GPIO: published Embassy cannot change the saved NFC bit from zero to one and continues without programming it.
+
 The physical selector inputs are unused. RMK chooses the ready transport; when USB and BLE are ready together, its saved preference decides. This does not establish the switch's power behavior. Native dongle pairing replaces private peer repair. Battery sampling feeds RMK, but the private Companion battery, mode and pairing reports are absent. Companion tests each transport in isolation. It asks for the USB and host Bluetooth connections needed for that test, then checks typing from both halves. It does not require private mode or peer reports.
 
 | Control | Action |
