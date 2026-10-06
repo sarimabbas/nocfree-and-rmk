@@ -1,8 +1,6 @@
 fn main() {
     generate_vial_definition();
-    if std::env::var_os("CARGO_FEATURE_USB_LOG").is_some()
-        || std::env::var_os("CARGO_FEATURE_BATTERY_ADC_DIAGNOSTIC").is_some()
-    {
+    if std::env::var_os("CARGO_FEATURE_USB_LOG").is_some() {
         assert!(
             std::env::var_os("CARGO_FEATURE_LEFT").is_some()
                 && std::env::var_os("CARGO_FEATURE_RIGHT").is_none()
@@ -10,25 +8,18 @@ fn main() {
             "The USB logging diagnostic requires only the left role"
         );
     }
-    for feature in [
-        "USB_LOG",
-        "BATTERY_ADC_DIAGNOSTIC",
-        "LEFT",
-        "RIGHT",
-        "RECEIVER",
-    ] {
+    for feature in ["USB_LOG", "LEFT", "RIGHT", "RECEIVER"] {
         println!("cargo:rerun-if-env-changed=CARGO_FEATURE_{feature}");
     }
     let out = std::path::PathBuf::from(std::env::var_os("OUT_DIR").unwrap());
-    let layout = if std::env::var_os("CARGO_FEATURE_RECLAIMED_SOFTDEVICE").is_some() {
+    let reclaimed = std::env::var_os("CARGO_FEATURE_RECLAIMED_SOFTDEVICE").is_some();
+    let layout = if reclaimed {
         "memory-sdc.x"
     } else {
         "memory-factory.x"
     };
     let mut memory = std::fs::read_to_string(layout).unwrap();
-    if std::env::var_os("CARGO_FEATURE_STARTUP_WATCHDOG").is_some()
-        && std::env::var_os("CARGO_FEATURE_RECLAIMED_SOFTDEVICE").is_some()
-    {
+    if reclaimed {
         memory.push_str(&std::fs::read_to_string("startup-recovery.x").unwrap());
     }
     std::fs::write(out.join("memory.x"), memory).unwrap();

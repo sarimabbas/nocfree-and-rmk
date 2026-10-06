@@ -2,14 +2,20 @@
 #![no_main]
 #[cfg(feature = "startup-watchdog")]
 mod watchdog_recovery;
-#[cfg(all(
-    feature = "startup-watchdog",
-    any(
-        all(not(feature = "receiver"), not(feature = "reclaimed-softdevice")),
-        all(feature = "right", not(feature = "runtime-recovery"))
-    )
-))]
-compile_error!("Startup watchdog requires the production role layout");
+#[cfg(all(not(feature = "receiver"), not(feature = "reclaimed-softdevice")))]
+compile_error!("The upstream half applications require the reclaimed SoftDevice layout");
+#[cfg(all(feature = "receiver", feature = "reclaimed-softdevice"))]
+compile_error!("The receiver keeps the factory application origin");
+#[cfg(feature = "backlight")]
+mod board_backlight;
+#[cfg(feature = "backlight")]
+mod board_pwm;
+#[cfg(feature = "status-led")]
+mod board_status_led;
+#[cfg(feature = "right")]
+mod recovery_usb;
+mod startup;
+mod usb_adapter;
 #[cfg(not(any(feature = "left", feature = "right", feature = "receiver")))]
 compile_error!("Select exactly one role: left, right, receiver");
 #[cfg(any(
@@ -32,8 +38,6 @@ compile_error!("Status LED pin mapping is documented only for LEFT");
 mod battery;
 #[cfg(feature = "left")]
 mod keymap;
-#[cfg(feature = "left")]
-mod mode_switch;
 #[cfg(not(feature = "receiver"))]
 mod scanner;
 #[cfg(feature = "left")]
@@ -42,7 +46,6 @@ use defmt::unwrap;
 use defmt_rtt as _;
 use embassy_executor::Spawner;
 use embassy_nrf::peripherals::{RNG, TWISPI0, USBD};
-#[cfg(any(not(feature = "right"), feature = "runtime-recovery"))]
 use embassy_nrf::usb::{Driver, vbus_detect::HardwareVbusDetect};
 use embassy_nrf::{bind_interrupts, rng, saadc, twim, usb};
 use nrf_mpsl::Flash;
@@ -74,9 +77,11 @@ fn ble_addr() -> [u8; 6] {
 }
 #[embassy_executor::main]
 async fn main(spawner: Spawner) {
-    #[allow(unused_mut)]
-    let mut p = embassy_nrf::init(embassy_nrf::config::Config::default());
-    #[cfg(feature = "startup-watchdog")]
+    startup::require_unchanged_uicr();
+    let mut config = embassy_nrf::config::Config::default();
+    config.debug = embassy_nrf::config::Debug::NotConfigured;
+    let p = embassy_nrf::init(config);
+    #[cfg(feature = "runtime-recovery")]
     let mut watchdog_runner = rmk::watchdog::Nrf52Watchdog::default_runner(p.WDT);
     let mpsl_p =
         mpsl::Peripherals::new(p.RTC0, p.TIMER0, p.TEMP, p.PPI_CH19, p.PPI_CH30, p.PPI_CH31);
@@ -146,22 +151,10 @@ async fn main(spawner: Spawner) {
     let storage_config = StorageConfig {
         start_addr: 0x65000,
         num_sectors: 8,
-        layout_id: if cfg!(feature = "receiver") {
-            None
-        } else if cfg!(feature = "layout-iso") {
-            Some(2)
-        } else if cfg!(feature = "layout-jis") {
-            Some(4)
-        } else if cfg!(feature = "layout-kr") {
-            Some(3)
-        } else {
-            None
-        },
         ..Default::default()
     };
-    #[cfg(any(not(feature = "right"), feature = "runtime-recovery"))]
-    let driver = Driver::new(p.USBD, Irqs, HardwareVbusDetect::new(Irqs));
-    #[cfg(any(not(feature = "right"), feature = "runtime-recovery"))]
+    let driver =
+        usb_adapter::Nrf52833Driver(Driver::new(p.USBD, Irqs, HardwareVbusDetect::new(Irqs)));
     let device_config = rmk::config::DeviceConfig {
         manufacturer: concat!("NocFree RMK;fw=", env!("CARGO_PKG_VERSION")),
         product_name: if cfg!(feature = "receiver") {
@@ -184,23 +177,7 @@ async fn main(spawner: Spawner) {
     #[cfg(not(feature = "receiver"))]
     {
         #[cfg(feature = "backlight")]
-        let backlight = {
-            use embassy_nrf::{
-                gpio::Level,
-                pwm::{DutyCycle, Prescaler, SimpleConfig, SimplePwm},
-            };
-            let active_low = cfg!(feature = "backlight-active-low");
-            // P0.20 is the backlight pin in the vendor board mapping.
-            // Factory applications request 400 Hz: 8 MHz / 20000, up counting.
-            let mut config = SimpleConfig::default();
-            config.prescaler = Prescaler::Div2;
-            config.max_duty = 20000;
-            config.ch0_idle_level = if active_low { Level::High } else { Level::Low };
-            static DUTIES: StaticCell<[DutyCycle; 4]> = StaticCell::new();
-            let pwm = SimplePwm::new_1ch(p.PWM0, p.P0_20, &config)
-                .with_static_duty_buffer(DUTIES.init([DutyCycle::normal(0); 4]));
-            rmk::backlight::NrfPwm::new(pwm, active_low)
-        };
+        let backlight = board_pwm::new(p.PWM0, p.P0_20);
         use embassy_nrf::gpio::{Level, Output, OutputDrive};
         use embassy_nrf::saadc::Input as _;
         use rmk::input_device::battery::BatteryProcessor;
@@ -217,15 +194,10 @@ async fn main(spawner: Spawner) {
         adc.calibrate().await;
         let mut battery_adc = battery::Battery::new(adc, battery_enable);
         #[cfg(feature = "status-led")]
-        let mut status_led = rmk::status_led::StatusLed::new(
+        let mut status_led = board_status_led::StatusLed::new(
             // Published LEFT blue LED: active low. Start inactive.
             Output::new(p.P0_10, Level::High, OutputDrive::Standard),
             true,
-        );
-        #[cfg(feature = "left")]
-        let mut mode_switch = mode_switch::ModeSwitch::new(
-            embassy_nrf::gpio::Input::new(p.P0_15, embassy_nrf::gpio::Pull::Up),
-            embassy_nrf::gpio::Input::new(p.P0_17, embassy_nrf::gpio::Pull::Up),
         );
         // Provisional left calibration from the owner's 4.17 V observation;
         // this is an effective scale, not a measured resistor ratio or capacity.
@@ -262,31 +234,30 @@ async fn main(spawner: Spawner) {
         );
         #[cfg(feature = "right")]
         {
+            matrix.bootmagic().await;
+            let mut recovery_usb = recovery_usb::new(driver, device_config);
             let mut storage = rmk::storage::new_storage_without_keymap(flash, storage_config).await;
             #[cfg(feature = "runtime-recovery")]
-            let mut recovery_usb = rmk::usb::UsbRecoveryTransport::new(driver, device_config);
-            #[cfg(feature = "runtime-recovery")]
-            let local_tasks = run_all!(
-                matrix,
-                battery_adc,
-                battery,
-                storage,
-                recovery_usb,
-                watchdog_runner
-            );
+            let local_tasks = run_all!(matrix, battery_adc, battery, storage, watchdog_runner);
             #[cfg(not(feature = "runtime-recovery"))]
             let local_tasks = run_all!(matrix, battery_adc, battery, storage);
             let keyboard_tasks = rmk::futures::future::join(
                 local_tasks,
                 rmk::split::peripheral::run_rmk_split_peripheral(0, sdc, ble_addr()),
             );
+            let keyboard_tasks = rmk::futures::future::join(keyboard_tasks, recovery_usb.run());
             #[cfg(feature = "backlight")]
-            rmk::futures::future::join(keyboard_tasks, rmk::backlight::run(backlight, false)).await;
+            rmk::futures::future::join(
+                keyboard_tasks,
+                rmk::futures::future::join(board_pwm::run(backlight), board_backlight::run_right()),
+            )
+            .await;
             #[cfg(not(feature = "backlight"))]
             keyboard_tasks.await;
         }
         #[cfg(feature = "left")]
         {
+            matrix.bootmagic().await;
             use rmk::{
                 KeymapData,
                 ble::BleTransport,
@@ -329,9 +300,8 @@ async fn main(spawner: Spawner) {
                 }],
             );
             let mut ble = ble.with_host_service(&host_service);
-            #[cfg(feature = "startup-watchdog")]
+            #[cfg(feature = "runtime-recovery")]
             let keyboard_tasks = run_all!(
-                mode_switch,
                 matrix,
                 battery_adc,
                 battery,
@@ -341,24 +311,17 @@ async fn main(spawner: Spawner) {
                 ble,
                 watchdog_runner
             );
-            #[cfg(not(feature = "startup-watchdog"))]
-            let keyboard_tasks = run_all!(
-                mode_switch,
-                matrix,
-                battery_adc,
-                battery,
-                keyboard,
-                storage,
-                usb,
-                ble
-            );
+            #[cfg(not(feature = "runtime-recovery"))]
+            let keyboard_tasks =
+                run_all!(matrix, battery_adc, battery, keyboard, storage, usb, ble);
             #[cfg(feature = "status-led")]
-            let keyboard_tasks = rmk::futures::future::join(
-                keyboard_tasks,
-                rmk::core_traits::Runnable::run(&mut status_led),
-            );
+            let keyboard_tasks = rmk::futures::future::join(keyboard_tasks, status_led.run());
             #[cfg(feature = "backlight")]
-            rmk::futures::future::join(keyboard_tasks, rmk::backlight::run(backlight, true)).await;
+            rmk::futures::future::join(
+                keyboard_tasks,
+                rmk::futures::future::join(board_pwm::run(backlight), board_backlight::run_left()),
+            )
+            .await;
             #[cfg(not(feature = "backlight"))]
             keyboard_tasks.await;
         }
@@ -373,9 +336,9 @@ async fn main(spawner: Spawner) {
         let router = DongleRouter::new();
         let mut dongle = Dongle::new(sdc, ble_addr(), &router);
         let mut usb = UsbTransport::new(driver, device_config).with_dongle_router(&router);
-        #[cfg(feature = "startup-watchdog")]
+        #[cfg(feature = "runtime-recovery")]
         run_all!(storage, dongle, usb, watchdog_runner).await;
-        #[cfg(not(feature = "startup-watchdog"))]
+        #[cfg(not(feature = "runtime-recovery"))]
         run_all!(storage, dongle, usb).await;
     }
 }

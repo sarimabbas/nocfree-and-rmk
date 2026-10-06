@@ -77,6 +77,42 @@ impl<I: I2c, const N: usize> Scanner<I, N> {
         }
     }
 }
+impl<I: I2c, const N: usize, P: ScannerInterrupt> Scanner<I, N, P> {
+    /// Recovery is a local startup chord, before split communication begins.
+    pub async fn bootmagic(&mut self) {
+        if self.inputs.initialize().await.is_err() {
+            return;
+        }
+        #[cfg(feature = "left")]
+        let (usage, function, offset) = (0x29, nocfree_input::layout::LEFT_FN, 0);
+        #[cfg(feature = "right")]
+        let (usage, function, offset) = (
+            0x27,
+            nocfree_input::layout::RIGHT_FN,
+            nocfree_input::layout::LEFT_COUNT,
+        );
+        let key = nocfree_input::layout::USAGES
+            .iter()
+            .position(|&key| key == usage)
+            .expect("recovery key exists in every supported layout")
+            - offset;
+        let function = function - offset;
+        let held = |snapshot| {
+            key_pressed(snapshot, self.bits[key]) && key_pressed(snapshot, self.bits[function])
+        };
+        if let Ok(snapshot) = self.inputs.snapshot().await {
+            if !held(snapshot) {
+                return;
+            }
+            Timer::after_millis(50).await;
+            if let Ok(snapshot) = self.inputs.snapshot().await {
+                if held(snapshot) {
+                    rmk::boot::jump_to_bootloader();
+                }
+            }
+        }
+    }
+}
 impl<I: I2c, const N: usize, P: ScannerInterrupt> Runnable for Scanner<I, N, P> {
     async fn run(&mut self) -> ! {
         while self.inputs.initialize().await.is_err() {

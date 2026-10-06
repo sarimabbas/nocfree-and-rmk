@@ -31,12 +31,13 @@ class PresetTests(unittest.TestCase):
                 self.assertEqual(len(layer[0]), 84)
                 self.assertTrue(all(isinstance(code, int) and 0 <= code <= 65535 for code in layer[0]))
 
-    def test_physical_fn_profile_selection_and_bond_clear_are_preserved(self):
+    def test_profiles_preserved_without_accidental_recovery_or_bond_clear(self):
         for preset in self.presets.values():
             base, function = (layer[0] for layer in preset["layout"])
             self.assertEqual([base[32], base[79]], [0x5221, 0x5221])
             self.assertEqual(function[8:13], list(range(0x7E00, 0x7E05)))
-            self.assertEqual(function[48], 0x7E07)
+            self.assertEqual(function[48], 0x0001)
+            self.assertEqual([function[i] for i in (0, 14, 36)], [0x0001, 0x7E0A, 0x7E08])
 
     def test_os_changes_only_top_row_and_preserves_real_backlight_actions(self):
         mac = [layer[0] for layer in self.presets["mac"]["layout"]]
@@ -44,11 +45,11 @@ class PresetTests(unittest.TestCase):
         top = [1, 2, 3, 4, 5, 6, 37, 38, 39, 40, 41, 42]
         for layer in range(2):
             self.assertEqual([i for i in range(84) if mac[layer][i] != pc[layer][i]], top)
-        self.assertEqual(mac[0][1:7], [0x69, 0x6A, 0xC1, 0xB4, 0x7803, 0x7804])
+        self.assertEqual(mac[0][1:7], [0x69, 0x6A, 0xC1, 0xB4, 0x7E0B, 0x7E0C])
         self.assertEqual([mac[1][i] for i in top], list(range(0x3A, 0x46)))
         self.assertEqual([pc[0][i] for i in top], list(range(0x3A, 0x46)))
         self.assertEqual(pc[1][3:5], [0x0001, 0x0001])
-        self.assertEqual(pc[1][5:7], [0x7803, 0x7804])
+        self.assertEqual(pc[1][5:7], [0x7E0B, 0x7E0C])
 
     def test_each_physical_layout_exposes_every_key_once_in_vial(self):
         for name, count in (("iso", 85), ("jis", 85), ("kr", 89)):
@@ -63,9 +64,9 @@ class PresetTests(unittest.TestCase):
 
     def test_custom_names_cover_preset_user_slots_without_changing_geometry(self):
         definition = json.loads((ROOT / "firmware/vial.json").read_text())
-        self.assertEqual(len(definition["customKeycodes"]), 8)
+        self.assertEqual(len(definition["customKeycodes"]), 17)
         self.assertEqual([k["shortName"] for k in definition["customKeycodes"]],
-                         ["BT 1", "BT 2", "BT 3", "BT 4", "BT 5", "BT next", "BT prev", "BT clear"])
+                         ["BT 1", "BT 2", "BT 3", "BT 4", "BT 5", "BT next", "BT prev", "BT clear", "USB / BT", "Split pair", "Dongle", "Light -", "Light +", "Light on", "Light off", "Light toggle", "Light next"])
         coords = [item for row in definition["layouts"]["keymap"] for item in row if isinstance(item, str)]
         self.assertEqual(len(coords), 84)
         self.assertEqual(set(coords), {f"0,{i}" for i in range(84)})

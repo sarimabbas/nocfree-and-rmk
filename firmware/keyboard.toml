@@ -7,7 +7,7 @@ morse_profile_max_num = 1
 macro_max_num = 0
 macro_space_size = 32
 split_peripherals_num = 1
-# Battery idle sleep; local USB power overrides this through RMK usb_power_awake.
+# Native central idle timeout.
 split_central_sleep_timeout_seconds = 1800
 ble_profiles_num = 5
 [split]
@@ -28,3 +28,17 @@ col_offset = 37
 battery_adc_pin = "P0_04"
 battery_user_description = "Right"
 [split.peripheral.matrix]
+
+# Board backlight and status indicator subscribe to native RMK events.
+[event.action]
+subs = 1
+[event.connection_status_change]
+subs = 2
+[event.sleep_state]
+subs = 3
+[event.custom_message]
+subs = 3
+[event.peripheral_connected]
+subs = 3
+[event.central_connected]
+subs = 2
