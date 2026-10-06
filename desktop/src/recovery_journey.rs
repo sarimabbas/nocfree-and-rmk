@@ -214,7 +214,8 @@ impl RecoveryJourney {
     }
 }
 
-/// Only physical connection is required; normal RMK recovery has no startup window.
+/// Production recovery starts from a local USB connection. Upstream RMK
+/// restricts its native DETACH interface to 30 seconds after CPU startup.
 pub fn instruction(role: Role) -> &'static str {
     match role {
         Role::Left => "Connect the left half by USB. ",
