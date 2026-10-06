@@ -45,6 +45,7 @@ if [ "$mode" != build ]; then
             cargo test --locked --manifest-path crates/nocfree-input/Cargo.toml --features "layout-$physical_layout"
         fi
     done
+    KEYBOARD_TOML_PATH="$PWD/crates/backlight-tests/keyboard.toml" cargo nextest run --locked --manifest-path crates/backlight-tests/Cargo.toml
     cargo fmt --manifest-path crates/nocfree-input/Cargo.toml -- --check
     cargo fmt --manifest-path firmware/Cargo.toml -- --check
     python3 firmware/presets/test_presets.py
