@@ -1,7 +1,7 @@
 {
   "desktop": {
-    "cargo_lock_sha256": "ab02b5fb59233eb8ae06e045118ba2458d65d7b840da3f3118467975c53cb1d4",
-    "cargo_manifest_sha256": "436bbbb08d7fa01eb7011dd81ff897fe9f0ff20da50dc01c1abc3f73bcceaff6",
+    "cargo_lock_sha256": "d02ec336c219dacf3e4362c276ec7cda3ccafd3dabbe5b99da5d473fb5f760ce",
+    "cargo_manifest_sha256": "bcbc10f9006f44fc1cf959e01d981c508412bd71d86c20dfd01d3c2a7a0d7573",
     "packages": [
       {
         "license": "MIT OR Apache-2.0",
@@ -10078,17 +10078,17 @@
         "license": "MIT OR Apache-2.0",
         "name": "rmk-config",
         "repository": "https://github.com/rmk-rs/rmk",
-        "source": "git+https://github.com/sarimabbas/rmk-nocfree?rev=b41bd7caa7de67a47f6e7380519b730630f16152#b41bd7caa7de67a47f6e7380519b730630f16152",
-        "source_revision": "b41bd7caa7de67a47f6e7380519b730630f16152",
+        "source": "git+https://github.com/rmk-rs/rmk?rev=434ab4d7d29d8e9ba689837358c8a44996ba38cc#434ab4d7d29d8e9ba689837358c8a44996ba38cc",
+        "source_revision": "434ab4d7d29d8e9ba689837358c8a44996ba38cc",
         "texts": [
           {
             "file": "texts/c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4.txt",
-            "origin": "https://github.com/sarimabbas/rmk-nocfree/blob/b41bd7caa7de67a47f6e7380519b730630f16152/LICENSE-APACHE",
+            "origin": "https://github.com/rmk-rs/rmk/blob/434ab4d7d29d8e9ba689837358c8a44996ba38cc/LICENSE-APACHE",
             "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
           },
           {
             "file": "texts/34c35b17c5b1c0cd54c027d20b0e5690d9cbc412ba355bf3c08a25f8dcd49e21.txt",
-            "origin": "https://github.com/sarimabbas/rmk-nocfree/blob/b41bd7caa7de67a47f6e7380519b730630f16152/LICENSE-MIT",
+            "origin": "https://github.com/rmk-rs/rmk/blob/434ab4d7d29d8e9ba689837358c8a44996ba38cc/LICENSE-MIT",
             "sha256": "34c35b17c5b1c0cd54c027d20b0e5690d9cbc412ba355bf3c08a25f8dcd49e21"
           }
         ],
@@ -10098,17 +10098,17 @@
         "license": "MIT OR Apache-2.0",
         "name": "rmk-types",
         "repository": "https://github.com/rmk-rs/rmk",
-        "source": "git+https://github.com/sarimabbas/rmk-nocfree?rev=b41bd7caa7de67a47f6e7380519b730630f16152#b41bd7caa7de67a47f6e7380519b730630f16152",
-        "source_revision": "b41bd7caa7de67a47f6e7380519b730630f16152",
+        "source": "git+https://github.com/rmk-rs/rmk?rev=434ab4d7d29d8e9ba689837358c8a44996ba38cc#434ab4d7d29d8e9ba689837358c8a44996ba38cc",
+        "source_revision": "434ab4d7d29d8e9ba689837358c8a44996ba38cc",
         "texts": [
           {
             "file": "texts/c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4.txt",
-            "origin": "https://github.com/sarimabbas/rmk-nocfree/blob/b41bd7caa7de67a47f6e7380519b730630f16152/LICENSE-APACHE",
+            "origin": "https://github.com/rmk-rs/rmk/blob/434ab4d7d29d8e9ba689837358c8a44996ba38cc/LICENSE-APACHE",
             "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
           },
           {
             "file": "texts/34c35b17c5b1c0cd54c027d20b0e5690d9cbc412ba355bf3c08a25f8dcd49e21.txt",
-            "origin": "https://github.com/sarimabbas/rmk-nocfree/blob/b41bd7caa7de67a47f6e7380519b730630f16152/LICENSE-MIT",
+            "origin": "https://github.com/rmk-rs/rmk/blob/434ab4d7d29d8e9ba689837358c8a44996ba38cc/LICENSE-MIT",
             "sha256": "34c35b17c5b1c0cd54c027d20b0e5690d9cbc412ba355bf3c08a25f8dcd49e21"
           }
         ],
@@ -10596,17 +10596,17 @@
         "license": "MIT OR Apache-2.0",
         "name": "rynk",
         "repository": "https://github.com/rmk-rs/rmk",
-        "source": "git+https://github.com/sarimabbas/rmk-nocfree?rev=b41bd7caa7de67a47f6e7380519b730630f16152#b41bd7caa7de67a47f6e7380519b730630f16152",
-        "source_revision": "b41bd7caa7de67a47f6e7380519b730630f16152",
+        "source": "git+https://github.com/rmk-rs/rmk?rev=434ab4d7d29d8e9ba689837358c8a44996ba38cc#434ab4d7d29d8e9ba689837358c8a44996ba38cc",
+        "source_revision": "434ab4d7d29d8e9ba689837358c8a44996ba38cc",
         "texts": [
           {
             "file": "texts/c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4.txt",
-            "origin": "https://github.com/sarimabbas/rmk-nocfree/blob/b41bd7caa7de67a47f6e7380519b730630f16152/LICENSE-APACHE",
+            "origin": "https://github.com/rmk-rs/rmk/blob/434ab4d7d29d8e9ba689837358c8a44996ba38cc/LICENSE-APACHE",
             "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
           },
           {
             "file": "texts/34c35b17c5b1c0cd54c027d20b0e5690d9cbc412ba355bf3c08a25f8dcd49e21.txt",
-            "origin": "https://github.com/sarimabbas/rmk-nocfree/blob/b41bd7caa7de67a47f6e7380519b730630f16152/LICENSE-MIT",
+            "origin": "https://github.com/rmk-rs/rmk/blob/434ab4d7d29d8e9ba689837358c8a44996ba38cc/LICENSE-MIT",
             "sha256": "34c35b17c5b1c0cd54c027d20b0e5690d9cbc412ba355bf3c08a25f8dcd49e21"
           }
         ],
@@ -10616,17 +10616,17 @@
         "license": "MIT OR Apache-2.0",
         "name": "rynk-usb",
         "repository": "https://github.com/rmk-rs/rmk",
-        "source": "git+https://github.com/sarimabbas/rmk-nocfree?rev=b41bd7caa7de67a47f6e7380519b730630f16152#b41bd7caa7de67a47f6e7380519b730630f16152",
-        "source_revision": "b41bd7caa7de67a47f6e7380519b730630f16152",
+        "source": "git+https://github.com/rmk-rs/rmk?rev=434ab4d7d29d8e9ba689837358c8a44996ba38cc#434ab4d7d29d8e9ba689837358c8a44996ba38cc",
+        "source_revision": "434ab4d7d29d8e9ba689837358c8a44996ba38cc",
         "texts": [
           {
             "file": "texts/c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4.txt",
-            "origin": "https://github.com/sarimabbas/rmk-nocfree/blob/b41bd7caa7de67a47f6e7380519b730630f16152/LICENSE-APACHE",
+            "origin": "https://github.com/rmk-rs/rmk/blob/434ab4d7d29d8e9ba689837358c8a44996ba38cc/LICENSE-APACHE",
             "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
           },
           {
             "file": "texts/34c35b17c5b1c0cd54c027d20b0e5690d9cbc412ba355bf3c08a25f8dcd49e21.txt",
-            "origin": "https://github.com/sarimabbas/rmk-nocfree/blob/b41bd7caa7de67a47f6e7380519b730630f16152/LICENSE-MIT",
+            "origin": "https://github.com/rmk-rs/rmk/blob/434ab4d7d29d8e9ba689837358c8a44996ba38cc/LICENSE-MIT",
             "sha256": "34c35b17c5b1c0cd54c027d20b0e5690d9cbc412ba355bf3c08a25f8dcd49e21"
           }
         ],
