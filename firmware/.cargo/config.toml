@@ -9,3 +9,5 @@ DEFMT_LOG = "off"
 # Enabled split, HID and SMP messages fit; Rynk chunks configuration traffic.
 # Keep queue depths unchanged. Re-audit payload and stack bounds on upgrades.
 TROUBLE_HOST_DEFAULT_PACKET_POOL_MTU = "128"
+# Split keys and backlight messages each subscribe to one characteristic.
+TROUBLE_HOST_GATT_CLIENT_NOTIFICATION_MAX_SUBSCRIBERS = "2"

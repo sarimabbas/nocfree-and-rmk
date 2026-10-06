@@ -1,4 +1,20 @@
 //! Board-owned blue indicator; RMK continues to own connection and sleep state.
+use rmk::types::{
+    ble::BleState,
+    connection::{ConnectionStatus, ConnectionType, UsbState},
+};
+
+fn pattern(status: ConnectionStatus, sleeping: bool) -> Pattern {
+    let selected = status.decide_active() == Some(ConnectionType::Ble)
+        || (status.ble.state == BleState::Advertising
+            && (status.preferred == ConnectionType::Ble
+                || !matches!(status.usb, UsbState::Configured | UsbState::Suspended)));
+    match (selected && !sleeping, status.ble.state) {
+        (true, BleState::Advertising) => Pattern::Blink,
+        (true, BleState::Connected) => Pattern::Connected,
+        _ => Pattern::Off,
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Pattern {
@@ -61,8 +77,6 @@ impl<P: embedded_hal::digital::OutputPin> StatusLed<P> {
         use rmk::event::{
             ConnectionStatusChangeEvent, EventSubscriber, SleepStateEvent, SubscribableEvent,
         };
-        use rmk::types::ble::BleState;
-        use rmk::types::connection::ConnectionType;
 
         let mut connection = ConnectionStatusChangeEvent::subscriber();
         let mut sleep = SleepStateEvent::subscriber();
@@ -71,14 +85,7 @@ impl<P: embedded_hal::digital::OutputPin> StatusLed<P> {
         let mut last = None;
         loop {
             let status = rmk::state::current_connection_status();
-            let selected = status.decide_active() == Some(ConnectionType::Ble)
-                || (status.ble.state == BleState::Advertising
-                    && status.preferred == ConnectionType::Ble);
-            let pattern = match (selected && !sleeping, status.ble.state) {
-                (true, BleState::Advertising) => Pattern::Blink,
-                (true, BleState::Connected) => Pattern::Connected,
-                _ => Pattern::Off,
-            };
+            let pattern = pattern(status, sleeping);
             let now = Instant::now().as_millis();
             indication.update(pattern, status.ble.profile, now);
             let on = indication.on(now);
@@ -112,6 +119,45 @@ impl<P: embedded_hal::digital::OutputPin> StatusLed<P> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn wireless_search_is_visible_without_usb_even_when_usb_is_preferred() {
+        let mut status = ConnectionStatus::new();
+        status.ble.state = BleState::Advertising;
+        for profile in [0, 1, 5] {
+            status.ble.profile = profile;
+            for usb in [UsbState::Disabled, UsbState::Enabled] {
+                status.usb = usb;
+                assert_eq!(pattern(status, false), Pattern::Blink);
+            }
+        }
+        assert_eq!(pattern(status, true), Pattern::Off);
+    }
+
+    #[test]
+    fn blue_follows_wireless_activity_not_usb_power() {
+        let mut status = ConnectionStatus::new();
+        for usb in [UsbState::Configured, UsbState::Suspended] {
+            status.usb = usb;
+            for ble in [BleState::Advertising, BleState::Connected] {
+                status.ble.state = ble;
+                status.preferred = ConnectionType::Usb;
+                assert_eq!(pattern(status, false), Pattern::Off);
+                status.preferred = ConnectionType::Ble;
+                assert_eq!(
+                    pattern(status, false),
+                    if ble == BleState::Advertising {
+                        Pattern::Blink
+                    } else {
+                        Pattern::Connected
+                    }
+                );
+            }
+        }
+        status.usb = UsbState::Disabled;
+        status.preferred = ConnectionType::Usb;
+        assert_eq!(pattern(status, false), Pattern::Connected);
+    }
 
     #[test]
     fn connected_expires_and_repeated_events_do_not_extend_it() {
