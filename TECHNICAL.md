@@ -133,6 +133,16 @@ The second ten rounds refine the implementation gates:
 | 19. Source accounting | Count formatted code, retained compatibility, helpers and tests. Preserve patch provenance and include it in image hashes. Version numbers alone do not identify tested sources. |
 | 20. Release gate | Require actual integrated code reduction, complete builds and physical acceptance. Source review and prototype compilation cannot certify a smaller or working replacement. |
 
+### Review branch setup
+
+The migration branch builds against pinned upstream RMK and published Embassy sources with explicit patches in `firmware/patches`. Run `python3 scripts/prepare_migration.py` to fetch and prepare them in the ignored `dependencies` directory. No framework source copy is checked in. `scripts/check.sh` prepares the same sources before its host tests and firmware builds.
+
+The firmware owns Companion HID reports, recovery requests, brightness and the blue indicator. RMK still owns key processing, radio links, bonds and storage. The receiver uses the receive-only custom-message option and stays within its existing application region. The normal release build has 384 bytes of aligned flash space remaining.
+
+The board protocol and lighting tests compile the actual firmware modules. Run `scripts/check.sh --host-only --all-layouts` for host checks, then `scripts/check.sh --build-only --all-layouts --runtime-recovery --reclaimed-softdevice --backlight-active-high` for all roles. Host checks need `cargo-nextest`. Firmware compilation needs an Arm GNU toolchain on `PATH`.
+
+This branch is an implementation spike. Companion's armed HID recovery dispatch and ordinary pairing journey, final release packaging and Rynk migration are still pending. The approved bundled images are unchanged. Hardware acceptance must cover disconnect releases, simultaneous input, wake latency, USB recovery, switch routing and brightness persistence before this firmware replaces them.
+
 ## Board reference
 
 These GPIO mappings come from the [vendor porting guide](https://github.com/NocFreeKB/NocFree-and-zmk/blob/8bc5f6fe4531cadc62dc39aa92750fba90e009c4/README.md#4-pins-required-for-zmk-porting). The table uses Nordic GPIO names.

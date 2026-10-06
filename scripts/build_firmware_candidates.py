@@ -100,6 +100,10 @@ def source_hashes():
         'firmware/build.rs', 'firmware/keyboard.toml', 'firmware/vial.json',
         'firmware/.cargo/config.toml',
         'crates/nocfree-input/Cargo.toml'))
+    paths.update(ROOT / 'scripts' / name for name in (
+        'prepare_migration.py', 'build_firmware_candidates.py',
+        'image_guard.py', 'migration_guard.py'))
+    paths.update((ROOT / 'firmware/patches').glob('*.patch'))
     paths.update((ROOT / 'firmware').glob('*.x'))
     paths.update((ROOT / 'firmware').glob('vial-*.json'))
     paths.update(path for path in (ROOT / 'firmware/layouts').rglob('*') if path.is_file())
@@ -125,6 +129,10 @@ def main():
         manifest = tomllib.loads((ROOT / 'firmware/Cargo.toml').read_text())
         validate_dependency_sources(manifest)
         rmk = prepare_migration.RMK_REVISION
+        if not args.dry_run:
+            prepare_migration.prepare()
+        dependency_hash = (prepare_migration.source_digest(ROOT / "dependencies")
+                           if not args.dry_run else None)
         before = source_hashes()
         for layout in LAYOUTS if args.all_layouts else (args.layout,):
             output = args.output.resolve() / layout if args.all_layouts else args.output.resolve()
@@ -142,7 +150,8 @@ def main():
             report = {'schema': 1, **plan, 'source_sha256': before,
                       'compiler': capture(['rustup', 'run', args.toolchain, 'rustc', '--version']),
                       'llvm_objcopy': capture([objcopy, '--version']), 'images': {},
-                      'status': 'image checks passed', 'hardware_validated': False}
+                      'status': 'image checks passed', 'hardware_validated': False,
+                      'dependency_sha256': dependency_hash}
             for role in ROLES:
                 folder = output / role
                 folder.mkdir(exist_ok=True)
@@ -169,6 +178,8 @@ def main():
                                          'binary_sha256': digest(binary), 'uf2_sha256': digest(image),
                                          'binary_size': len(binary)}
                 print(f'{role}: image checks passed ({len(binary)} bytes)', flush=True)
+            if prepare_migration.source_digest(ROOT / 'dependencies') != dependency_hash:
+                raise ValueError('dependency sources changed during build; rebuild candidates')
             if source_hashes() != before:
                 raise ValueError('firmware sources changed during build; rebuild candidates')
             (output / 'manifest.json').write_text(json.dumps(report, indent=2) + '\n')
