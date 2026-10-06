@@ -67,6 +67,32 @@ Each Cargo manifest and lockfile fixes the dependency versions. The firmware and
 
 Dependabot checks all three Cargo projects and GitHub Actions monthly. Security updates are enabled. Renovate updates both Rust toolchains together each month. All updates need review. Update the license inventory when desktop dependencies change. Changes to the pinned RMK, Rynk and Embassy forks are manual because they must stay in sync with the firmware.
 
+## Upstream dependency plan
+
+The 2026-10-05 comparison covers all 19 RMK changes and four Embassy changes in the pinned forks. It compares RMK `108067bf` with [upstream `434ab4d7`](https://github.com/rmk-rs/rmk/tree/434ab4d7d29d8e9ba689837358c8a44996ba38cc), and Embassy `ec44c260` with published 0.11 and [upstream `8708c0c2`](https://github.com/embassy-rs/embassy/tree/8708c0c2e7dba09efbc218fe44d4c5e600ec611a). The production pins remain unchanged.
+
+| Feature | Alternative and remaining work |
+| --- | --- |
+| Vial with Companion status and local recovery | RMK's public USB builder accepts a separate HID interface. An external compile proof keeps Vial enabled. Battery and connection events can supply the existing status reports. Companion must select the new interface and bind recovery to the selected physical USB connection. |
+| RIGHT recovery | A board-owned USB device can use Embassy's DFU handler and RMK's bootloader entry. Scope requests to its allocated interface. LEFT's stock Vial builder has too little BOS/MS OS space for an added WinUSB class; the HID route avoids that constraint. |
+| Exact dongle pairing checks and repair | Public custom messages can carry board data, but the peer identity and repair operations are private. Retain a small RMK hook. Ordinary pairing keys do not provide the same checks or repair operation. |
+| Physical mode switch | Stock RMK can fall back to Bluetooth when USB is preferred. Retain an explicit output-selection hook to make the switch choose the active route. |
+| USB-powered wake behavior | Stock sleep controls do not cover both roles' USB-power policy. Retain a power-policy hook; disabling one sleep timer is not equivalent. |
+| Backlight | Public action events, custom messages and user-data storage provide building blocks. Keep brightness, held-key repeat, split synchronization and persistence in RMK. Stock Vial also needs the backlight key-code conversion change. |
+| Physical layout changes | A board user-data marker is too late: RMK can load saved keys before board code checks it. Retain the layout identity in the storage schema and stop before writing its marker if erase fails. |
+| Macro bounds | Stock RMK handles zero configured slots. The fork also rejects out-of-range nonzero slots; retain that check until equivalent behavior is tested. Merge and lint commits add no separate feature. |
+| Optional status LED | Public connection, sleep and battery events can supply indication. Production enables the LED feature on LEFT. Keep one owner of each shared LED pin. |
+| Desktop Rynk dependency | Current USB connection and battery getter calls compile against upstream Rynk. Its newer payload includes additional fields; verify protocol compatibility before changing the desktop pin. Rynk cannot replace the Vial channel while retaining Vial. |
+| nRF52833 USB address handling | A wrapper around the public driver/control-pipe traits compiles against stock Embassy. It delegates normal requests and leaves SET_ADDRESS status to the hardware. Device enumeration still needs a physical test. |
+| Cooperative PWM updates | Public `SequencePwm` can use immutable RAM duty values and a retained playback guard. Host tests cover cancellation and cleanup; nRF52833 builds pass. Peripheral stop timing remains a hardware check. |
+| Preserve UICR | Stock configuration cannot enforce the current no-write policy for every UICR setting. Retain a small initialization change that rejects mismatched settings without writing. |
+
+Tests against actual upstream RMK confirm action-event delivery, persistent user-data slots and the missing output/Vial behavior. Two small scratch patches pass tests for all six monochrome Vial actions and layout schema identity. Stock Embassy USB/PWM adapters compile for nRF52833 against both published and current sources; a separate UICR patch also compiles. The UICR tests exercise the patched write-policy function, not device registers.
+
+Layout migration must also stop if flash erase fails. Current upstream initialization ignores that result before writing a new schema marker. A scratch fail-closed patch passes an injected erase-failure test against actual RMK storage: no new marker is written, and the old layout can still reopen its saved keys. Partial erases and power loss remain separate tests.
+
+These proofs establish API access and software behavior. They do not establish a complete upstream firmware replacement. Before changing the pins, integrate the adapters, cross-build every role and layout, then check USB enumeration, recovery, brightness, saved remaps, pairing, disconnect releases, simultaneous input and wake latency on the keyboard.
+
 ## Board reference
 
 These GPIO mappings come from the [vendor porting guide](https://github.com/NocFreeKB/NocFree-and-zmk/blob/8bc5f6fe4531cadc62dc39aa92750fba90e009c4/README.md#4-pins-required-for-zmk-porting). The table uses Nordic GPIO names.
