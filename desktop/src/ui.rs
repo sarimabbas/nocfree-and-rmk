@@ -1,5 +1,6 @@
 //! Presentation only. Discovery and backup decisions remain in the session.
 use std::{
+    hash::{Hash, Hasher},
     path::PathBuf,
     sync::{
         Arc, OnceLock,
@@ -11,7 +12,6 @@ use std::{
 
 use crate::backup_flow::{Event as BackupEvent, Machine as BackupMachine, State as BackupState};
 use crate::diagnostics::{self, Category, Event as DiagnosticEvent};
-use crate::dongle_pairing::{self, Journey as PairingJourney, State as PairingState};
 use crate::flow_presentation::{self, FlowProgress};
 use crate::{
     firmware_journey::{FirmwareJourney, View as FirmwareView},
@@ -70,6 +70,87 @@ struct DiagnosticState {
     mode: Option<diagnostics::ConnectionMode>,
 }
 
+fn test_usb_identity(devices: &crate::device_status::UsbKey) -> (usize, u64) {
+    let family = devices
+        .iter()
+        .filter(|(_, vendor, product, name)| {
+            *vendor == 0x4c4b
+                || (*vendor == 0x2886 && *product == 0x8029)
+                || (*vendor == 0x239a && matches!(*product, 0x80d8 | 0x0029))
+                || name.starts_with("NocFree")
+        })
+        .collect::<Vec<_>>();
+    let mut identity = std::collections::hash_map::DefaultHasher::new();
+    family.hash(&mut identity);
+    (family.len(), identity.finish())
+}
+
+/// USB inventory and the host Bluetooth link establish the isolated test route.
+/// The typing test checks input from both halves; it cannot identify a radio peer.
+fn native_check_evidence(
+    devices: &crate::device_status::UsbKey,
+    discovery_seen: Option<Instant>,
+    bluetooth_seen: Option<Instant>,
+    bluetooth_connected: bool,
+    factory_bluetooth_connected: bool,
+) -> install_journey::Evidence {
+    let count = |role: u8| {
+        devices
+            .iter()
+            .filter(|(location, vendor, product, name)| {
+                let device = device::Device {
+                    location: *location,
+                    vendor: *vendor,
+                    product: *product,
+                    name: name.clone(),
+                };
+                match role {
+                    0 => device.rmk_left(),
+                    1 => device.role() == Some(device::Role::Right),
+                    _ => device.rmk_receiver(),
+                }
+            })
+            .count()
+    };
+    let left = count(0);
+    let right = count(1);
+    let dongle = count(2);
+    let (family_count, usb_identity) = test_usb_identity(devices);
+    let recognized = left + right + dongle;
+    let usb_fresh = discovery_seen.is_some_and(|time| time.elapsed() < Duration::from_secs(5));
+    let bt_fresh = bluetooth_seen.is_some_and(|time| time.elapsed() < Duration::from_secs(5));
+    install_journey::Evidence {
+        mode: None,
+        route: if bluetooth_connected {
+            crate::status_strip::Connection::Bluetooth
+        } else if left == 1 && dongle == 0 {
+            crate::status_strip::Connection::Usb
+        } else if left == 0 && dongle == 1 {
+            crate::status_strip::Connection::Dongle
+        } else {
+            crate::status_strip::Connection::Unknown
+        },
+        left_usb: usb_fresh.then_some(left != 0),
+        right_usb: usb_fresh.then_some(right != 0),
+        dongle_usb: usb_fresh.then_some(dongle != 0),
+        bluetooth_connected: bt_fresh.then_some(bluetooth_connected),
+        factory_usb_count: None,
+        usb_identity,
+        fresh: usb_fresh
+            && bt_fresh
+            && !factory_bluetooth_connected
+            && left <= 1
+            && dongle <= 1
+            && right <= 1
+            && family_count == recognized,
+        observed_at: discovery_seen
+            .into_iter()
+            .chain(bluetooth_seen)
+            .min()
+            .unwrap_or_else(Instant::now),
+    }
+}
+
 pub struct Companion {
     navigation: Navigation,
     diagnostic_state: Option<DiagnosticState>,
@@ -83,9 +164,6 @@ pub struct Companion {
     factory_release: Option<FactoryRelease>,
     factory_source: crate::factory_source::Machine,
     bundled_version: Option<String>,
-    pairing: PairingJourney,
-    pairing_observation: Option<dongle_pairing::Observation>,
-    pairing_generation: u64,
     rescue: RecoveryJourney,
     rescue_cancel: Option<Arc<AtomicBool>>,
     manual_advance: bool,
@@ -123,6 +201,7 @@ pub struct Companion {
     bluetooth_seen: Option<Instant>,
     recovery_locations: [Option<u64>; 3],
     focus_handle: FocusHandle,
+    native_bundle: bool,
     update_available: bool,
     _update_check: Task<()>,
     _poll: Task<()>,
@@ -130,7 +209,6 @@ pub struct Companion {
 
 impl Drop for Companion {
     fn drop(&mut self) {
-        self.pairing.cancel();
         if let Some(cancelled) = &self.rescue_cancel {
             cancelled.store(true, Ordering::Relaxed);
         }
@@ -159,14 +237,15 @@ impl Companion {
                 .spawn(async {
                     FirmwareRelease::bundled()
                         .ok()
-                        .map(|r| (r.version().to_owned(), r.layouts()))
+                        .map(|r| (r.version().to_owned(), r.layouts(), r.native_controls()))
                 })
                 .await;
             let _ = this.update(cx, |this, cx| {
-                let (version, layouts) = bundled
-                    .map_or((None, Vec::new()), |(version, layouts)| {
-                        (Some(version), layouts)
+                let (version, layouts, native) = bundled
+                    .map_or((None, Vec::new(), false), |(version, layouts, native)| {
+                        (Some(version), layouts, native)
                     });
+                this.native_bundle = native;
                 this.bundled_version = version;
                 this.navigation.observe_layouts(&layouts);
                 this.observe_preflight();
@@ -502,9 +581,6 @@ impl Companion {
             factory_release: None,
             factory_source: crate::factory_source::Machine::default(),
             bundled_version: None,
-            pairing: PairingJourney::new(),
-            pairing_observation: None,
-            pairing_generation: 0,
             rescue: RecoveryJourney::new(),
             rescue_cancel: None,
             manual_advance: false,
@@ -538,6 +614,7 @@ impl Companion {
             bluetooth_seen: None,
             recovery_locations: [None; 3],
             focus_handle: cx.focus_handle(),
+            native_bundle: false,
             update_available: false,
             _update_check: update_check,
             _poll: poll,
@@ -578,16 +655,12 @@ impl Companion {
         } else if self.pending_recovery.is_some() || self.pending_procedure.is_some() {
             ("recovery-result", self.recovery_proof_ready())
         } else if let Some(install) = self.install.as_ref().filter(|install| {
-            (self.firmware_page() || self.factory_pairing_check_active())
-                && !matches!(
-                    install.stage(),
-                    InstallStage::Installing | InstallStage::Pairing
-                )
+            (self.firmware_page() || self.pairing_check_active())
+                && !matches!(install.stage(), InstallStage::Installing)
         }) {
             (
                 match install.stage() {
                     InstallStage::Installing => "installing",
-                    InstallStage::Pairing => "pairing",
                     InstallStage::Setup(_) => "mode-setup",
                     InstallStage::Typing(_) => "typing",
                     InstallStage::Complete => "complete",
@@ -621,26 +694,6 @@ impl Companion {
                     .as_ref()
                     .or(self.firmware.as_ref())
                     .is_some_and(FirmwareJourney::can_next),
-            )
-        } else if self.navigation.page() == Page::Pairing
-            || (self.firmware_page()
-                && self
-                    .install
-                    .as_ref()
-                    .is_some_and(|install| matches!(install.stage(), InstallStage::Pairing)))
-        {
-            (
-                match self.pairing.state() {
-                    PairingState::Connect => "connect",
-                    PairingState::SwitchMode => "switch-mode",
-                    PairingState::TurnOnRight => "wake-right",
-                    PairingState::Ready => "ready",
-                    PairingState::Pairing => "pairing",
-                    PairingState::Connected => "complete",
-                    PairingState::Failed(_) => "failed",
-                    PairingState::Cancelled => "cancelled",
-                },
-                self.pairing.can_next(),
             )
         } else if self.navigation.page() == Page::Recovery {
             (
@@ -1279,17 +1332,21 @@ impl Companion {
             ),
             Page::Pairing => recovery_guide(
                 None,
-                "Check pairing",
-                "Check the connection between your keyboard halves and dongle.",
+                "Test connections",
+                if self.latest_discovery.as_ref().is_some_and(|snapshot| snapshot.devices.iter().any(|d| d.factory_left() || d.factory_dongle())) {
+                    "Test both halves through the factory dongle. Follow the setup, then type the test text."
+                } else {
+                    "Test both halves over USB, Bluetooth and the dongle. Follow each setup, then type the test text."
+                },
                 None,
                 cx,
             ),
             Page::Firmware => scope_guide(
                 scope,
                 if scope == Scope::Whole {
-                    "Install RMK on your dongle and both halves, then check pairing and typing. Your current firmware will be backed up automatically."
+                    "Install RMK on your dongle and both halves, then test USB, Bluetooth and the dongle. Your current firmware will be backed up automatically."
                 } else {
-                    "Save the current firmware and install RMK on the selected parts. Select all three parts to check pairing and typing after installation."
+                    "Save the current firmware and install RMK on the selected parts. Select all three parts to test USB, Bluetooth and the dongle after installation."
                 },
                 cx,
             ),
@@ -1544,18 +1601,10 @@ impl Companion {
                                 | RecoveryState::Failed(_, _)
                         )
                 }
-                Page::Pairing => {
-                    if self.factory_pairing_check_active() {
-                        self.install
-                            .as_ref()
-                            .is_some_and(|m| m.stage() != InstallStage::Complete)
-                    } else {
-                        !matches!(
-                            self.pairing.state(),
-                            PairingState::Connected | PairingState::Cancelled
-                        )
-                    }
-                }
+                Page::Pairing => self
+                    .install
+                    .as_ref()
+                    .is_some_and(|m| m.stage() != InstallStage::Complete),
                 Page::Home => false,
             };
         div()
@@ -2013,17 +2062,8 @@ impl Companion {
         }
     }
 
-    fn install_pairing_active(&self) -> bool {
-        self.firmware_page()
-            && !self.navigation.setup()
-            && self
-                .install
-                .as_ref()
-                .is_some_and(|m| m.stage() == InstallStage::Pairing)
-    }
-    fn pairing_active(&self) -> bool {
-        (self.navigation.page() == Page::Pairing && !self.navigation.setup())
-            || self.install_pairing_active()
+    fn pairing_check_active(&self) -> bool {
+        self.navigation.page() == Page::Pairing && !self.navigation.setup()
     }
     fn factory_pairing_check_active(&self) -> bool {
         self.navigation.page() == Page::Pairing
@@ -2034,7 +2074,7 @@ impl Companion {
                 .is_some_and(|m| m.target() == install_journey::Target::Factory)
     }
     fn install_checks_active(&self) -> bool {
-        (self.firmware_page() || self.factory_pairing_check_active())
+        (self.firmware_page() || self.pairing_check_active())
             && self.install.as_ref().is_some_and(|m| {
                 matches!(
                     m.stage(),
@@ -2063,19 +2103,9 @@ impl Companion {
         if !self.install_checks_active() {
             return;
         }
-        let status = self.observed_status();
         let usb_fresh = self
             .discovery_seen
             .is_some_and(|t| t.elapsed() < Duration::from_secs(5));
-        let direct_bt = status.connection == crate::status_strip::Connection::Bluetooth
-            && !status.left.usb_connected
-            && !status.right.usb_connected
-            && !self.dongle_connected;
-        let source_seen = if direct_bt {
-            self.bluetooth_seen
-        } else {
-            self.telemetry_seen
-        };
         let factory = self
             .install
             .as_ref()
@@ -2113,29 +2143,26 @@ impl Companion {
                     .then_some(!crate::device_status::right_usb(&self.device_key).is_empty()),
                 dongle_usb: None,
                 factory_usb_count: usb_fresh.then_some(stock_count),
-                right_link: None,
+                usb_identity: test_usb_identity(&self.device_key).1,
                 bluetooth_connected: bt_seen.then_some(self.factory_bluetooth_connected),
                 fresh: usb_fresh
                     && bt_seen
+                    && !self.bluetooth_connected
+                    && test_usb_identity(&self.device_key).0
+                        == stock_count + crate::device_status::right_usb(&self.device_key).len()
                     && (!self.factory_pairing_check_active()
                         || (self.dongle_connected
                             && !crate::device_status::left_usb(&self.device_key))),
                 observed_at: self.discovery_seen.unwrap_or_else(Instant::now),
             }
         } else {
-            install_journey::Evidence {
-                mode: status.left.mode,
-                factory_usb_count: None,
-                route: status.connection,
-                left_usb: usb_fresh.then_some(status.left.usb_connected),
-                right_usb: usb_fresh.then_some(status.right.usb_connected),
-                dongle_usb: usb_fresh.then_some(self.dongle_connected),
-                right_link: status.right.link_connected,
-                bluetooth_connected: self.bluetooth_seen.map(|_| self.bluetooth_connected),
-                fresh: usb_fresh
-                    && source_seen.is_some_and(|t| t.elapsed() < Duration::from_secs(30)),
-                observed_at: source_seen.unwrap_or_else(Instant::now),
-            }
+            native_check_evidence(
+                &self.device_key,
+                self.discovery_seen,
+                self.bluetooth_seen,
+                self.bluetooth_connected,
+                self.factory_bluetooth_connected,
+            )
         };
         if let Some(install) = self.install.as_mut() {
             install.observe(install.ticket(), evidence);
@@ -2149,53 +2176,56 @@ impl Companion {
             .unwrap_or(InstallStage::Installing);
         match stage {
             InstallStage::Installing => self.firmware_screen(cx),
-            InstallStage::Pairing => {
-                if matches!(self.pairing.state(), PairingState::Failed(_)) {
-                    let generation = self.pairing_generation;
-                    let mut screen = self.pairing_screen(cx);
-                    screen.actions = Some(self.footer(
-                        Some(
-                            button("retry-install-pairing", "Next").on_click(cx.listener(
-                                move |this, _, _, cx| {
-                                    if this.install_pairing_active()
-                                        && this.pairing_generation == generation
-                                        && matches!(this.pairing.state(), PairingState::Failed(_))
-                                    {
-                                        this.start_pairing(cx);
-                                        cx.notify();
-                                    }
-                                },
-                            )),
-                        ),
-                        cx,
-                    ));
-                    screen
-                } else {
-                    self.pairing_screen(cx)
-                }
-            }
             InstallStage::Setup(mode) | InstallStage::Typing(mode) => {
                 let typing = matches!(stage, InstallStage::Typing(_));
                 let ticket = self.install.as_ref().expect("active install").ticket();
-                let mut body = recovery_guide_status(
-                    None,
-                    mode.label(),
+                let instruction = if typing {
+                    "Keep this connection while you type the test text."
+                } else {
                     self.install
                         .as_ref()
                         .expect("active install")
                         .target()
-                        .instruction(mode),
-                    None,
-                    typing || self.install.as_ref().is_some_and(InstallMachine::can_next),
-                    cx,
-                );
-                if mode == crate::device_status::Mode::Bluetooth && !typing {
+                        .instruction(mode)
+                };
+                let mut body = div()
+                    .flex()
+                    .flex_col()
+                    .items_center()
+                    .w_full()
+                    .gap(px(24.))
+                    .child(
+                        div()
+                            .text_center()
+                            .text_color(cx.theme().muted_foreground)
+                            .child(format!(
+                                "{} · {}",
+                                mode.label(),
+                                if typing {
+                                    "Typing test"
+                                } else {
+                                    "Set up connection"
+                                }
+                            )),
+                    )
+                    .child(instruction_line(
+                        instruction,
+                        typing || self.install.as_ref().is_some_and(InstallMachine::can_next),
+                        cx,
+                    ));
+                if mode == crate::device_status::Mode::Bluetooth
+                    && !typing
+                    && !cfg!(target_os = "linux")
+                {
                     body = body.child(
                         Button::new("open-bluetooth-settings")
                             .secondary()
                             .cursor_pointer()
                             .label("Bluetooth settings")
-                            .on_click(cx.listener(|_, _, _, _| {
+                            .on_click(cx.listener(|_, _, _, _cx| {
+                                #[cfg(target_os = "windows")]
+                                _cx.open_url("ms-settings:bluetooth");
+                                #[cfg(target_os = "macos")]
                                 let _ = std::process::Command::new("open")
                                     .arg("x-apple.systempreferences:com.apple.Bluetooth")
                                     .spawn();
@@ -2245,8 +2275,20 @@ impl Companion {
                                 .text_color(cx.theme().muted_foreground)
                                 .child("Confirm this setup, then click Next."),
                         );
-                    } else {
-                        body = body.child(waiting_indicator("Waiting for this connection…", cx));
+                    }
+                    if self.bluetooth_seen.is_none() {
+                        body = body.child(instruction_line(
+                            if cfg!(target_os = "linux") {
+                                "Could not check Bluetooth. Install BlueZ, turn on Bluetooth, then try again."
+                            } else {
+                                "Could not check Bluetooth. Open Bluetooth settings and turn on Bluetooth."
+                            }, false, cx,
+                        ));
+                    } else if let Some(label) = pending_wait_label(
+                        self.install.as_ref().is_some_and(InstallMachine::can_next),
+                        "Waiting for this connection…",
+                    ) {
+                        body = body.child(waiting_indicator(label, cx));
                     }
                 }
                 let enabled = self.install.as_ref().is_some_and(InstallMachine::can_next);
@@ -2283,12 +2325,16 @@ impl Companion {
                         "Firmware installed. This part is ready to use."
                     } else if self.navigation.scope() != Some(Scope::Whole) {
                         "Firmware installed. The selected parts are ready to use."
-                    } else if self.factory_pairing_check_active() {
-                        "Both halves passed the dongle typing test."
+                    } else if self.pairing_check_active() {
+                        if self.factory_pairing_check_active() {
+                            "Both halves passed the dongle typing test."
+                        } else {
+                            "Both halves passed all three typing tests."
+                        }
                     } else if self.navigation.page() == Page::Restore {
                         "Factory firmware restored. All three typing tests passed."
                     } else {
-                        "RMK installed. Pairing and all three typing tests passed."
+                        "RMK installed. All three typing tests passed."
                     },
                     None,
                     cx,
@@ -2316,243 +2362,26 @@ impl Companion {
         if self.operation.busy() {
             return;
         }
-        if self.navigation.page() == Page::Pairing
-            && self.latest_discovery.as_ref().is_some_and(|snapshot| {
-                snapshot
-                    .devices
-                    .iter()
-                    .any(|d| d.factory_left() || d.factory_dongle())
-            })
-        {
-            self.pairing.cancel();
-            self.pairing_generation += 1;
-            self.pairing_observation = None;
-            self.install = Some(InstallMachine::factory_dongle_check());
-            self.typing_input = None;
-            self.observe_install();
+        let factory = self.latest_discovery.as_ref().is_some_and(|snapshot| {
+            snapshot
+                .devices
+                .iter()
+                .any(|d| d.factory_left() || d.factory_dongle())
+        });
+        if !factory && !self.native_bundle {
+            self.operation
+                .fail("This draft needs the upstream firmware package.".into());
             cx.notify();
             return;
         }
-        if self.navigation.page() == Page::Pairing {
-            self.install = None;
-        }
-        self.pairing = if self.install_pairing_active() {
-            PairingJourney::whole_keyboard()
+        self.install = Some(if factory {
+            InstallMachine::factory_dongle_check()
         } else {
-            PairingJourney::new()
-        };
-        self.pairing_observation = None;
-        self.pairing_generation += 1;
-        let generation = self.pairing_generation;
-        cx.spawn(async move |this, cx| {
-            loop {
-                let allowed = this.update(cx, |this, _| {
-                    this.pairing_active()
-                        && this.pairing_generation == generation
-                        && !matches!(
-                            this.pairing.state(),
-                            PairingState::Cancelled | PairingState::Failed(_)
-                        )
-                        && !(*this.pairing.state() == PairingState::Connected
-                            && (!this.install_pairing_active()
-                                || this
-                                    .pairing_observation
-                                    .as_ref()
-                                    .is_some_and(|o| o.dongle.is_some())))
-                });
-                if !matches!(allowed, Ok(true)) {
-                    break;
-                }
-                let busy = this
-                    .update(cx, |this, _| this.operation.busy())
-                    .unwrap_or(true);
-                if !busy {
-                    let result = cx
-                        .background_executor()
-                        .spawn(async { dongle_pairing::query() })
-                        .await;
-                    let _ = this.update(cx, |this, cx| {
-                        if !this.pairing_active()
-                            || this.pairing_generation != generation
-                            || this.operation.busy()
-                        {
-                            return;
-                        }
-                        this.pairing_observation = result.as_ref().ok().cloned();
-                        this.pairing.observe(result, Instant::now());
-                        cx.notify();
-                    });
-                }
-                cx.background_executor().timer(Duration::from_secs(1)).await;
-            }
-        })
-        .detach();
-    }
-
-    fn begin_pairing(&mut self, cx: &mut Context<Self>) {
-        if self.operation.busy() {
-            return;
-        }
-        let Some(observed) = &self.pairing_observation else {
-            return;
-        };
-        let request = match self.pairing.begin(observed, Instant::now()) {
-            Ok(request) => request,
-            Err(error) => {
-                self.pairing.observe(Err(error), Instant::now());
-                cx.notify();
-                return;
-            }
-        };
-        let generation = self.pairing_generation;
-        let Some(ticket) = self
-            .operation
-            .begin(crate::operation::Kind::Pairing, None, None)
-        else {
-            return;
-        };
-        cx.spawn(async move |this, cx| {
-            let result = cx
-                .background_executor()
-                .spawn(async move { dongle_pairing::begin(request) })
-                .await;
-            let _ = this.update(cx, |this, cx| {
-                if this.pairing_generation != generation || !this.pairing_active() {
-                    return;
-                }
-                if !this.operation.complete(ticket) {
-                    return;
-                }
-                this.pairing.accepted(result, Instant::now());
-                cx.notify();
-            });
-        })
-        .detach();
+            InstallMachine::rmk_check()
+        });
+        self.typing_input = None;
+        self.observe_install();
         cx.notify();
-    }
-
-    fn pairing_screen(&self, cx: &mut Context<Self>) -> JourneyScreen {
-        let (instruction, waiting) = match self.pairing.state() {
-            PairingState::Connect => (
-                "Connect the left half by USB. Keep the dongle plugged in to check it too.",
-                Some("Waiting for the keyboard…"),
-            ),
-            PairingState::TurnOnRight => (
-                "Turn the right half ON and press any key to wake it. Keep it near the left half while they connect.",
-                Some("Waiting for the right half…"),
-            ),
-            PairingState::SwitchMode => (
-                "Move the left switch to the top Dongle position. Keep USB connected.",
-                Some("Waiting for Dongle mode…"),
-            ),
-            PairingState::Ready => ("Click Next to pair the keyboard with the dongle.", None),
-            PairingState::Pairing => (
-                "Keep both USB connections in place.",
-                Some("Pairing your dongle…"),
-            ),
-            PairingState::Connected => (
-                if self
-                    .pairing_observation
-                    .as_ref()
-                    .is_some_and(|o| o.dongle.is_some())
-                {
-                    "Both halves and the dongle are connected."
-                } else {
-                    "Both halves are connected."
-                },
-                None,
-            ),
-            PairingState::Failed(error) => (error.as_str(), None),
-            PairingState::Cancelled => ("Pairing stopped.", None),
-        };
-        let artwork = div()
-            .flex()
-            .items_center()
-            .justify_center()
-            .gap(px(24.))
-            .child(
-                img(peripheral_image(RecoveryRole::Left))
-                    .w(px(180.))
-                    .h(px(140.)),
-            )
-            .child(
-                img(peripheral_image(RecoveryRole::Right))
-                    .w(px(180.))
-                    .h(px(140.)),
-            )
-            .when(
-                self.pairing_observation
-                    .as_ref()
-                    .is_none_or(|o| o.dongle.is_some()),
-                |row| {
-                    row.child(
-                        img(peripheral_image(RecoveryRole::Receiver))
-                            .w(px(90.))
-                            .h(px(140.)),
-                    )
-                },
-            );
-        let mut body = div()
-            .flex()
-            .flex_col()
-            .items_center()
-            .gap(px(28.))
-            .w_full()
-            .child(artwork)
-            .child(instruction_line(
-                instruction.to_owned(),
-                matches!(
-                    self.pairing.state(),
-                    PairingState::Ready | PairingState::Connected
-                ) || self.pairing.can_next(),
-                cx,
-            ));
-        let ready = !self.operation.busy()
-            && (self.pairing.can_next()
-                || matches!(
-                    self.pairing.state(),
-                    PairingState::Ready | PairingState::Connected | PairingState::Failed(_)
-                ));
-        if let Some(label) = waiting.and_then(|label| pending_wait_label(ready, label)) {
-            body = body.child(waiting_indicator(label, cx));
-        }
-        let generation = self.pairing_generation;
-        let standalone = self.navigation.page() == Page::Pairing;
-
-        let next = Some(
-            button("pairing-step-next", "Next")
-                .disabled(!ready)
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    if this.operation.busy()
-                        || !this.pairing_active()
-                        || this.pairing_generation != generation
-                    {
-                        return;
-                    }
-                    if this.pairing.can_next() {
-                        this.pairing.next();
-                    } else {
-                        match this.pairing.state() {
-                            PairingState::Ready => this.begin_pairing(cx),
-                            PairingState::Connected => {
-                                if standalone {
-                                    this.pairing.cancel();
-                                    this.navigation.reset();
-                                } else if let Some(install) = this.install.as_mut() {
-                                    install.paired(install.ticket(), Ok(()));
-                                }
-                            }
-                            PairingState::Failed(_) => this.start_pairing(cx),
-                            _ => {}
-                        }
-                    }
-                    cx.notify();
-                })),
-        );
-        JourneyScreen {
-            body,
-            actions: Some(self.footer(next, cx)),
-        }
     }
 
     fn start_firmware(&mut self, cx: &mut Context<Self>) {
@@ -2697,9 +2526,7 @@ impl Companion {
                 install.installed(install.ticket(), Ok(()));
             }
             self.cancel_recovery();
-            if self.install_pairing_active() {
-                self.start_pairing(cx);
-            }
+            self.observe_install();
             return;
         }
         if view.can_transfer {
@@ -3074,13 +2901,13 @@ impl Companion {
             if let Some(install) = self.install.as_mut() {
                 install.cancel();
             }
-            self.pairing.cancel();
-            self.pairing_generation += 1;
             self.typing_input = None;
         }
         if self.navigation.page() == Page::Pairing && page != Page::Pairing {
-            self.pairing.cancel();
-            self.pairing_generation += 1;
+            if let Some(install) = self.install.as_mut() {
+                install.cancel();
+            }
+            self.typing_input = None;
         }
         self.operation.clear_error();
         self.navigation.navigate(page);
@@ -3211,7 +3038,7 @@ impl Render for Companion {
                         cx,
                     ))
                     .child(self.nav_row(
-                        "Check pairing",
+                        "Test connections",
                         Page::Pairing,
                         IconName::SatelliteDish,
                         cx,
@@ -3221,7 +3048,7 @@ impl Render for Companion {
         let title = match self.navigation.page() {
             Page::Backups | Page::Home => "Backup firmware",
             Page::Recovery => "Enter recovery mode",
-            Page::Pairing => "Check pairing",
+            Page::Pairing => "Test connections",
             Page::Firmware => "Install RMK",
             Page::Restore => "Restore factory",
         };
@@ -3324,21 +3151,8 @@ impl Render for Companion {
                     Some(InstallStage::Installing) | None => {
                         self.firmware_view().map_or(0, |v| v.step)
                     }
-                    Some(InstallStage::Pairing) => 3,
-                    Some(InstallStage::Setup(_)) | Some(InstallStage::Typing(_)) => {
-                        if self.navigation.page() == Page::Restore {
-                            3
-                        } else {
-                            4
-                        }
-                    }
-                    Some(InstallStage::Complete) => {
-                        if self.navigation.page() == Page::Restore {
-                            4
-                        } else {
-                            5
-                        }
-                    }
+                    Some(InstallStage::Setup(_)) | Some(InstallStage::Typing(_)) => 3,
+                    Some(InstallStage::Complete) => 4,
                     _ => 0,
                 };
                 heading = heading.child(
@@ -3350,7 +3164,7 @@ impl Render for Companion {
                             (if self.navigation.page() == Page::Restore {
                                 vec!["Left half", "Right half", "Dongle", "Test modes"]
                             } else {
-                                vec!["Dongle", "Right half", "Left half", "Pairing", "Test modes"]
+                                vec!["Dongle", "Right half", "Left half", "Test modes"]
                             })
                             .into_iter()
                             .map(|label| StepperItem::new().child(label)),
@@ -3370,10 +3184,7 @@ impl Render for Companion {
                     actions: None,
                 },
                 Page::Recovery => self.recovery_screen(cx),
-                Page::Pairing if self.factory_pairing_check_active() => {
-                    self.install_screen(window, cx)
-                }
-                Page::Pairing => self.pairing_screen(cx),
+                Page::Pairing => self.install_screen(window, cx),
                 Page::Firmware | Page::Restore => self.install_screen(window, cx),
             }
         };
@@ -3520,8 +3331,8 @@ fn instruction_content(instruction: gpui::SharedString) -> gpui::Div {
         return div().whitespace_normal().child(instruction);
     }
     let mut text = instruction.to_string();
-    for key in ["0", "1", "5", "6"] {
-        text = text.replace(&format!("Fn + {key}"), &format!("`fn` + `{key}`"));
+    for key in ["0", "1", "2", "3", "4", "5", "6", "Space", "Tab"] {
+        text = text.replace(&format!("Fn + {key}"), &format!("`Fn + {key}`"));
         text = text.replace(
             &format!("Fn + the main-row {key} key"),
             &format!("`fn` + the main-row `{key}` key"),
@@ -3535,10 +3346,32 @@ fn instruction_content(instruction: gpui::SharedString) -> gpui::Div {
         .justify_center()
         .gap_x(px(4.))
         .gap_y(px(4.));
-    for (index, fragment) in text.split('`').enumerate() {
+    let mut fragments: Vec<_> = text.split('`').map(str::to_owned).collect();
+    for index in 0..fragments.len() {
+        let fragment = fragments[index].clone();
         if index % 2 == 1 {
-            if let Ok(stroke) = gpui::Keystroke::parse(fragment) {
-                content = content.child(Kbd::new(stroke));
+            let stroke = if fragment.starts_with("Fn + ") {
+                gpui::Keystroke::parse("fn").map(|mut stroke| {
+                    stroke.key = fragment.clone();
+                    stroke
+                })
+            } else {
+                gpui::Keystroke::parse(&fragment)
+            };
+            if let Ok(stroke) = stroke {
+                let mut badge = div()
+                    .flex()
+                    .items_center()
+                    .flex_shrink_0()
+                    .child(Kbd::new(stroke));
+                if let Some(next) = fragments.get_mut(index + 1) {
+                    let prose = next.trim_start();
+                    if prose.starts_with([',', '.', ';', ':']) {
+                        badge = badge.child(prose[..1].to_owned());
+                        *next = prose[1..].to_owned();
+                    }
+                }
+                content = content.child(badge);
             } else {
                 content = content.child(div().child(fragment.to_owned()));
             }
@@ -3823,6 +3656,77 @@ fn pending_wait_label(next_enabled: bool, label: &'static str) -> Option<&'stati
 #[cfg(test)]
 mod readiness_presentation_tests {
     use super::*;
+    fn usb_device(product: u64, name: &str, location: u64) -> (u64, u64, u64, String) {
+        (location, 0x4c4b, product, name.to_owned())
+    }
+
+    #[test]
+    fn native_route_uses_inventory_without_private_status() {
+        let now = Instant::now();
+        let left = usb_device(0x4643, "NocFree RMK", 1);
+        let dongle = usb_device(0x4644, "NocFree RMK Receiver", 2);
+        let wired = native_check_evidence(&vec![left.clone()], Some(now), Some(now), false, false);
+        assert!(wired.fresh);
+        assert_eq!(wired.left_usb, Some(true));
+        assert_eq!(wired.right_usb, Some(false));
+        assert_eq!(wired.dongle_usb, Some(false));
+        assert_eq!(wired.mode, None);
+        let wireless = native_check_evidence(&vec![dongle], Some(now), Some(now), false, false);
+        assert!(wireless.fresh);
+        assert_eq!(wireless.left_usb, Some(false));
+        assert_eq!(wireless.dongle_usb, Some(true));
+        let duplicate = native_check_evidence(
+            &vec![left.clone(), left],
+            Some(now),
+            Some(now),
+            false,
+            false,
+        );
+        assert!(!duplicate.fresh);
+    }
+
+    #[test]
+    fn competing_factory_bluetooth_blocks_native_route() {
+        let now = Instant::now();
+        let left = usb_device(0x4643, "NocFree RMK", 1);
+        let evidence = native_check_evidence(&vec![left], Some(now), Some(now), false, true);
+        assert!(!evidence.fresh);
+    }
+    #[test]
+    fn competing_family_devices_do_not_prove_isolation() {
+        let now = Instant::now();
+        let left = usb_device(0x4643, "NocFree RMK", 1);
+        for competitor in [
+            usb_device(0x4643, "NocFree AND RMK Receiver", 2),
+            (2, 0x2886, 0x8029, "NocFree_Dongle".into()),
+            usb_device(0x9999, "NocFree unknown", 2),
+        ] {
+            let evidence = native_check_evidence(
+                &vec![left.clone(), competitor],
+                Some(now),
+                Some(now),
+                false,
+                false,
+            );
+            assert!(!evidence.fresh);
+        }
+    }
+
+    #[test]
+    fn stale_or_missing_host_evidence_never_confirms_native_setup() {
+        let now = Instant::now();
+        let old = now - Duration::from_secs(6);
+        for (usb, bluetooth) in [
+            (None, Some(now)),
+            (Some(now), None),
+            (Some(old), Some(now)),
+            (Some(now), Some(old)),
+        ] {
+            let evidence = native_check_evidence(&vec![], usb, bluetooth, false, false);
+            assert!(!evidence.fresh);
+        }
+    }
+
     #[test]
     fn observed_disconnect_enables_next_and_removes_waiting() {
         let mut identification = crate::scope_presence::Identifier::default();
