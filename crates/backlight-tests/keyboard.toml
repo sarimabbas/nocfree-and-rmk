@@ -1,0 +1,10 @@
+[event.action]
+subs = 1
+[event.sleep_state]
+subs = 2
+[event.peripheral_connected]
+subs = 3
+[event.central_connected]
+subs = 2
+[event.custom_message]
+subs = 3

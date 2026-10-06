@@ -77,6 +77,35 @@ impl<I: I2c, const N: usize> Scanner<I, N> {
         }
     }
 }
+impl<I: I2c, const N: usize, P: ScannerInterrupt> Scanner<I, N, P> {
+    /// RIGHT owns its startup recovery chord; runtime keys are interpreted by LEFT.
+    #[cfg(feature = "right")]
+    pub async fn bootmagic(&mut self) {
+        if self.inputs.initialize().await.is_err() {
+            return;
+        }
+        let zero = nocfree_input::layout::USAGES
+            .iter()
+            .position(|&usage| usage == 0x27)
+            .expect("every supported layout has 0")
+            - nocfree_input::layout::LEFT_COUNT;
+        let function = nocfree_input::layout::RIGHT_FN - nocfree_input::layout::LEFT_COUNT;
+        let held = |snapshot| {
+            key_pressed(snapshot, self.bits[zero]) && key_pressed(snapshot, self.bits[function])
+        };
+        if let Ok(snapshot) = self.inputs.snapshot().await {
+            if !held(snapshot) {
+                return;
+            }
+            Timer::after_millis(50).await;
+            if let Ok(snapshot) = self.inputs.snapshot().await {
+                if held(snapshot) {
+                    rmk::boot::jump_to_bootloader();
+                }
+            }
+        }
+    }
+}
 impl<I: I2c, const N: usize, P: ScannerInterrupt> Runnable for Scanner<I, N, P> {
     async fn run(&mut self) -> ! {
         while self.inputs.initialize().await.is_err() {

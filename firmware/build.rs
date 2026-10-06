@@ -1,8 +1,6 @@
 fn main() {
     generate_vial_definition();
-    if std::env::var_os("CARGO_FEATURE_USB_LOG").is_some()
-        || std::env::var_os("CARGO_FEATURE_BATTERY_ADC_DIAGNOSTIC").is_some()
-    {
+    if std::env::var_os("CARGO_FEATURE_USB_LOG").is_some() {
         assert!(
             std::env::var_os("CARGO_FEATURE_LEFT").is_some()
                 && std::env::var_os("CARGO_FEATURE_RIGHT").is_none()
@@ -10,33 +8,28 @@ fn main() {
             "The USB logging diagnostic requires only the left role"
         );
     }
-    for feature in [
-        "USB_LOG",
-        "BATTERY_ADC_DIAGNOSTIC",
-        "LEFT",
-        "RIGHT",
-        "RECEIVER",
-    ] {
+    for feature in ["USB_LOG", "LEFT", "RIGHT", "RECEIVER"] {
         println!("cargo:rerun-if-env-changed=CARGO_FEATURE_{feature}");
     }
     let out = std::path::PathBuf::from(std::env::var_os("OUT_DIR").unwrap());
-    let layout = if std::env::var_os("CARGO_FEATURE_RECLAIMED_SOFTDEVICE").is_some() {
-        "memory-sdc.x"
+    let native_dual = std::env::var_os("CARGO_FEATURE_RMK_BOOT_DUAL").is_some();
+    let native_noswap = std::env::var_os("CARGO_FEATURE_RMK_BOOT_NOSWAP").is_some();
+    assert!(
+        native_dual != native_noswap,
+        "Select exactly one rmk-boot layout"
+    );
+    let layout = if native_dual {
+        "memory-rmk-dual.x"
     } else {
-        "memory-factory.x"
+        "memory-rmk-noswap.x"
     };
-    let mut memory = std::fs::read_to_string(layout).unwrap();
-    if std::env::var_os("CARGO_FEATURE_STARTUP_WATCHDOG").is_some()
-        && std::env::var_os("CARGO_FEATURE_RECLAIMED_SOFTDEVICE").is_some()
-    {
-        memory.push_str(&std::fs::read_to_string("startup-recovery.x").unwrap());
-    }
+    let memory = std::fs::read_to_string(layout).unwrap();
     std::fs::write(out.join("memory.x"), memory).unwrap();
     println!("cargo:rustc-link-search={}", out.display());
-    for file in ["memory-factory.x", "memory-sdc.x", "startup-recovery.x"] {
+    for file in ["memory-rmk-dual.x", "memory-rmk-noswap.x"] {
         println!("cargo:rerun-if-changed={file}");
     }
-    for feature in ["STARTUP_WATCHDOG", "RECLAIMED_SOFTDEVICE"] {
+    for feature in ["RMK_BOOT_DUAL", "RMK_BOOT_NOSWAP"] {
         println!("cargo:rerun-if-env-changed=CARGO_FEATURE_{feature}");
     }
 }

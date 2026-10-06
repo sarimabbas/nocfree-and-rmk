@@ -11,15 +11,19 @@ pub fn default_keymap() -> [[[KeyAction; KEY_COUNT]; 1]; 2] {
         }
     });
     let mut function = [a!(Transparent); KEY_COUNT];
-    // Recovery belongs to Companion, not the typing keymap.
+    // Native RMK recovery runs on LEFT, including keys pressed on RIGHT.
+    function[position(0x29)] = KeyAction::Single(Action::KeyboardControl(
+        rmk::types::action::KeyboardAction::Bootloader,
+    ));
+    function[position(0x2b)] = KeyAction::Single(Action::User(10)); // Dongle profile; hold clears its bond.
+    function[position(0x2c)] = KeyAction::Single(Action::User(8)); // Toggle USB/BLE preference.
     function[1] = k!(BrightnessDown);
     function[2] = k!(BrightnessUp);
     function[3] = k!(MissionControl);
     #[cfg(feature = "backlight")]
     {
-        use rmk::types::action::LightAction;
-        function[5] = KeyAction::Single(Action::Light(LightAction::BacklightDown));
-        function[6] = KeyAction::Single(Action::Light(LightAction::BacklightUp));
+        function[5] = KeyAction::Single(Action::User(11));
+        function[6] = KeyAction::Single(Action::User(12));
     }
     function[position(0x40)] = k!(MediaPrevTrack);
     function[position(0x41)] = k!(MediaPlayPause);
@@ -43,9 +47,8 @@ pub fn default_keymap() -> [[[KeyAction; KEY_COUNT]; 1]; 2] {
         base[4] = k!(WwwSearch);
         #[cfg(feature = "backlight")]
         {
-            use rmk::types::action::LightAction;
-            base[5] = KeyAction::Single(Action::Light(LightAction::BacklightDown));
-            base[6] = KeyAction::Single(Action::Light(LightAction::BacklightUp));
+            base[5] = KeyAction::Single(Action::User(11));
+            base[6] = KeyAction::Single(Action::User(12));
         }
         base[position(0x40)] = k!(MediaPrevTrack);
         base[position(0x41)] = k!(MediaPlayPause);

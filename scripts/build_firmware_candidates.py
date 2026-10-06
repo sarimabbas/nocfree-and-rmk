@@ -113,6 +113,8 @@ def main():
     args = parser.parse_args()
     try:
         manifest = tomllib.loads((ROOT / 'firmware/Cargo.toml').read_text())
+        if 'rmk-boot-noswap' in manifest['features'] and not args.dry_run:
+            raise ValueError('Native RMK boot images are compile proofs only. Factory UF2 packaging is disabled for this spike.')
         rmk = manifest['dependencies']['rmk']['rev']
         before = source_hashes()
         for layout in LAYOUTS if args.all_layouts else (args.layout,):

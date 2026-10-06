@@ -166,6 +166,51 @@
       "name": "NOCFREE_BT_CLEAR",
       "title": "Clear the bond for the current Bluetooth profile",
       "shortName": "BT clear"
+    },
+    {
+      "name": "NOCFREE_TRANSPORT",
+      "title": "Toggle the preferred USB or wireless connection",
+      "shortName": "USB / BT"
+    },
+    {
+      "name": "NOCFREE_SPLIT_CLEAR",
+      "title": "Hold for five seconds to clear the split pairing",
+      "shortName": "Split pair"
+    },
+    {
+      "name": "NOCFREE_DONGLE",
+      "title": "Select the dongle; hold for five seconds to pair",
+      "shortName": "Dongle"
+    },
+    {
+      "name": "NOCFREE_LIGHT_DOWN",
+      "title": "Decrease the backlight brightness",
+      "shortName": "Light -"
+    },
+    {
+      "name": "NOCFREE_LIGHT_UP",
+      "title": "Increase the backlight brightness",
+      "shortName": "Light +"
+    },
+    {
+      "name": "NOCFREE_LIGHT_ON",
+      "title": "Turn the backlight on",
+      "shortName": "Light on"
+    },
+    {
+      "name": "NOCFREE_LIGHT_OFF",
+      "title": "Turn the backlight off",
+      "shortName": "Light off"
+    },
+    {
+      "name": "NOCFREE_LIGHT_TOGGLE",
+      "title": "Turn the backlight on or off",
+      "shortName": "Light toggle"
+    },
+    {
+      "name": "NOCFREE_LIGHT_CYCLE",
+      "title": "Select the next backlight brightness",
+      "shortName": "Light next"
     }
   ]
 }

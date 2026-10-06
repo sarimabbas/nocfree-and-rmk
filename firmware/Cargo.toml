@@ -10,34 +10,34 @@ layout-iso = ["nocfree-input/layout-iso"]
 layout-jis = ["nocfree-input/layout-jis"]
 layout-kr = ["nocfree-input/layout-kr"]
 default = ["defmt-logging", "runtime-recovery"]
-# Register-only early guard, adopted and fed by RMK in normal operation.
-startup-watchdog = ["rmk/watchdog"]
-# Normal production recovery: local USB DETACH and one startup/runtime watchdog.
-runtime-recovery = ["startup-watchdog", "rmk/runtime_dfu", "embassy-nrf/preserve-uicr"]
+# Native RMK watchdog; bootloader entry is stock USB DFU/key behavior.
+runtime-recovery = ["rmk/watchdog"]
+rmk-boot-dual = []
+rmk-boot-noswap = []
 # Normal builds use RMK defmt; --no-default-features callers select this explicitly.
 defmt-logging = ["rmk/defmt"]
 # Optional framework CDC logger; choose instead of defmt-logging.
 usb-log = ["rmk/usb_log", "dep:log", "log/max_level_warn", "log/release_max_level_warn"]
-# Raw battery ADC samples through the RMK CDC logger.
-battery-adc-diagnostic = ["rmk/usb_log", "dep:log", "log/max_level_error", "log/release_max_level_error"]
 # Mac media keys in the default keymap.
 mac-keymap = []
 # Wait for the expander interrupt while the scanner is idle.
 async-scanner = ["rmk/async_matrix", "dep:embedded-hal"]
 # Left blue connection indicator.
-status-led = ["rmk/status_led", "embassy-nrf/nfc-pins-as-gpio", "embassy-nrf/preserve-uicr"]
+status-led = ["embassy-nrf/nfc-pins-as-gpio", "dep:embedded-hal"]
 # Backlight PWM; select the board polarity below.
-backlight = ["rmk/backlight"]
+backlight = ["rmk/custom_message"]
 backlight-active-low = ["backlight"]
 backlight-active-high = ["backlight"]
-# Application at 0x1000; the receiver keeps the factory layout.
-reclaimed-softdevice = []
-left = ["rmk/usb_power_awake", "rmk/split", "rmk/dongle", "rmk/adafruit_bl", "rmk/vial", "rmk/host_lock", "rmk/vial_battery"]
-right = ["rmk/usb_power_awake", "rmk/split", "rmk/adafruit_bl"]
-receiver = ["rmk/dongle", "rmk/adafruit_bl", "rmk/vial", "rmk/host_lock"]
+left = ["rmk/split", "rmk/adafruit_bl", "rmk/dongle", "rmk/vial", "rmk/host_lock"]
+right = ["rmk/split", "rmk/adafruit_bl"]
+receiver = ["rmk/adafruit_bl", "rmk/dongle", "rmk/vial", "rmk/host_lock"]
 [dependencies]
+embassy-sync = "0.8"
+embassy-usb = "0.6"
+embassy-usb-driver = "0.2.2"
+embassy-futures = "0.1"
 log = { version = "0.4", optional = true }
-rmk = { git = "https://github.com/sarimabbas/rmk-nocfree", rev = "108067bf3577e5b46e9436522c6b805d2cf36fbd", default-features = false, features = ["storage", "nrf52833_ble"] }
+rmk = { git = "https://github.com/rmk-rs/rmk", rev = "434ab4d7d29d8e9ba689837358c8a44996ba38cc", default-features = false, features = ["storage", "nrf52833_ble"] }
 nocfree-input = { path = "../crates/nocfree-input" }
 nrf-sdc = { version = "0.4", features = ["defmt", "peripheral", "central", "nrf52833"] }
 nrf-mpsl = { version = "0.4", features = ["defmt", "critical-section-impl", "nrf52833"] }
@@ -57,10 +57,6 @@ codegen-units = 1
 opt-level = "z"
 lto = "fat"
 debug = 2
-
-# Published 0.11.0 source with nRF52833 SET_ADDRESS handling and buffered PWM updates.
-[patch.crates-io]
-embassy-nrf = { git = "https://github.com/sarimabbas/embassy-nrf-nocfree", rev = "ec44c260354cfd31f3bb6f0a05f82e7f58e8cdff" }
 
 [build-dependencies]
 serde_json = "1"
