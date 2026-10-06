@@ -93,6 +93,27 @@ Layout migration must also stop if flash erase fails. Current upstream initializ
 
 These proofs establish API access and software behavior. They do not establish a complete upstream firmware replacement. Before changing the pins, integrate the adapters, cross-build every role and layout, then check USB enumeration, recovery, brightness, saved remaps, pairing, disconnect releases, simultaneous input and wake latency on the keyboard.
 
+### Minimal dependency migration
+
+Ten adversarial review rounds tested each proposal against a concrete failure case. These decisions revise the earlier full-parity recommendation above; they are a plan, not changes to production firmware.
+
+| Round | Decision after review |
+| --- | --- |
+| 1. Status transport | Keep Vial. Add a distinct board HID interface, with early subscriptions and stale-data invalidation. Forward keyboard status to the receiver through RMK's public custom messages; its own link status stays local. |
+| 2. Recovery | Keep local USB recovery, the startup guard and RMK's watchdog. Validate the recovery drive after requesting entry. A responsive watchdog task does not prove that every task is healthy. |
+| 3. Pairing | Use upstream pairing with guided physical actions, link checks and typing tests. Replace the identity-based journey; remove targeted repair without claiming exact-peer verification. |
+| 4. Switch | Preserve the printed positions with a narrow absolute-output hook. Reject synthetic keys and false USB-state updates. Ignoring the switch remains an optional product change. |
+| 5. Sleep | Use stock idle sleep and explicit key-to-wake instructions. Remove the USB-awake extension only after testing the revised journeys. A zero idle timeout changes battery behavior and does not remove advertising timeouts. |
+| 6. Backlight | Put brightness, PWM, save debounce and split snapshots in a small board module using public RMK actions, storage and messages. Proposed controls use named Vial user actions and one step per press. Migrate old lighting assignments; do not silently drop them. |
+| 7. Chip drivers | Use published Embassy with the tested USB/PWM adapters. Retain the small no-write UICR change. Keep the factory bootloader. |
+| 8. Layout storage | Keep native layout identity and fail-closed erase handling. Smaller per-layout flash stores lack capacity and migration proof; a separate marker adds a crash protocol. |
+| 9. Dependencies | Pin exact tested sources. Local patches and temporary forks both require maintenance. Include their identity in candidate source hashes; do not vendor whole frameworks to hide a fork. |
+| 10. Combined design | Keep RMK's key, radio, bond and storage implementations. Board modules own physical outputs and Companion reports. Retain only changes with no small public-interface replacement. |
+
+Implement in three checkpoints: first USB/PWM and status/recovery adapters with current behavior; then board lighting/LEDs and ordinary pairing/sleep journeys; finally the smaller dependency patch set. The proposed simplifications remove held brightness repeat, one-click pairing repair and USB-power-specific wake behavior. Saved brightness, Vial remapping, all typing modes, meaningful switch positions and guarded recovery remain requirements. Test Vial export/import before choosing custom lighting actions over the small standard-code converter.
+
+The expected remaining RMK changes are absolute output selection, layout/error handling and the small macro-bounds guard until equivalent upstream behavior is tested. Embassy still needs UICR preservation. Zero forks depends on equivalent upstream changes; moving code to a local patch does not remove that dependency. Each checkpoint requires host tests, every role/layout build and physical acceptance before replacing the approved images. Do not change the bootloader or expand the reserved flash area.
+
 ## Board reference
 
 These GPIO mappings come from the [vendor porting guide](https://github.com/NocFreeKB/NocFree-and-zmk/blob/8bc5f6fe4531cadc62dc39aa92750fba90e009c4/README.md#4-pins-required-for-zmk-porting). The table uses Nordic GPIO names.
