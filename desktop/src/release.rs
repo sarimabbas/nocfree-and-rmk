@@ -15,7 +15,7 @@ use std::path::{Component, Path};
 #[cfg(not(feature = "firmware-trial"))]
 const MANIFEST_SHA256: &str = "e9da15aebe486cb879eb62c65628d85d12b33ca587cbb32564c17a0b824d70af";
 #[cfg(feature = "firmware-trial")]
-const MANIFEST_SHA256: &str = "c63a63fbc78ff361bc32d46f5a2824884cac8e7c4f2493a00d44b1b4aa700f34";
+const MANIFEST_SHA256: &str = "0bb860432b827ed6c84b82aff11d55d1baacd89bf40ac6b4c581958b891a6496";
 const MAX_FILE: u64 = 1024 * 1024;
 
 #[derive(Clone, Debug, Deserialize)]
