@@ -398,11 +398,11 @@ jobs:
             fi
             gh release upload "$tag" "${assets[@]}" --repo "$GITHUB_REPOSITORY"
             gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --draft --prerelease=false \
-              --target "$GITHUB_SHA" --title "NocFree RMK Companion ${VERSION}" \
+              --target "$GITHUB_SHA" --title "$tag" \
               --notes-file "$RUNNER_TEMP/input/${VERSION}.md"
           else
             gh release create "$tag" "${assets[@]}" "$RUNNER_TEMP/input/companion-firmware.zip" \
               --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
-              --title "NocFree RMK Companion ${VERSION}" --draft \
+              --title "$tag" --draft \
               --notes-file "$RUNNER_TEMP/input/${VERSION}.md"
           fi
