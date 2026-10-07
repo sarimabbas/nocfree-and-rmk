@@ -78,10 +78,10 @@ pub(crate) fn right_usb(devices: &UsbKey) -> UsbKey {
         .collect()
 }
 
-pub(crate) fn battery_available(devices: &UsbKey, recovery: &State) -> bool {
+pub(crate) fn battery_available(devices: &UsbKey, recovery: &State, bluetooth: bool) -> bool {
     let source = battery_source(devices);
     let Some((_, _, product, _)) = source.first() else {
-        return false;
+        return bluetooth && cfg!(target_os = "macos");
     };
     let recovering = match recovery {
         State::Identify(role) | State::Guiding(role, _) => Some(*role),
@@ -358,8 +358,16 @@ mod tests {
     #[test]
     fn right_recovery_keeps_left_battery_polling() {
         let (_, devices) = right_recovery();
-        assert!(battery_available(&devices, &State::Identify(Role::Right)));
-        assert!(!battery_available(&devices, &State::Identify(Role::Left)));
+        assert!(battery_available(
+            &devices,
+            &State::Identify(Role::Right),
+            false
+        ));
+        assert!(!battery_available(
+            &devices,
+            &State::Identify(Role::Left),
+            false
+        ));
     }
 
     #[test]

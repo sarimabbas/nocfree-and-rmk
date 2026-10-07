@@ -1,4 +1,4 @@
-//! Read producer-owned snapshots through Vial custom GET or legacy Rynk getters.
+//! Read producer-owned USB snapshots or RMK's standard Bluetooth Battery Services.
 #[path = "battery_vial.rs"]
 pub(crate) mod vial;
 use rynk::RynkDevice;
@@ -107,7 +107,7 @@ impl QueryGuard {
             .map_err(|_| "The previous battery check is still finishing.".to_owned())
     }
 }
-pub(crate) fn read() -> Result<Readings, String> {
+pub(crate) fn read(via_bluetooth: bool) -> Result<Readings, String> {
     let guard = QueryGuard::acquire()?;
     let started = Instant::now();
     let (send, receive) = mpsc::sync_channel(1);
@@ -116,7 +116,11 @@ pub(crate) fn read() -> Result<Readings, String> {
             // Keep the single-flight lease on the native worker, even if the UI
             // stops waiting while an OS call is still finishing.
             let _guard = guard;
-            let _ = send.send(read_on_worker(started));
+            let _ = send.send(if via_bluetooth {
+                read_bluetooth()
+            } else {
+                read_on_worker(started)
+            });
         }))
         .map_err(|_| "The keyboard battery worker stopped.".to_owned())?;
     receive
@@ -192,6 +196,58 @@ fn read_on_worker(started: Instant) -> Result<Readings, String> {
         .build()
         .map_err(|_| "Couldn't start the keyboard connection.".to_owned())?;
     runtime.block_on(read_usb(started))
+}
+
+#[cfg(target_os = "macos")]
+fn read_bluetooth() -> Result<Readings, String> {
+    use rynk::rmk_types::battery::ChargeState;
+    use std::process::Command;
+
+    let helper = std::env::current_exe()
+        .map_err(|_| "Couldn't locate the Bluetooth battery reader.")?
+        .with_file_name("nocfree-battery-bluetooth");
+    let output = Command::new(helper)
+        .output()
+        .map_err(|_| "Couldn't start the Bluetooth battery reader.")?;
+    if !output.status.success() || output.stdout.len() > 256 {
+        return Err("Couldn't read the Bluetooth batteries.".into());
+    }
+    #[derive(serde::Deserialize)]
+    #[serde(rename_all = "PascalCase")]
+    struct Levels {
+        left: Option<u8>,
+        right: Option<u8>,
+    }
+    let levels: Levels = serde_json::from_slice(&output.stdout)
+        .map_err(|_| "The Bluetooth battery reply was invalid.")?;
+    let level = |value: Option<u8>| -> Result<BatteryStatus, String> {
+        match value {
+            Some(0..=100) => Ok(BatteryStatus::Available {
+                level: value,
+                charge_state: ChargeState::Unknown,
+            }),
+            Some(_) => Err("The Bluetooth battery level was invalid.".into()),
+            None => Ok(BatteryStatus::Unavailable),
+        }
+    };
+    let left = level(levels.left)?;
+    let right = level(levels.right)?;
+    if matches!(left, BatteryStatus::Unavailable) {
+        return Err("The keyboard's Bluetooth battery service is unavailable.".into());
+    }
+    Ok(Readings {
+        left,
+        right,
+        right_connected: !matches!(right, BatteryStatus::Unavailable),
+        right_link_known: false,
+        left_mode: Some(crate::device_status::Mode::Bluetooth),
+        telemetry: None,
+    })
+}
+
+#[cfg(not(target_os = "macos"))]
+fn read_bluetooth() -> Result<Readings, String> {
+    Err("Bluetooth battery reading is unavailable on this system.".into())
 }
 
 async fn read_usb(started: Instant) -> Result<Readings, String> {

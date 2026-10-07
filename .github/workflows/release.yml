@@ -315,6 +315,7 @@ jobs:
           set -euo pipefail
           app="$RUNNER_TEMP/package/NocFree RMK Companion.app"
           sign=(--force --sign "$SIGN_IDENTITY" --options runtime --timestamp)
+          codesign "${sign[@]}" "$app/Contents/MacOS/nocfree-battery-bluetooth"
           codesign "${sign[@]}" "$app/Contents/MacOS/nocfree-companion"
           codesign "${sign[@]}" "$app"
           codesign --verify --deep --strict --verbose=2 "$app"

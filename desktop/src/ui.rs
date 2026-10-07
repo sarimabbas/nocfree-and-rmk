@@ -251,12 +251,15 @@ impl Companion {
                 cx.notify();
             });
             let mut battery_checked = None;
+            let mut battery_bluetooth = false;
+            let mut last_battery_generation = 0;
             let mut version_checked: Option<Instant> = None;
             let mut bluetooth_checked: Option<Instant> = None;
             type BatteryConnection = (
                 u64,
                 crate::device_status::UsbKey,
                 crate::device_status::UsbKey,
+                bool,
             );
             type BatteryQuery = (
                 Instant,
@@ -287,6 +290,13 @@ impl Companion {
                         .await;
                     let _ = this.update(cx, |this, cx| {
                         if let Some((rmk, factory)) = connected {
+                            if this.bluetooth_connected != rmk
+                                && crate::device_status::battery_source(&this.device_key).is_empty()
+                            {
+                                this.battery_generation = this.battery_generation.wrapping_add(1);
+                                this.battery_current = [false; 2];
+                                this.telemetry_seen = None;
+                            }
                             this.bluetooth_connected = rmk;
                             this.factory_bluetooth_connected = factory;
                             this.bluetooth_seen = Some(Instant::now());
@@ -400,14 +410,21 @@ impl Companion {
                                 if key.0 != this.battery_generation
                                     || key.1
                                         != crate::device_status::battery_source(&this.device_key)
+                                    || key.3
+                                        != (!crate::device_status::left_usb(&this.device_key)
+                                            && this.bluetooth_connected)
                                 {
                                     return;
                                 }
                                 match result {
                                     Ok(readings) => {
-                                        let readings = readings
-                                            .retain_for_usb_change(&key.2, &this.device_key)
-                                            .expect("same battery producer");
+                                        let readings = if key.3 {
+                                            readings
+                                        } else {
+                                            readings
+                                                .retain_for_usb_change(&key.2, &this.device_key)
+                                                .expect("same battery producer")
+                                        };
                                         this.battery_levels.observe(readings);
                                         this.battery_current = readings.known_levels();
                                         this.left_mode = readings.left_mode;
@@ -467,32 +484,44 @@ impl Companion {
                     });
                     version_checked = Some(Instant::now());
                 }
+                let bluetooth_battery = this
+                    .update(cx, |this, _| {
+                        !crate::device_status::left_usb(&this.device_key)
+                            && this.bluetooth_connected
+                    })
+                    .unwrap_or(false);
                 let battery_idle = this.update(cx, |this, _| {
                     !this.operation.busy()
-                        && (this.navigation.setup()
-                            || this.install_checks_active()
-                            || this.backup_state.state() == BackupState::Returning
-                            || this.firmware_view().is_some_and(|view| {
-                                !view.needs_recovery && !view.can_transfer && !view.complete
-                            })
-                            || !matches!(
-                                this.navigation.page(),
-                                Page::Firmware | Page::Restore | Page::Pairing
-                            ))
                         && crate::device_status::battery_available(
                             &this.device_key,
                             &this.rescue.state(),
+                            this.bluetooth_connected,
                         )
                 });
+                let generation = this
+                    .update(cx, |this, _| this.battery_generation)
+                    .unwrap_or(last_battery_generation);
+                if battery_bluetooth != bluetooth_battery || last_battery_generation != generation {
+                    battery_checked = None;
+                    battery_bluetooth = bluetooth_battery;
+                    last_battery_generation = generation;
+                }
                 if matches!(battery_idle, Ok(true))
                     && battery_query.is_none()
-                    && battery_checked
-                        .is_none_or(|last: Instant| last.elapsed() >= Duration::from_secs(3))
+                    && battery_checked.is_none_or(|last: Instant| {
+                        last.elapsed()
+                            >= if bluetooth_battery {
+                                Duration::from_secs(60)
+                            } else {
+                                Duration::from_secs(3)
+                            }
+                    })
                     && let Ok(key) = this.update(cx, |this, _| {
                         (
                             this.battery_generation,
                             crate::device_status::battery_source(&this.device_key),
                             this.device_key.clone(),
+                            bluetooth_battery,
                         )
                     })
                 {
@@ -500,7 +529,8 @@ impl Companion {
                     battery_query = Some((
                         started,
                         key,
-                        cx.background_executor().spawn(async { battery::read() }),
+                        cx.background_executor()
+                            .spawn(async move { battery::read(bluetooth_battery) }),
                     ));
                     battery_checked = Some(started);
                 }
@@ -2152,7 +2182,7 @@ impl Companion {
             recovery_locations: self.recovery_locations,
             levels: if self
                 .telemetry_seen
-                .is_some_and(|t| t.elapsed() < Duration::from_secs(45))
+                .is_some_and(|t| t.elapsed() < Duration::from_secs(75))
             {
                 crate::battery::Levels {
                     left: self.battery_levels.left.filter(|_| self.battery_current[0]),
@@ -2172,7 +2202,7 @@ impl Companion {
             telemetry: self.telemetry,
             links_fresh: self
                 .telemetry_seen
-                .is_some_and(|t| t.elapsed() < Duration::from_secs(45)),
+                .is_some_and(|t| t.elapsed() < Duration::from_secs(75)),
         }
         .derive()
     }

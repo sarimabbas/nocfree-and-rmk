@@ -64,6 +64,8 @@ mkdir -p "$bundle/Contents/Resources/Firmware"
 python3 ../scripts/copy_companion_firmware.py "$firmware" "$bundle/Contents/Resources/Firmware"
 cp "$binary" "$bundle/Contents/MacOS/nocfree-companion.new"
 mv "$bundle/Contents/MacOS/nocfree-companion.new" "$bundle/Contents/MacOS/nocfree-companion"
+/usr/bin/swiftc -O -framework CoreBluetooth battery-bluetooth.swift -o "$bundle/Contents/MacOS/nocfree-battery-bluetooth" \
+    -Xlinker -sectcreate -Xlinker __TEXT -Xlinker __info_plist -Xlinker battery-bluetooth.plist
 cat > "$bundle/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -72,6 +74,7 @@ cat > "$bundle/Contents/Info.plist" <<PLIST
 <key>CFBundleIdentifier</key><string>$identifier</string>
 <key>CFBundleName</key><string>$name</string>
 <key>NSRemovableVolumesUsageDescription</key><string>Save a backup and install firmware on your keyboard’s recovery drive.</string>
+<key>NSBluetoothAlwaysUsageDescription</key><string>Show the keyboard's battery levels over Bluetooth.</string>
 <key>CFBundleDisplayName</key><string>$name</string>
 <key>CFBundleIconFile</key><string>Companion.icns</string>
 <key>CFBundlePackageType</key><string>APPL</string>
@@ -82,6 +85,7 @@ cat > "$bundle/Contents/Info.plist" <<PLIST
 </dict></plist>
 PLIST
 /usr/bin/plutil -lint "$bundle/Contents/Info.plist"
+/usr/bin/codesign --force --sign - "$bundle/Contents/MacOS/nocfree-battery-bluetooth"
 /usr/bin/codesign --force --sign - "$bundle"
 if [ "$trial" = 0 ] && [ "${REGISTER_APP:-1}" = 1 ]; then
 # Refresh this bundle only so Launch Services sees the new name and Dock icon.
