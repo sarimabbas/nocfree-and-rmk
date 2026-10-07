@@ -41,8 +41,6 @@ To return to the original software, select **Restore factory** and follow the ap
 - [x] Change keys with Vial
 - [x] Backlight brightness
 
-![Check the keyboard connections](docs/images/check-pairing.png)
-
 ## Use the keyboard
 
 The left switch controls power. With USB unplugged, **top or bottom turns LEFT on** and **middle turns it off**. Turn RIGHT on to use both halves. Use the keys below to choose a connection; the switch position does not choose it.
