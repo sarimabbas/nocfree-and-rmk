@@ -68,15 +68,15 @@ fn tooltip(
                 .into(),
             );
         }
-    } else if let Some(state) = battery {
-        if let Some(status) = match state.link_connected {
+    } else if let Some(state) = battery
+        && let Some(status) = (match state.link_connected {
             Some(true) => Some("Connected to left"),
             Some(false) => Some("Not connected"),
             None if usb_attachment => Some("USB connected"),
             None => None,
-        } {
-            facts.push(status.into());
-        }
+        })
+    {
+        facts.push(status.into());
     }
     if let Some(state) = battery {
         if state.usb_connected

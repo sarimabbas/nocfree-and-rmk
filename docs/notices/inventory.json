@@ -1,7 +1,7 @@
 {
   "desktop": {
-    "cargo_lock_sha256": "68a7817db8540281ed1c0d193b14cbe25f698175e4782afbbeb2ff5ef2dfd072",
-    "cargo_manifest_sha256": "73e511bbe1775ee3994d2204928304e803bda5242bc4069f94a3245c8b5d8102",
+    "cargo_lock_sha256": "a6ee7e9159191dd279f4593131933fcc84f42c72dd83242dc8056b41da93ff8d",
+    "cargo_manifest_sha256": "45a025bddbb4f8f71bd53344993b72c5eea9639af39fd0d21995d2c24682597c",
     "packages": [
       {
         "license": "MIT OR Apache-2.0",
@@ -16325,8 +16325,8 @@
     "features": "all-features (conservative dependency superset)",
     "graphs": [
       {
-        "cargo_lock_sha256": "e20dc34acffc788e01503e3322ced7337e72da9d897dd7e403ab553ae5298fb5",
-        "cargo_manifest_sha256": "075dc8d4090b7e848f695de616042414f965c0959385b8e07dd349940b296cb2",
+        "cargo_lock_sha256": "244d80288746790d3056cf3145c24304788a088a4fdf8936de86115140ba0f7e",
+        "cargo_manifest_sha256": "3d3b427cde4261a3fd88c85e094691e3d6b35b14b7241264ae2e995cf5702d66",
         "packages": [
           {
             "license": "0BSD OR MIT OR Apache-2.0",
@@ -21638,21 +21638,21 @@
           }
         ],
         "rmk_revision": "434ab4d7d29d8e9ba689837358c8a44996ba38cc",
-        "source_commit": "fccc29c3c74f8ce72540055690adbc6216b079db"
+        "source_commit": "40a2e42b5427ffb9c44674622ebf48f3853e8d63"
       }
     ],
     "roles": {
       "left": {
         "rmk_revision": "434ab4d7d29d8e9ba689837358c8a44996ba38cc",
-        "source_commit": "fccc29c3c74f8ce72540055690adbc6216b079db"
+        "source_commit": "40a2e42b5427ffb9c44674622ebf48f3853e8d63"
       },
       "receiver": {
         "rmk_revision": "434ab4d7d29d8e9ba689837358c8a44996ba38cc",
-        "source_commit": "fccc29c3c74f8ce72540055690adbc6216b079db"
+        "source_commit": "40a2e42b5427ffb9c44674622ebf48f3853e8d63"
       },
       "right": {
         "rmk_revision": "434ab4d7d29d8e9ba689837358c8a44996ba38cc",
-        "source_commit": "fccc29c3c74f8ce72540055690adbc6216b079db"
+        "source_commit": "40a2e42b5427ffb9c44674622ebf48f3853e8d63"
       }
     },
     "target": "thumbv7em-none-eabihf"
