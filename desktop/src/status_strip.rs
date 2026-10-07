@@ -35,6 +35,10 @@ fn tooltip(
     battery: Option<Peripheral>,
     recovery: bool,
 ) -> String {
+    let usb_attachment = !recovery
+        && battery.is_some_and(|b| b.usb_connected)
+        && (connection == Some(Connection::Unknown)
+            || connection.is_none() && battery.is_some_and(|b| b.link_connected.is_none()));
     let mut facts = vec![label.to_owned()];
     if recovery {
         facts.push("Recovery mode".into());
@@ -57,7 +61,8 @@ fn tooltip(
                 Connection::Bluetooth => "Bluetooth connected",
                 Connection::Dongle => "Connected through dongle",
                 Connection::Disconnected => "Not connected",
-                Connection::Unknown => "Connection unavailable",
+                Connection::Unknown if usb_attachment => "USB connected",
+                Connection::Unknown => "Typing connection not reported",
             }
             .into(),
         );
@@ -66,13 +71,17 @@ fn tooltip(
             match state.link_connected {
                 Some(true) => "Connected to left",
                 Some(false) => "Not connected",
-                None => "Connection unavailable",
+                None if usb_attachment => "USB connected",
+                None => "Wireless link not reported",
             }
             .into(),
         );
     }
     if let Some(state) = battery {
-        if state.usb_connected && (recovery || connection != Some(Connection::Usb)) {
+        if state.usb_connected
+            && !usb_attachment
+            && (recovery || connection != Some(Connection::Usb))
+        {
             facts.push("USB power connected".into());
         }
         if state.level.is_some()
@@ -181,6 +190,7 @@ pub fn render(
         Connection::Bluetooth => (IconName::Bluetooth, blue),
         Connection::Dongle => (IconName::SatelliteDish, green),
         Connection::Disconnected => (IconName::Unplug, plain),
+        Connection::Unknown if left.usb_connected => (IconName::Plug, plain),
         Connection::Unknown => (IconName::CircleDashed, plain),
     };
     let left_segment = segment(
@@ -249,6 +259,19 @@ mod tests {
         }
     }
     #[test]
+    fn usb_attachment_does_not_report_an_unavailable_connection() {
+        let half = Peripheral {
+            usb_connected: true,
+            ..Default::default()
+        };
+        for (label, route) in [("Left", Some(Connection::Unknown)), ("Right", None)] {
+            let text = tooltip(label, route, Some(half), false);
+            assert!(text.contains("USB connected"), "{text}");
+            assert!(!text.contains("Connection unavailable"), "{text}");
+            assert!(!text.contains("Wired connected"), "{text}");
+        }
+    }
+    #[test]
     fn tooltip_matrix_keeps_route_power_and_recovery_independent() {
         for mode in [
             None,
@@ -274,7 +297,10 @@ mod tests {
                         assert_eq!(text.matches("Battery 100%").count(), 1);
                         assert_eq!(
                             text.matches("USB power connected").count(),
-                            usize::from(usb && (recovery || route != Connection::Usb))
+                            usize::from(
+                                usb && (recovery
+                                    || !matches!(route, Connection::Usb | Connection::Unknown))
+                            )
                         );
                         if recovery {
                             assert_eq!(
@@ -313,7 +339,7 @@ mod tests {
         );
         assert_eq!(
             tooltip("Right", None, Some(Peripheral::default()), false),
-            "Right · Connection unavailable"
+            "Right · Wireless link not reported"
         );
         assert_eq!(
             tooltip("Dongle", Some(Connection::Disconnected), None, true),

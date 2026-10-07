@@ -1543,6 +1543,10 @@ impl Companion {
                 );
                 self.backup_state
                     .transition(BackupEvent::RecoveryFinished(accepted));
+                if accepted {
+                    // Next on the recovery result saves the copy; no empty handoff screen.
+                    self.save(cx);
+                }
             } else {
                 self.rescue.complete(attempt, role, Ok(()));
             }
@@ -1557,10 +1561,15 @@ impl Companion {
         }
         if let Some(journey) = self.pending_firmware.take() {
             self.firmware = Some(journey);
+            if !self.firmware.as_mut().is_some_and(FirmwareJourney::next) {
+                self.manual_advance = true;
+                self.advance_firmware(cx);
+            }
         } else if let Some(journey) = self.pending_backup.take() {
             self.backup_state
                 .transition(BackupEvent::Observed(journey.state()));
             self.session = Some(journey);
+            self.backup_state.next();
         } else if self.pending_recovery.is_some() || self.pending_procedure.is_some() {
             self.recovery_next(cx);
         } else if self.firmware_page() {
@@ -1576,6 +1585,11 @@ impl Companion {
                 return;
             }
             if self.session.as_mut().is_some_and(Journey::next_return) {
+                if let Some(journey) = self.session.as_ref() {
+                    self.backup_state
+                        .transition(BackupEvent::Observed(journey.state()));
+                    self.backup_state.next();
+                }
                 cx.notify();
                 return;
             }
@@ -1687,15 +1701,18 @@ impl Companion {
             .when_some(next, |row, next| row.child(next))
     }
     fn completed_operation_screen(&self, cx: &mut Context<Self>) -> JourneyScreen {
+        let (role, title, instruction) = if let Some(journey) = &self.pending_firmware {
+            let view = journey.view();
+            (Some(view.role), view.title, view.instruction)
+        } else {
+            (
+                self.backup_component(),
+                "Your firmware copy is saved".into(),
+                "Click Next for restart instructions.".into(),
+            )
+        };
         JourneyScreen {
-            body: recovery_guide_status(
-                None,
-                "Step complete",
-                "This step is complete. Click Next to continue.",
-                None,
-                true,
-                cx,
-            ),
+            body: recovery_guide_status(role, title, instruction, None, true, cx),
             actions: Some(
                 self.footer(
                     Some(
@@ -2114,7 +2131,11 @@ impl Companion {
         crate::device_status::Observation {
             devices: &self.device_key,
             recovery_locations: self.recovery_locations,
-            levels: self.battery_levels,
+            levels: if self.telemetry_seen.is_some() {
+                self.battery_levels
+            } else {
+                crate::battery::Levels::default()
+            },
             left_mode: self.left_mode,
             bluetooth_connected: self.bluetooth_connected,
             dongle_connected: self.dongle_connected,
