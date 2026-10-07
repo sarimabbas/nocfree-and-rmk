@@ -661,8 +661,7 @@ impl Companion {
             (
                 match install.stage() {
                     InstallStage::Installing => "installing",
-                    InstallStage::Setup(_) => "mode-setup",
-                    InstallStage::Typing(_) => "typing",
+                    InstallStage::Checking(_) => "typing",
                     InstallStage::Complete => "complete",
                     InstallStage::Cancelled => "cancelled",
                     InstallStage::Failed(_) => "failed",
@@ -768,7 +767,7 @@ impl Companion {
             .as_ref()
             .filter(|_| self.install_checks_active())
             .and_then(|install| match install.stage() {
-                InstallStage::Setup(mode) | InstallStage::Typing(mode) => Some(match mode {
+                InstallStage::Checking(mode) => Some(match mode {
                     crate::device_status::Mode::Wired => diagnostics::ConnectionMode::Wired,
                     crate::device_status::Mode::Bluetooth => diagnostics::ConnectionMode::Bluetooth,
                     crate::device_status::Mode::Dongle => diagnostics::ConnectionMode::Dongle,
@@ -1196,13 +1195,10 @@ impl Companion {
         if self.navigation.choosing() {
             use crate::scope_presence::Identification;
             let identification = self.usb_identification.state();
-            if let Identification::Disconnect(role)
-            | Identification::Connect(role)
-            | Identification::Complete(role) = identification
+            if let Identification::Disconnect(role) | Identification::Connect(role) = identification
             {
                 let ticket = self.usb_identification.ticket();
-                let done = matches!(identification, Identification::Complete(_));
-                let ready = done || self.usb_identification.can_next();
+                let ready = self.usb_identification.can_next();
                 let message = match identification {
                     Identification::Disconnect(_) => {
                         identification_disconnect_instruction(role, self.scope_presence())
@@ -1213,7 +1209,6 @@ impl Companion {
                     Identification::Connect(RecoveryRole::Receiver) => {
                         "Reconnect the dongle. Leave the other USB cables as they are.".into()
                     }
-                    Identification::Complete(_) => "This part is identified.".into(),
                     _ => "Connect the selected part by USB.".into(),
                 };
                 return JourneyScreen {
@@ -1257,11 +1252,7 @@ impl Companion {
                                     button("identify-next", "Next").disabled(!ready).on_click(
                                         cx.listener(move |this, _, _, cx| {
                                             if this.usb_identification.ticket() == ticket {
-                                                if done {
-                                                    this.usb_identification.cancel();
-                                                } else {
-                                                    this.usb_identification.next(ticket);
-                                                }
+                                                this.usb_identification.next(ticket);
                                                 this.refresh_scope_presence();
                                                 cx.notify();
                                             }
@@ -1783,14 +1774,8 @@ impl Companion {
                         .is_some_and(|j| j.state() == crate::journey::State::Guiding)
                         && self.rescue_cancel.is_none())
                     || self.backup_state.state() == BackupState::Complete);
-        let mut screen = recovery_guide_status(
-            self.backup_component(),
-            title,
-            instruction,
-            None,
-            complete || self.session.as_ref().is_some_and(Journey::can_next_return),
-            cx,
-        );
+        let mut screen =
+            recovery_guide_status(self.backup_component(), title, instruction, None, ready, cx);
         let next = if complete {
             let rendered_ticket = self.peripherals.as_ref().map(|batch| batch.ticket());
             Some(
@@ -2123,7 +2108,7 @@ impl Companion {
             && self.install.as_ref().is_some_and(|m| {
                 matches!(
                     m.stage(),
-                    InstallStage::Setup(_) | InstallStage::Typing(_) | InstallStage::Complete
+                    InstallStage::Checking(_) | InstallStage::Complete
                 )
             })
     }
@@ -2225,24 +2210,11 @@ impl Companion {
             .unwrap_or(InstallStage::Installing);
         match stage {
             InstallStage::Installing => self.firmware_screen(cx),
-            InstallStage::Setup(mode) | InstallStage::Typing(mode) => {
-                let typing = matches!(stage, InstallStage::Typing(_));
-                let ticket = self.install.as_ref().expect("active install").ticket();
-                let instruction = if typing
-                    && mode == crate::device_status::Mode::Wired
-                    && self.install.as_ref().is_some_and(|machine| {
-                        machine.target() == crate::install_journey::Target::Rmk
-                    }) {
-                    "Keep LEFT USB connected. If keys do not type, press LEFT Fn + Space once to select USB."
-                } else if typing {
-                    "Keep this connection while you type the test text."
-                } else {
-                    self.install
-                        .as_ref()
-                        .expect("active install")
-                        .target()
-                        .instruction(mode)
-                };
+            InstallStage::Checking(mode) => {
+                let machine = self.install.as_ref().expect("active install");
+                let typing_ready = machine.typing_ready();
+                let ticket = machine.ticket();
+                let instruction = machine.target().instruction(mode);
                 let mut body = div()
                     .flex()
                     .flex_col()
@@ -2253,25 +2225,10 @@ impl Companion {
                         div()
                             .text_center()
                             .text_color(cx.theme().muted_foreground)
-                            .child(format!(
-                                "{} · {}",
-                                mode.label(),
-                                if typing {
-                                    "Typing test"
-                                } else {
-                                    "Set up connection"
-                                }
-                            )),
+                            .child(format!("{} · Typing test", mode.label())),
                     )
-                    .child(instruction_line(
-                        instruction,
-                        typing || self.install.as_ref().is_some_and(InstallMachine::can_next),
-                        cx,
-                    ));
-                if mode == crate::device_status::Mode::Bluetooth
-                    && !typing
-                    && !cfg!(target_os = "linux")
-                {
+                    .child(instruction_line(instruction, typing_ready, cx));
+                if mode == crate::device_status::Mode::Bluetooth && !cfg!(target_os = "linux") {
                     body = body.child(
                         Button::new("open-bluetooth-settings")
                             .secondary()
@@ -2287,7 +2244,7 @@ impl Companion {
                             })),
                     );
                 }
-                if typing {
+                {
                     if self
                         .typing_input
                         .as_ref()
@@ -2305,7 +2262,9 @@ impl Companion {
                                     cx.notify();
                                 }
                             });
-                        input.focus_handle(cx).focus(window, cx);
+                        if typing_ready {
+                            input.focus_handle(cx).focus(window, cx);
+                        }
                         self.typing_input = Some((ticket, input, subscription));
                     }
                     let input = &self.typing_input.as_ref().expect("typing field").1;
@@ -2319,18 +2278,9 @@ impl Companion {
                         input.update(cx, |state, cx| state.set_value(expected, window, cx));
                     }
                     body = body.child(instruction_line("Type qwert on the left half, then press `space`. Hold left Shift while you type HJKL on the right half. Release Shift, press `space`, then type h on the right half.", self.install.as_ref().is_some_and(InstallMachine::can_next), cx))
-                        .child(Input::new(input));
-                } else {
-                    // A lost route invalidates the old confirmation and its widget together.
-                    self.typing_input = None;
-                    if self.install.as_ref().is_some_and(|m| m.can_next()) {
-                        body = body.child(
-                            div()
-                                .text_center()
-                                .text_color(cx.theme().muted_foreground)
-                                .child("Confirm this setup, then click Next."),
-                        );
-                    }
+                        .child(Input::new(input).disabled(!typing_ready));
+                }
+                if !typing_ready {
                     if self.bluetooth_seen.is_none() {
                         body = body.child(instruction_line(
                             if cfg!(target_os = "linux") {
@@ -2339,10 +2289,9 @@ impl Companion {
                                 "Could not check Bluetooth. Open Bluetooth settings and turn on Bluetooth."
                             }, false, cx,
                         ));
-                    } else if let Some(label) = pending_wait_label(
-                        self.install.as_ref().is_some_and(InstallMachine::can_next),
-                        "Waiting for this connection…",
-                    ) {
+                    } else if let Some(label) =
+                        pending_wait_label(typing_ready, "Waiting for this connection…")
+                    {
                         body = body.child(waiting_indicator(label, cx));
                     }
                 }
@@ -3211,7 +3160,7 @@ impl Render for Companion {
                     Some(InstallStage::Installing) | None => {
                         self.firmware_view().map_or(0, |v| v.step)
                     }
-                    Some(InstallStage::Setup(_)) | Some(InstallStage::Typing(_)) => 3,
+                    Some(InstallStage::Checking(_)) => 3,
                     Some(InstallStage::Complete) => 4,
                     _ => 0,
                 };

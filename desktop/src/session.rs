@@ -338,9 +338,7 @@ impl Session {
             self.wired_ack = true;
         }
     }
-    pub fn confirm_power_on(&mut self) {
-        self.confirm_power_on_at(Instant::now());
-    }
+    #[cfg(test)]
     fn confirm_power_on_at(&mut self, now: Instant) {
         if matches!(self.return_flow.phase(), Some(ReturnPhase::PowerOn))
             && !self.connection_present
@@ -364,35 +362,27 @@ impl Session {
         self.return_flow.phase().map(|phase| match phase {
             ReturnPhase::Disconnect if self.role == Some(Role::Receiver) => (
                 "Unplug the USB dongle".into(),
-                "Unplug it from your computer.".into(),
+                "Unplug it from your computer for five seconds.".into(),
             ),
             ReturnPhase::Disconnect if self.role == Some(Role::Right) => (
                 "Turn the right half OFF".into(),
                 if self.status.starts_with("It stayed in recovery") {
-                    "The right half stayed in recovery. Turn its switch OFF, then unplug its USB cable. Leave it OFF until prompted to turn it ON.".into()
+                    "The right half stayed in recovery. Turn its switch OFF, then unplug its USB cable for five seconds. Leave it OFF until prompted to turn it ON.".into()
                 } else {
-                    "Turn the right half’s switch OFF, then unplug its USB cable. Leave it OFF until prompted to turn it ON.".into()
+                    "Turn the right half’s switch OFF, then unplug its USB cable for five seconds. Leave it OFF until prompted to turn it ON.".into()
                 },
             ),
             ReturnPhase::Disconnect if self.rmk_left => (
                 "Unplug the left half".into(),
-                "Set its switch to WIRED, then unplug its USB cable.".into(),
+                "Set its switch to WIRED, then unplug its USB cable for five seconds.".into(),
             ),
             ReturnPhase::Disconnect => (
                 "Unplug the left half".into(),
                 if self.status.starts_with("It stayed in recovery") {
-                    "It stayed in recovery. Leave its switch in WIRED, then unplug its USB cable.".into()
+                    "It stayed in recovery. Leave its switch in WIRED, then unplug its USB cable for five seconds.".into()
                 } else {
-                    "Leave its switch in WIRED, then unplug its USB cable.".into()
+                    "Leave its switch in WIRED, then unplug its USB cable for five seconds.".into()
                 },
-            ),
-            ReturnPhase::OffWait { since } if self.role == Some(Role::Right) => (
-                "Keep the right half OFF".into(),
-                format!("Keep the right switch OFF and USB unplugged for {} more seconds. We’ll prompt you to turn it ON next.", remaining(since, 5)),
-            ),
-            ReturnPhase::OffWait { since } => (
-                "Keep it unplugged".into(),
-                format!("Wait {} more seconds.", remaining(since, 5)),
             ),
             ReturnPhase::PowerOn if self.rmk_left => (
                 "Switch the left half to Bluetooth".into(),
@@ -699,7 +689,7 @@ mod tests {
                 role: Some(Role::Left),
                 rmk_left: true,
                 legacy_left_start: legacy,
-                return_flow: ReturnFlow::at(super::ReturnPhase::OffWait { since: now }),
+                return_flow: ReturnFlow::at(super::ReturnPhase::Disconnect),
                 ..Default::default()
             };
             session.advance_return(now);
@@ -1250,7 +1240,7 @@ mod tests {
         s.observe_advance_at(Ok(Snapshot::default()), now + Duration::from_secs(4));
         assert!(matches!(
             s.return_flow.phase(),
-            Some(ReturnPhase::OffWait { .. })
+            Some(ReturnPhase::Disconnect)
         ));
         s.observe_advance_at(Ok(normal()), now + Duration::from_secs(4));
         assert!(matches!(
@@ -1336,6 +1326,22 @@ mod tests {
             Some(ReturnPhase::Disconnect)
         ));
         assert!(!s.view().return_complete);
+        s.observe_advance_at(Ok(Snapshot::default()), now + Duration::from_secs(10));
+        assert!(s.view().error.is_some());
+        let mut right = normal();
+        right.devices[0].vendor = 0x4c4b;
+        right.devices[0].product = 0x4651;
+        right.devices[0].name = "NocFree Input Probe Right Mac".into();
+        s.observe_advance_at(Ok(right), now + Duration::from_secs(11));
+        assert!(s.view().error.is_none());
+        s.observe_advance_at(Ok(Snapshot::default()), now + Duration::from_secs(12));
+        s.observe_advance_at(Ok(Snapshot::default()), now + Duration::from_secs(16));
+        assert!(matches!(
+            s.return_flow.phase(),
+            Some(ReturnPhase::Disconnect)
+        ));
+        s.observe_advance_at(Ok(Snapshot::default()), now + Duration::from_secs(17));
+        assert!(s.view().needs_power_on_ack);
     }
     #[test]
     fn rmk_identity_does_not_guess_a_shortcut_and_legacy_return_still_checks_observations() {

@@ -1,7 +1,7 @@
 {
   "desktop": {
-    "cargo_lock_sha256": "277c0d9175198d452cdd23311da49dcdba94d4e3dffd304c9d156c33db4eb0ff",
-    "cargo_manifest_sha256": "9f40a6f867bbddc794246d91e1a535a6bbe747ca09788ccfd3a91e5c5300c9b1",
+    "cargo_lock_sha256": "68a7817db8540281ed1c0d193b14cbe25f698175e4782afbbeb2ff5ef2dfd072",
+    "cargo_manifest_sha256": "73e511bbe1775ee3994d2204928304e803bda5242bc4069f94a3245c8b5d8102",
     "packages": [
       {
         "license": "MIT OR Apache-2.0",
@@ -16325,8 +16325,8 @@
     "features": "all-features (conservative dependency superset)",
     "graphs": [
       {
-        "cargo_lock_sha256": "7c7ac2ac88e4a51fd7d1562d9e2a93b83cc9ffa6ad11d776b7f368da2a9470db",
-        "cargo_manifest_sha256": "a886f85f4dac614d46a4e2bc387f4bf2cff4a32e470e3df7ef506b2060a60620",
+        "cargo_lock_sha256": "e20dc34acffc788e01503e3322ced7337e72da9d897dd7e403ab553ae5298fb5",
+        "cargo_manifest_sha256": "075dc8d4090b7e848f695de616042414f965c0959385b8e07dd349940b296cb2",
         "packages": [
           {
             "license": "0BSD OR MIT OR Apache-2.0",
@@ -21638,21 +21638,21 @@
           }
         ],
         "rmk_revision": "434ab4d7d29d8e9ba689837358c8a44996ba38cc",
-        "source_commit": "880c967b2e9b51806ef18f40acfe6ee0b8b53c3e"
+        "source_commit": "fccc29c3c74f8ce72540055690adbc6216b079db"
       }
     ],
     "roles": {
       "left": {
         "rmk_revision": "434ab4d7d29d8e9ba689837358c8a44996ba38cc",
-        "source_commit": "880c967b2e9b51806ef18f40acfe6ee0b8b53c3e"
+        "source_commit": "fccc29c3c74f8ce72540055690adbc6216b079db"
       },
       "receiver": {
         "rmk_revision": "434ab4d7d29d8e9ba689837358c8a44996ba38cc",
-        "source_commit": "880c967b2e9b51806ef18f40acfe6ee0b8b53c3e"
+        "source_commit": "fccc29c3c74f8ce72540055690adbc6216b079db"
       },
       "right": {
         "rmk_revision": "434ab4d7d29d8e9ba689837358c8a44996ba38cc",
-        "source_commit": "880c967b2e9b51806ef18f40acfe6ee0b8b53c3e"
+        "source_commit": "fccc29c3c74f8ce72540055690adbc6216b079db"
       }
     },
     "target": "thumbv7em-none-eabihf"

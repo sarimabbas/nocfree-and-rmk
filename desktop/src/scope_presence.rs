@@ -29,8 +29,6 @@ pub(crate) enum Identification {
     Idle,
     Disconnect(Role),
     Connect(Role),
-    Complete(Role),
-    Cancelled,
 }
 
 mod identification_machine {
@@ -135,7 +133,7 @@ mod identification_machine {
                 self.bindings[index(*role)] = Some(location);
                 self.identities[index(*role)] = Some((vendor, product, name));
                 self.ticket = generation();
-                return Transition(State::complete(*role));
+                return Transition(State::idle());
             }
             let mut candidate = None;
             if let Some(unassigned) = self.fresh(event)
@@ -160,21 +158,6 @@ mod identification_machine {
             }
             Super
         }
-        #[state(superstate = "root")]
-        fn complete(&mut self, role: &mut Role, event: &Event<'_>) -> Outcome<State> {
-            self.fresh(event);
-            if self.bindings[index(*role)].is_none() {
-                self.ticket = generation();
-                Transition(State::idle())
-            } else {
-                Super
-            }
-        }
-        #[state(superstate = "root")]
-        fn cancelled(&mut self, event: &Event<'_>) -> Outcome<State> {
-            self.fresh(event);
-            Super
-        }
         #[superstate]
         fn root(&mut self, event: &Event<'_>) -> Outcome<State> {
             match event {
@@ -188,7 +171,7 @@ mod identification_machine {
                 Event::Cancel => {
                     self.pending = None;
                     self.ticket = generation();
-                    Transition(State::cancelled())
+                    Transition(State::idle())
                 }
                 _ => Handled,
             }
@@ -250,8 +233,6 @@ impl Identifier {
             State::Idle {} => Identification::Idle,
             State::Disconnect { role } => Identification::Disconnect(*role),
             State::Connect { role } => Identification::Connect(*role),
-            State::Complete { role } => Identification::Complete(*role),
-            State::Cancelled {} => Identification::Cancelled,
         }
     }
 }
@@ -553,7 +534,7 @@ mod tests {
     }
 
     #[test]
-    fn observations_only_enable_next_and_lost_or_old_evidence_prevents_it() {
+    fn observations_only_enable_next_and_confirmation_returns_to_picker() {
         let mut machine = Identifier::default();
         machine.start(Role::Left);
         let now = Instant::now();
@@ -575,7 +556,7 @@ mod tests {
         machine.observe_at(connected, &factory(9), true, now);
         assert!(!machine.next_at(ticket, now));
         assert!(machine.next_at(connected, now));
-        assert_eq!(machine.state(), Identification::Complete(Role::Left));
+        assert_eq!(machine.state(), Identification::Idle);
     }
 
     fn identify(machine: &mut Identifier, role: Role, location: u64) {
@@ -583,7 +564,7 @@ mod tests {
         machine.observe_then_next(machine.ticket(), &vec![], true);
         assert_eq!(machine.state(), Identification::Connect(role));
         machine.observe_then_next(machine.ticket(), &factory(location), true);
-        assert_eq!(machine.state(), Identification::Complete(role));
+        assert_eq!(machine.state(), Identification::Idle);
     }
 
     #[test]
@@ -621,7 +602,31 @@ mod tests {
         assert_eq!(machine.bindings(), [None; 3]);
         machine.cancel();
         machine.observe_then_next(before_connect, &factory(9), true);
-        assert_eq!(machine.state(), Identification::Cancelled);
+        assert_eq!(machine.state(), Identification::Idle);
+        assert_eq!(machine.bindings(), [None; 3]);
+    }
+
+    #[test]
+    fn cancel_returns_to_picker_keeps_prior_bindings_and_rejects_pending_confirmation() {
+        let mut machine = Identifier::default();
+        identify(&mut machine, Role::Left, 9);
+        machine.start(Role::Receiver);
+        let left = factory(9);
+        machine.observe_then_next(machine.ticket(), &left, true);
+        let ticket = machine.ticket();
+        let mut both = left;
+        both.extend(factory(10));
+        let now = Instant::now();
+        machine.observe_at(ticket, &both, true, now);
+        assert!(machine.0.inner().ready_for_next(now));
+        machine.cancel();
+        assert_eq!(machine.state(), Identification::Idle);
+        assert_eq!(machine.bindings(), [Some(9), None, None]);
+        assert!(!machine.0.inner().ready_for_next(now));
+        assert!(!machine.next_at(ticket, now));
+        machine.observe_at(ticket, &both, true, now);
+        assert_eq!(machine.bindings(), [Some(9), None, None]);
+        machine.observe_at(machine.ticket(), &vec![], true, now);
         assert_eq!(machine.bindings(), [None; 3]);
     }
 
@@ -693,7 +698,7 @@ mod tests {
             assert_eq!(machine.state(), Identification::Disconnect(role));
             machine.observe_then_next(machine.ticket(), &vec![], true);
             machine.observe_then_next(machine.ticket(), &recovery, true);
-            assert_eq!(machine.state(), Identification::Complete(role));
+            assert_eq!(machine.state(), Identification::Idle);
             let present = super::derive(&recovery, [None; 3], true, machine.bindings());
             assert_eq!(present[index(role)], Presence::Connected);
             assert_eq!(present.iter().filter(|p| p.connected()).count(), 1);
