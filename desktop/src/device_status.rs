@@ -392,6 +392,9 @@ mod tests {
     fn dongle_battery_source_precedes_bluetooth() {
         let dongle = vec![(1, 0x4c4b, 0x4644, "NocFree RMK Receiver".into())];
         assert!(!battery_via_bluetooth(&dongle, true));
-        assert!(battery_via_bluetooth(&vec![], true));
+        assert_eq!(
+            battery_via_bluetooth(&vec![], true),
+            cfg!(target_os = "macos")
+        );
     }
 }
