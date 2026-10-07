@@ -1,6 +1,6 @@
 # NocFree RMK Companion
 
-Install RMK on your NocFree AND keyboard with a guided app for Mac, Windows and Linux. Companion saves the original software before installation and checks typing through USB, Bluetooth and the dongle. You can use that backup to return to the original software.
+Install RMK on your NocFree AND keyboard with a guided app for Mac, Windows and Linux. USB, Bluetooth and dongle supported. 
 
 ![Choose the keyboard parts to update](docs/images/install-rmk.png)
 
