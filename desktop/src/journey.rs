@@ -1,5 +1,4 @@
 //! Guided journeys reuse Session's identification, archive and return checks.
-//! Firmware transfer remains unavailable until a reviewed installer is connected.
 use crate::{
     device::Snapshot,
     runtime_recovery::Role,
@@ -26,7 +25,6 @@ mod machine {
             error: Option<String>,
             saved: bool,
             returned: bool,
-            can_save: bool,
         },
         Pause,
         Resume,
@@ -43,7 +41,6 @@ mod machine {
                 ..
             } => Transition(State::complete()),
             Event::Evidence { saved: true, .. } => Transition(State::returning()),
-            Event::Evidence { can_save: true, .. } => Transition(State::ready_to_save()),
             Event::Evidence { .. } => Transition(State::guiding()),
             _ => Super,
         }
@@ -52,10 +49,6 @@ mod machine {
     impl Backup {
         #[state(superstate = "active")]
         fn guiding(event: &Event) -> Outcome<State> {
-            reconcile(event)
-        }
-        #[state(superstate = "active")]
-        fn ready_to_save(event: &Event) -> Outcome<State> {
             reconcile(event)
         }
         #[state(superstate = "active")]
@@ -159,8 +152,8 @@ impl Journey {
     }
     pub fn state(&self) -> State {
         match self.machine.state() {
+            machine::State::Guiding {} if self.session.view().can_save => State::ReadyToSave,
             machine::State::Guiding {} => State::Guiding,
-            machine::State::ReadyToSave {} => State::ReadyToSave,
             machine::State::Returning {} => State::Returning,
             machine::State::Paused {} => State::Paused,
             machine::State::Failed { .. } => State::Failed,
@@ -227,7 +220,6 @@ impl Journey {
             error: view.error,
             saved: view.backup_path.is_some(),
             returned: view.return_complete,
-            can_save: view.can_save,
         });
     }
     pub fn save_backup(&mut self) -> Result<PathBuf, String> {
@@ -245,7 +237,6 @@ impl Journey {
                     error: Some(error.clone()),
                     saved: false,
                     returned: false,
-                    can_save: false,
                 });
                 Err(error)
             }
@@ -270,15 +261,6 @@ impl Journey {
     fn restart_step(&mut self) {
         // Fresh identification or a freshly observed disconnect must replace timed evidence.
         self.session.retry();
-    }
-    pub fn confirm_power_on(&mut self) {
-        if !matches!(
-            self.state(),
-            State::Paused | State::Failed | State::Complete
-        ) {
-            self.session.confirm_power_on();
-            self.advance();
-        }
     }
 }
 
@@ -344,6 +326,16 @@ mod tests {
                         State::Guiding
                     }
                 );
+                if selected == recovered {
+                    let mut duplicate = Session::new();
+                    duplicate.select_recovery_role(recovered);
+                    assert!(duplicate.adopt_archive_drive(mounted()).unwrap());
+                    assert!(!journey.accept_recovery(duplicate));
+                    journey.observe(Ok(Snapshot::default()));
+                    assert_eq!(journey.state(), State::Guiding);
+                    assert!(!journey.view().can_save);
+                    assert!(journey.save_backup().is_err());
+                }
             }
         }
     }

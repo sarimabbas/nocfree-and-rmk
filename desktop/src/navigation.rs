@@ -96,13 +96,14 @@ fn select(page: &Page) -> Outcome<State> {
     } else {
         Stage::Choose(Readiness::Unknown)
     };
-    Transition(match page {
-        Page::Home | Page::Backups => State::backups(stage),
-        Page::Recovery => State::recovery(stage),
-        Page::Pairing => State::pairing(stage),
-        Page::Firmware => State::firmware(stage),
-        Page::Restore => State::restore(stage),
-    })
+    Transition(State::page(
+        if *page == Page::Home {
+            Page::Backups
+        } else {
+            *page
+        },
+        stage,
+    ))
 }
 fn entry(
     storage: &mut Storage,
@@ -206,54 +207,20 @@ fn entry(
         _ => Handled,
     }
 }
-#[state_machine(initial = "State::firmware(Stage::Choose(Readiness::Unknown))")]
+#[state_machine(initial = "State::page(Page::Firmware, Stage::Choose(Readiness::Unknown))")]
 impl Storage {
     #[state]
-    fn backups(
+    fn page(
         &mut self,
+        page: &mut Page,
         stage: &mut Stage,
         event: &Event,
         context: &mut Option<Start>,
     ) -> Outcome<State> {
-        entry(self, Page::Backups, stage, event, context)
-    }
-    #[state]
-    fn recovery(
-        &mut self,
-        stage: &mut Stage,
-        event: &Event,
-        context: &mut Option<Start>,
-    ) -> Outcome<State> {
-        entry(self, Page::Recovery, stage, event, context)
-    }
-    #[state]
-    fn pairing(
-        &mut self,
-        stage: &mut Stage,
-        event: &Event,
-        context: &mut Option<Start>,
-    ) -> Outcome<State> {
-        entry(self, Page::Pairing, stage, event, context)
-    }
-    #[state]
-    fn restore(
-        &mut self,
-        stage: &mut Stage,
-        event: &Event,
-        context: &mut Option<Start>,
-    ) -> Outcome<State> {
-        entry(self, Page::Restore, stage, event, context)
-    }
-    #[state]
-    fn firmware(
-        &mut self,
-        stage: &mut Stage,
-        event: &Event,
-        context: &mut Option<Start>,
-    ) -> Outcome<State> {
-        entry(self, Page::Firmware, stage, event, context)
+        entry(self, *page, stage, event, context)
     }
 }
+
 pub struct Navigation(StateMachine<Storage>);
 impl Default for Navigation {
     fn default() -> Self {
@@ -287,14 +254,10 @@ impl Navigation {
         self.0.inner().layouts[self.layout() as usize]
     }
     fn snapshot(&self) -> (Page, Stage) {
-        match self.0.state() {
-            State::Backups { stage } => (Page::Backups, *stage),
-            State::Recovery { stage } => (Page::Recovery, *stage),
-            State::Pairing { stage } => (Page::Pairing, *stage),
-            State::Firmware { stage } => (Page::Firmware, *stage),
-            State::Restore { stage } => (Page::Restore, *stage),
-        }
+        let State::Page { page, stage } = self.0.state();
+        (*page, *stage)
     }
+
     pub fn observe_available(&mut self, available: [bool; 3]) {
         self.0
             .handle_with_context(&Event::Available(available), &mut None);

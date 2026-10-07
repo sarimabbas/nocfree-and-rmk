@@ -4,7 +4,6 @@ use std::time::{Duration, Instant};
 #[derive(Clone, Copy, Debug)]
 pub enum Phase {
     Disconnect,
-    OffWait { since: Instant },
     PowerOn,
     StartWait { since: Instant },
     Reconnect,
@@ -37,7 +36,6 @@ fn common(event: &Event) -> Option<Outcome<State>> {
         #[cfg(test)]
         Event::Seed(p) => Some(Transition(match p {
             Phase::Disconnect => State::disconnect(),
-            Phase::OffWait { since } => State::off_wait(*since),
             Phase::PowerOn => State::power_on(),
             Phase::StartWait { since } => State::start_wait(*since),
             Phase::Reconnect => State::reconnect(),
@@ -60,21 +58,11 @@ impl Storage {
     #[state]
     fn disconnect(event: &Event) -> Outcome<State> {
         common(event).unwrap_or_else(|| match event {
-            Event::Next(o) if !o.connected => Transition(State::off_wait(o.now)),
-            _ => Handled,
-        })
-    }
-    #[state]
-    fn off_wait(since: &Instant, event: &Event) -> Outcome<State> {
-        common(event).unwrap_or_else(|| match event {
-            Event::Next(o) if o.connected => Transition(State::disconnect()),
-            Event::Next(o) if o.now.saturating_duration_since(*since) >= Duration::from_secs(5) => {
-                Transition(if o.needs_power_on {
-                    State::power_on()
-                } else {
-                    State::reconnect()
-                })
-            }
+            Event::Next(o) if !o.connected => Transition(if o.needs_power_on {
+                State::power_on()
+            } else {
+                State::reconnect()
+            }),
             _ => Handled,
         })
     }
@@ -139,13 +127,12 @@ impl ReturnFlow {
         }
         let returned = o.normal && o.completion_allowed;
         match self.phase() {
-            Some(Phase::Disconnect) => returned && o.fresh_return || !o.connected,
-            Some(Phase::OffWait { since }) => {
+            Some(Phase::Disconnect) => {
                 returned && o.fresh_return
-                    || o.connected
-                    || self.absent_since.is_some_and(|absent| {
-                        now.saturating_duration_since(absent.max(since)) >= Duration::from_secs(5)
-                    })
+                    || !o.connected
+                        && self.absent_since.is_some_and(|absent| {
+                            now.saturating_duration_since(absent) >= Duration::from_secs(5)
+                        })
             }
             Some(Phase::PowerOn) => returned && o.fresh_return || !o.connected,
             Some(Phase::StartWait { since }) => {
@@ -176,7 +163,6 @@ impl ReturnFlow {
         match self.machine.state() {
             State::Inactive {} => None,
             State::Disconnect {} => Some(Phase::Disconnect),
-            State::OffWait { since } => Some(Phase::OffWait { since: *since }),
             State::PowerOn {} => Some(Phase::PowerOn),
             State::StartWait { since } => Some(Phase::StartWait { since: *since }),
             State::Reconnect {} => Some(Phase::Reconnect),
@@ -196,6 +182,7 @@ impl ReturnFlow {
         }
         self.latest = Some(observation);
     }
+    #[cfg(test)]
     pub fn confirm(&mut self, now: Instant) {
         self.machine.handle(&Event::Confirm(now));
     }
@@ -227,9 +214,9 @@ mod tests {
         flow.restart();
         flow.observe(observation(now, false, false));
         assert!(matches!(flow.phase(), Some(Phase::Disconnect)));
-        assert!(flow.next(now));
+        assert!(!flow.next(now));
         flow.observe(observation(now + Duration::from_secs(5), false, false));
-        assert!(matches!(flow.phase(), Some(Phase::OffWait { .. })));
+        assert!(matches!(flow.phase(), Some(Phase::Disconnect)));
         assert!(flow.next(now + Duration::from_secs(5)));
         flow.observe(observation(now + Duration::from_secs(6), true, true));
         assert!(matches!(flow.phase(), Some(Phase::Reconnect)));

@@ -11,12 +11,12 @@ sys.path.insert(0, str(ROOT / 'scripts'))
 from migration_guard import inspect_startup_image
 from image_guard import inspect as inspect_receiver
 
-VERSION = '1.0.0'
+VERSION = '1.0.1'
 # Reviewed ANSI rebuild from the hardware-tested sources; no device acceptance is claimed.
 ROLES = {
-    'left': ('native-release-1.0.0/left', 'd07e158a43f2593ad7c8bc7d11feb29f397bc8b5654d1d065e832d97700a26fd', 'c390139c26f6af40bedf7911202ce088c18a53b6485e65a7a92ff28d06395271', '880c967b2e9b51806ef18f40acfe6ee0b8b53c3e', '434ab4d7d29d8e9ba689837358c8a44996ba38cc'),
-    'right': ('native-release-1.0.0/right', '091d5cccfbd239ede9c39e40244941214211251625279f54e1b661a2e14b842c', '0319163343f75b71f91ad6b788d0a468173e7af11b0b380ea653c211850ebb08', '880c967b2e9b51806ef18f40acfe6ee0b8b53c3e', '434ab4d7d29d8e9ba689837358c8a44996ba38cc'),
-    'receiver': ('native-release-1.0.0/receiver', '93071cfa5876eb969a78d9add425568d4cd8a1d283fe3c491d9199696069d5bf', '507dfe384594710e54e58d092b7af42a95e616da48c054fa9ca135a7a1866d18', '880c967b2e9b51806ef18f40acfe6ee0b8b53c3e', '434ab4d7d29d8e9ba689837358c8a44996ba38cc'),
+    'left': ('native-release-1.0.1/left', '202422a26cddddd291d62839a144598a6bb319bef99f16e8f56090628bdd6eb9', '64ee5636ff38890bc3ff8d8d9bd8068bbfc218fc8b55e1c96a35087abbfa92db', 'fccc29c3c74f8ce72540055690adbc6216b079db', '434ab4d7d29d8e9ba689837358c8a44996ba38cc'),
+    'right': ('native-release-1.0.1/right', '9755f96b0a79c01a5c51a39fd5c6c03f609323ddf0f9fa57df557b0c760af21c', '7bf08f1f98404e5afb35719a5f42dcadea0088869381327bc9b385537dc2f2e2', 'fccc29c3c74f8ce72540055690adbc6216b079db', '434ab4d7d29d8e9ba689837358c8a44996ba38cc'),
+    'receiver': ('native-release-1.0.1/receiver', 'f475c96c2a35376368804b12fdc5ec04859867a4bc6e5fb28ef1262f52b6a87d', '13512d5184661e3791cfa80f50c3be22b1d36f5485cf922c66509d5fa9ad525f', 'fccc29c3c74f8ce72540055690adbc6216b079db', '434ab4d7d29d8e9ba689837358c8a44996ba38cc'),
 }
 
 

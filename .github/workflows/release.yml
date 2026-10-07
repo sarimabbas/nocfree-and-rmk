@@ -150,15 +150,11 @@ jobs:
           cp "$RUNNER_TEMP/firmware-input/companion-firmware.zip" "$RUNNER_TEMP/release-input/companion-firmware.zip"
           ditto -c -k --keepParent "dist/NocFree RMK Companion.app" "$RUNNER_TEMP/release-input/nocfree-rmk-companion-unsigned.zip"
           cat > "$RUNNER_TEMP/release-input/${VERSION}.md" <<'NOTES'
-          Install RMK with the guided app. Companion saves the original keyboard software and checks USB, Bluetooth and dongle typing.
+          Install and test your keyboard with fewer steps. Connection setup and typing now share one screen. USB identification returns directly to the part list.
 
-          Choose a connection with LEFT Fn+Tab for the dongle or LEFT Fn+1 through Fn+5 for Bluetooth. With LEFT USB connected, Fn+Space switches between USB and wireless. The left switch controls power.
+          Companion saves your original firmware before installation. Use Restore factory to return to it.
 
-          Change keys in Vial through LEFT USB. The keyboard saves your changes for all three connection modes. F5 lowers the backlight and F6 raises it.
-
-          Download the app for Mac with Apple Silicon, Windows or Linux. On Mac and Windows, open the ZIP file. On Linux, extract the archive and follow README.txt.
-
-          To return to the original keyboard software, select Restore factory in Companion.
+          Download Companion for Mac with Apple Silicon, Windows or Linux. The app includes the keyboard firmware.
           NOTES
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
