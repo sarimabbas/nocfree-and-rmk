@@ -206,7 +206,7 @@ fn entry(
         _ => Handled,
     }
 }
-#[state_machine(initial = "State::backups(Stage::Choose(Readiness::Unknown))")]
+#[state_machine(initial = "State::firmware(Stage::Choose(Readiness::Unknown))")]
 impl Storage {
     #[state]
     fn backups(
@@ -384,8 +384,16 @@ impl Navigation {
 mod tests {
     use super::*;
     #[test]
+    fn startup_opens_installation_without_starting_an_operation() {
+        let mut nav = Navigation::default();
+        assert_eq!(nav.page(), Page::Firmware);
+        assert!(nav.choosing());
+        assert_eq!(nav.next(), None);
+    }
+    #[test]
     fn checkbox_selection_is_passive_and_empty_selection_cannot_proceed() {
         let mut nav = Navigation::default();
+        nav.navigate(Page::Backups);
         assert_eq!(nav.draft_scope(), None);
         assert!(!nav.choose_next());
         nav.observe_available([true; 3]);
@@ -461,6 +469,7 @@ mod tests {
     #[test]
     fn availability_gates_setup_but_active_disconnect_never_changes_plan() {
         let mut nav = Navigation::default();
+        nav.navigate(Page::Backups);
         nav.observe_available([true; 3]);
         assert!(nav.choose_next());
         nav.observe_available([true, false, true]);
@@ -480,6 +489,7 @@ mod tests {
     fn every_nonempty_subset_has_an_explicit_setup_then_start() {
         for mask in 1..8 {
             let mut nav = Navigation::default();
+            nav.navigate(Page::Backups);
             let available = std::array::from_fn(|index| mask & (1 << index) != 0);
             nav.observe_available(available);
             let scope = nav.draft_scope().unwrap();
