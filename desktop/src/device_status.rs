@@ -93,6 +93,10 @@ pub(crate) fn battery_available(devices: &UsbKey, recovery: &State, bluetooth: b
     )
 }
 
+pub(crate) fn battery_via_bluetooth(devices: &UsbKey, bluetooth: bool) -> bool {
+    cfg!(target_os = "macos") && battery_source(devices).is_empty() && bluetooth
+}
+
 /// One derived snapshot drives all status-bar visuals. No view mutates connection state.
 pub(crate) struct Observation<'a> {
     pub devices: &'a UsbKey,
@@ -382,5 +386,12 @@ mod tests {
         impostor[0].3 = "NocFree RMK Receiver".into();
         assert!(!left_usb(&impostor));
         assert!(battery_source(&impostor).is_empty());
+    }
+
+    #[test]
+    fn dongle_battery_source_precedes_bluetooth() {
+        let dongle = vec![(1, 0x4c4b, 0x4644, "NocFree RMK Receiver".into())];
+        assert!(!battery_via_bluetooth(&dongle, true));
+        assert!(battery_via_bluetooth(&vec![], true));
     }
 }

@@ -35,7 +35,7 @@ To return to the original software, select **Restore factory** and follow the ap
 ## Features
 
 - [x] Install RMK and restore the original software from your backup
-- [x] Install the included ANSI layout
+- [x] Install the included ANSI, ISO, JIS or KR layout
 - [x] Type through USB, Bluetooth or the RMK dongle
 - [x] Check both halves with guided typing tests
 - [x] Change keys with Vial
@@ -74,7 +74,7 @@ These projects offer different ways to use the NocFree AND keyboard.
 | Dongle typing | Yes, with RMK dongle firmware | Yes, with Rust dongle firmware | Not included |
 | Change keys | Vial | NocFree Link | Edit the keymap file and rebuild |
 | Backlight brightness | 16 levels | Off and five brightness levels | Not included |
-| Keyboard layouts | ANSI in the current download; ISO, JIS and KR in a [test app](docs/TECHNICAL.md#physical-layouts) | ANSI and KR; ISO and JIS test builds | ANSI |
+| Keyboard layouts | ANSI, ISO, JIS and KR in the app | ANSI and KR; ISO and JIS test builds | ANSI |
 
 ## Need help?
 

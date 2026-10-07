@@ -1,6 +1,6 @@
 # Technical guide
 
-The local Companion and firmware trial use version 1.0.2. The firmware uses upstream RMK and keeps the factory bootloader. This guide covers board code, recovery, builds and releases.
+Companion and firmware use version 1.0.3. The firmware uses upstream RMK and keeps the factory bootloader. This guide covers board code, recovery, builds and releases.
 
 ## Keyboard setup
 
@@ -8,7 +8,7 @@ The keyboard images use the ANSI NocFree AND layout. The right half sends keys t
 
 ## Physical layouts
 
-Install RMK remembers the layout chosen on its setup screen. Next starts installation only when the app includes firmware for that layout. The current release contains ANSI firmware. The trial app bundles all four layouts for board testing.
+Install RMK remembers the layout chosen on its setup screen. Next starts installation only when the app includes firmware for that layout. The release includes ANSI, ISO, JIS and KR firmware.
 
 The scanner, default keys, split dimensions and Vial definition share one compile-time layout choice. ANSI is the default. Select `layout-iso`, `layout-jis` or `layout-kr` for both halves; these features are mutually exclusive. The dongle forwards reports and configuration to the left half and uses one common image.
 
@@ -78,7 +78,7 @@ RMK owns key processing, debounce, USB/BLE routing, profiles, bonds, storage and
 
 The startup gate requires the saved reset-pin setting and GPIO mode for LEFT's LED pins. Unused NFC pins can remain GPIO: published Embassy cannot change the saved NFC bit from zero to one and continues without programming it.
 
-The physical switch controls power, not the connection mode. Without USB, either top or bottom powers LEFT; middle turns it off. RMK uses the available connection. When USB and wireless are both ready, its saved preference decides. RMK owns dongle pairing. Battery sampling feeds RMK. The optional battery trial uses public RMK battery events, the dongle custom-message route and a separate read-only USB HID interface. It does not change RMK's keyboard or Vial reports. Companion tests each transport in isolation. It asks for the USB and host Bluetooth connections needed for that test, then checks typing from both halves.
+The physical switch controls power, not the connection mode. Without USB, either top or bottom powers LEFT; middle turns it off. RMK uses the available connection. When USB and wireless are both ready, its saved preference decides. RMK owns dongle pairing. Battery sampling feeds RMK. Battery reporting uses public RMK battery events, the dongle custom-message route and a separate read-only USB HID interface. It does not change RMK's keyboard or Vial reports. Companion tests each transport in isolation. It asks for the USB and host Bluetooth connections needed for that test, then checks typing from both halves.
 
 | Control | Action |
 | --- | --- |
@@ -100,7 +100,7 @@ LEFT and dongle use RMK's standard runtime DFU DETACH interface. It accepts entr
 
 RIGHT uses Embassy's standard runtime DFU class and a callback to RMK's bootloader request. Its local USB identity is distinct from LEFT and dongle. This class has no download partition: the app requests recovery; the factory bootloader handles subsequent transfers. Windows receives the standard WinUSB descriptor.
 
-Companion requests LEFT recovery with upstream VIA's BootloaderJump command over LEFT's direct USB raw-HID interface. RIGHT and dongle recovery use local DFU DETACH. Each request checks the selected role, physical USB connection and interface before submission. Requests share the native HID owner thread and stop on cancellation or expiry. An unanswered submitted request waits for the recovery drive; an unsent request stays available to retry. The default build accepts only the pinned ANSI release package. The separate trial build pins candidates for board testing. Factory restoration remains available.
+Companion requests LEFT recovery with upstream VIA's BootloaderJump command over LEFT's direct USB raw-HID interface. RIGHT and dongle recovery use local DFU DETACH. Each request checks the selected role, physical USB connection and interface before submission. Requests share the native HID owner thread and stop on cancellation or expiry. An unanswered submitted request waits for the recovery drive; an unsent request stays available to retry. The default build accepts only the pinned release package. The separate trial build pins candidates for board testing. Factory restoration remains available.
 
 ### Image boundaries
 
@@ -131,7 +131,7 @@ desktop/build-macos.sh --trial
 
 The manifest must match the reviewed trial hash in `desktop/src/release.rs`. A rebuild that changes the manifest needs a new review and pin. The trial has a separate app name and bundle ID. Its package records software checks only; it is not a production release.
 
-The battery trial reports both halves through LEFT USB or the dongle USB connection. LEFT sends changes at once and a heartbeat at most once per minute. The receiver clears readings after 135 seconds without a message. Battery messages use RMK's custom-message channel; the trial enables its receiver-side notification subscription. When LEFT USB is absent and macOS reports a Bluetooth connection, Companion reads RMK's two standard Bluetooth Battery Services. It reads once per minute without subscribing to notifications or scanning. Test battery life, normal startup and local recovery on the board before considering this image for a release.
+Battery reporting shows both halves through LEFT USB or the dongle USB connection. LEFT sends changes at once and a heartbeat at most once per minute. The receiver clears readings after 135 seconds without a message. Battery messages use RMK's custom-message channel. When LEFT USB is absent and macOS reports a Bluetooth connection, Companion reads RMK's two standard Bluetooth Battery Services once per minute without notifications or scanning.
 
 Moving from the older fork firmware to the upstream storage schema resets saved mappings, macros, lighting settings and wireless pairings. Updating within a compatible schema preserves settings. Use the guided typing tests to check USB, Bluetooth and dongle operation. Normal USB enumeration confirms startup; it does not prove the selected typing route.
 
@@ -256,7 +256,7 @@ For automated work, do not flash, erase, unlock, change bootloaders, write UICR 
 
 The runtime identities are `4c4b:4643` (left), `4c4b:4671` (right) and `4c4b:4644` (dongle). The observed factory UF2 identity is `239a:0029`. Discover the DFU interface number from its `fe/01/01` descriptors; do not hard-code it. DFU DETACH targets the local part, while Vial requests through the dongle target the left.
 
-Vial uses usage page `ff60`, usage `61`, and 32-byte reports. The battery trial adds usage page `ff60`, usage `62`: write byte `01` and read `[b2, 01, left, right]`, where `ff` means unknown. LEFT sends RMK battery events to the dongle through the public custom-message route. The current release has no such USB interface. Companion keeps its read-only getter for older firmware and treats unsupported replies as unknown.
+Vial uses usage page `ff60`, usage `61`, and 32-byte reports. Battery reporting uses usage page `ff60`, usage `62`: write byte `01` and read `[b2, 01, left, right]`, where `ff` means unknown. LEFT sends RMK battery events to the dongle through the public custom-message route. Companion keeps its read-only getter for older firmware and treats unsupported replies as unknown.
 
 ## Diagnostics and bug reports
 

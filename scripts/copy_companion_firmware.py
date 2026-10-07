@@ -14,6 +14,7 @@ def copy(source: Path, destination: Path):
     for name in names:
         if not name or Path(name).name != name or '\\' in name:
             raise ValueError('Firmware manifest contains an invalid filename')
+    for name in names:
         path = source / name
         if not path.is_file() or path.is_symlink():
             raise ValueError(f'Firmware file is unavailable: {name}')
