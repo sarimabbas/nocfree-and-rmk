@@ -28,10 +28,9 @@ class CleanClonePackageTests(unittest.TestCase):
     def test_unapproved_candidate_is_refused_before_output_changes(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
-            candidate = root / '.evidence' / release.ROLES['left'][0]
+            candidate = root / release.SOURCE
             candidate.mkdir(parents=True)
-            (candidate / 'candidate.uf2').write_bytes(b'unapproved-image')
-            (candidate / 'candidate.bin').write_bytes(b'unapproved-binary')
+            (candidate / 'manifest.json').write_bytes(b'unapproved-manifest')
             output = root / 'output'
             output.mkdir()
             manifest = output / 'manifest.json'

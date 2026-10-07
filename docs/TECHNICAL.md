@@ -4,7 +4,7 @@ Companion and firmware use version 1.0.3. The firmware uses upstream RMK and kee
 
 ## Keyboard setup
 
-The keyboard images use the ANSI NocFree AND layout. The right half sends keys to the left half. The left half sends them to the computer through USB, Bluetooth or the dongle. Install RMK on the dongle to use it with the RMK keyboard firmware.
+The keyboard images support four NocFree AND layouts. The right half sends keys to the left half. The left half sends them to the computer through USB, Bluetooth or the dongle. Install RMK on the dongle to use it with the RMK keyboard firmware.
 
 ## Physical layouts
 
@@ -31,7 +31,7 @@ Check all mappings and production builds without connecting a keyboard:
 
 The firmware uses the upstream storage schema and needs an explicit settings reset when changing physical layout. Check pairing and saved key assignments after a reset or revision change.
 
-An owner of each layout must then check every physical key in Vial, Fn and Shift across halves, simultaneous input, release after disconnect, wake on the first key, wired/Bluetooth/dongle typing, saved remaps after restart, and recovery entry and exit. Record those observations separately from host tests and cross-builds before adding the images to an app package.
+An owner of each layout should check every physical key in Vial, Fn and Shift across halves, simultaneous input, release after disconnect, wake on the first key, wired/Bluetooth/dongle typing, saved remaps after restart, and recovery entry and exit. Record those observations separately from host tests and cross-builds.
 
 ## Architecture and source map
 
@@ -72,7 +72,7 @@ Dependabot checks all four Cargo projects and GitHub Actions monthly. Security u
 
 ## Upstream RMK with factory recovery
 
-The firmware uses untouched [RMK `434ab4d7`](https://github.com/rmk-rs/rmk/tree/434ab4d7d29d8e9ba689837358c8a44996ba38cc) and published Embassy nRF 0.11.0. It has no fork dependencies or dependency patches. It keeps the factory MBR and bootloader. It contains no bootloader installer or `rmk-boot` image. Companion packages the reviewed ANSI firmware images.
+The firmware uses untouched [RMK `434ab4d7`](https://github.com/rmk-rs/rmk/tree/434ab4d7d29d8e9ba689837358c8a44996ba38cc) and published Embassy nRF 0.11.0. It has no fork dependencies or dependency patches. It keeps the factory MBR and bootloader. It contains no bootloader installer or `rmk-boot` image. Companion packages the reviewed firmware images.
 
 RMK owns key processing, debounce, USB/BLE routing, profiles, bonds, storage and normal watchdog feeding. Board code supplies the PCA9555 scanner, battery ADC, PWM, indicator and nRF52833 USB control-pipe adapter. Image startup checks reject UICR changes and convert watchdog resets into a request for the existing recovery bootloader.
 

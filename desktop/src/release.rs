@@ -13,7 +13,7 @@ use std::path::PathBuf;
 use std::path::{Component, Path};
 
 #[cfg(not(feature = "firmware-trial"))]
-const MANIFEST_SHA256: &str = "712a0099cf648e8339f0a5eb8a5fd4942857647e63c39964d268c98a5d0e7488";
+const MANIFEST_SHA256: &str = "3c1a278cf9e18b231c9d59b59389008d7bdab03976ee41c1ca1e9ee9ffcd0466";
 #[cfg(feature = "firmware-trial")]
 const MANIFEST_SHA256: &str = "336d6daaf028c897e5b6e0c2f70d78999d3b0ea6ce0bcd03b1d4d869eb162c92";
 const MAX_FILE: u64 = 1024 * 1024;
