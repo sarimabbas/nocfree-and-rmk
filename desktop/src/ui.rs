@@ -411,7 +411,8 @@ impl Companion {
                                     || key.1
                                         != crate::device_status::battery_source(&this.device_key)
                                     || key.3
-                                        != (!crate::device_status::left_usb(&this.device_key)
+                                        != (cfg!(target_os = "macos")
+                                            && !crate::device_status::left_usb(&this.device_key)
                                             && this.bluetooth_connected)
                                 {
                                     return;
@@ -486,7 +487,8 @@ impl Companion {
                 }
                 let bluetooth_battery = this
                     .update(cx, |this, _| {
-                        !crate::device_status::left_usb(&this.device_key)
+                        cfg!(target_os = "macos")
+                            && !crate::device_status::left_usb(&this.device_key)
                             && this.bluetooth_connected
                     })
                     .unwrap_or(false);

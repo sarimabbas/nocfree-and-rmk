@@ -93,12 +93,16 @@ fn tooltip(
                 Some(Connection::Usb | Connection::Bluetooth | Connection::Dongle)
             )
         {
-            facts.push(
-                state
-                    .level
-                    .map(|v| format!("Battery {v}%"))
-                    .unwrap_or_else(|| "Battery unavailable".into()),
-            );
+            facts.push(state.level.map_or_else(
+                || "Battery unavailable".into(),
+                |v| {
+                    if label == "Right" && state.link_connected.is_none() {
+                        format!("Last reported battery {v}%")
+                    } else {
+                        format!("Battery {v}%")
+                    }
+                },
+            ));
         }
     } else if recovery {
         facts.push("USB connected".into());
@@ -354,6 +358,17 @@ mod tests {
                 false
             ),
             "Left · Bluetooth connected · USB power connected · Battery 100%"
+        );
+    }
+    #[test]
+    fn unknown_right_link_marks_battery_as_last_reported() {
+        let right = Peripheral {
+            level: Some(97),
+            ..Default::default()
+        };
+        assert_eq!(
+            tooltip("Right", None, Some(right), false),
+            "Right · Last reported battery 97%"
         );
     }
 }

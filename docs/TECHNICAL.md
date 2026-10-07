@@ -1,6 +1,6 @@
 # Technical guide
 
-Companion and its included ANSI firmware use version 1.0.2. The firmware uses upstream RMK and keeps the factory bootloader. This guide covers board code, recovery, builds and releases.
+The local Companion and firmware trial use version 1.0.2. The firmware uses upstream RMK and keeps the factory bootloader. This guide covers board code, recovery, builds and releases.
 
 ## Keyboard setup
 
@@ -109,7 +109,7 @@ Companion requests LEFT recovery with upstream VIA's BootloaderJump command over
 | LEFT and RIGHT | `0x1000..0x65000` | `0x65000..0x6d000` |
 | Dongle | `0x27000..0x65000` | `0x65000..0x6d000` |
 
-The guarded ANSI Mac-keymap builds use 372,484 bytes for LEFT, 231,780 for RIGHT and 248,332 for the dongle. The dongle's slot has 253,952 bytes; its UF2 page padding also fits. The complete layout/keymap build matrix is checked separately.
+The dongle's application slot has 253,952 bytes. Check each candidate and its UF2 page padding against that limit with the image guard. The complete layout/keymap build matrix is checked separately.
 
 The lower half images replace the resident SoftDevice while preserving the MBR. The dongle keeps the resident SoftDevice. All images exclude the factory filesystem at `0x6d000..0x74000`, the bootloader above it and UICR. The image guards enforce these board-specific boundaries.
 
@@ -131,7 +131,7 @@ desktop/build-macos.sh --trial
 
 The manifest must match the reviewed trial hash in `desktop/src/release.rs`. A rebuild that changes the manifest needs a new review and pin. The trial has a separate app name and bundle ID. Its package records software checks only; it is not a production release.
 
-The battery trial reports both halves through LEFT USB or the dongle USB connection. LEFT sends changes at once and a heartbeat at most once per minute. The receiver clears readings after 135 seconds without a message. This public RMK custom-message route adds one BLE notification subscription on the LEFT-to-dongle link. On macOS, Companion reads RMK's two standard Bluetooth Battery Services directly when neither USB source is present. It reads once per minute without subscribing to notifications or scanning. Test battery life, normal startup and local recovery on the board before considering this image for a release.
+The battery trial reports both halves through LEFT USB or the dongle USB connection. LEFT sends changes at once and a heartbeat at most once per minute. The receiver clears readings after 135 seconds without a message. Battery messages use RMK's custom-message channel; the trial enables its receiver-side notification subscription. When LEFT USB is absent and macOS reports a Bluetooth connection, Companion reads RMK's two standard Bluetooth Battery Services. It reads once per minute without subscribing to notifications or scanning. Test battery life, normal startup and local recovery on the board before considering this image for a release.
 
 Moving from the older fork firmware to the upstream storage schema resets saved mappings, macros, lighting settings and wireless pairings. Updating within a compatible schema preserves settings. Use the guided typing tests to check USB, Bluetooth and dongle operation. Normal USB enumeration confirms startup; it does not prove the selected typing route.
 
