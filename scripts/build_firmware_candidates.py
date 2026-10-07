@@ -31,6 +31,8 @@ def features(role, layout='ansi'):
         result += ['reclaimed-softdevice', 'backlight-active-high', 'async-scanner']
     if role == 'left':
         result += ['status-led']
+    if role != 'right':
+        result += ['battery-telemetry']
     return result
 
 
@@ -96,24 +98,31 @@ def source_hashes():
     return {str(path.relative_to(ROOT)): digest(path.read_bytes()) for path in sorted(paths)}
 
 
-def package_trial(output, report):
-    """Prepare one explicitly selected ANSI trial; never claims device acceptance."""
-    if report['layout'] != 'ansi' or report['source_sha256'] != source_hashes():
-        raise ValueError('Trial requires current ANSI sources; rebuild candidates')
+def package_trial(output, reports):
+    """Prepare one pinned local package from the just-built candidates."""
+    if any(report['source_sha256'] != source_hashes() for report in reports.values()):
+        raise ValueError('Trial requires current sources; rebuild candidates')
     revision = tomllib.loads((ROOT / 'firmware/Cargo.toml').read_text())['dependencies']['rmk']['rev']
-    if report['rmk_revision'] != revision or set(report['images']) != set(ROLES):
+    if any(report['rmk_revision'] != revision or set(report['images']) != set(ROLES)
+           for report in reports.values()):
         raise ValueError('Trial candidates have a different RMK revision or missing role')
     images, files = [], {}
-    for role in ROLES:
-        binary = (output / role / 'candidate.bin').read_bytes()
-        uf2 = (output / role / 'candidate.uf2').read_bytes()
-        observed = report['images'][role]
+    multi = len(reports) > 1
+    parts = [(layout, role) for layout in LAYOUTS if layout in reports
+             for role in ('left', 'right')]
+    parts.append(('ansi', 'receiver'))
+    for layout, role in parts:
+        folder = output / layout if multi else output
+        binary = (folder / role / 'candidate.bin').read_bytes()
+        uf2 = (folder / role / 'candidate.uf2').read_bytes()
+        observed = reports[layout]['images'][role]
         if digest(binary) != observed['binary_sha256'] or digest(uf2) != observed['uf2_sha256']:
             raise ValueError(f'{role}: trial candidate changed')
         proof = guard(role, uf2, binary)
-        files[f'{role}.bin'], files[f'{role}.uf2'] = binary, uf2
-        images.append(dict(role=role, layout='ansi', keymap='mac', uf2=f'{role}.uf2',
-            binary=f'{role}.bin', uf2_sha256=digest(uf2), binary_sha256=digest(binary),
+        stem = f'{role}-{layout}' if multi and role != 'receiver' else role
+        files[f'{stem}.bin'], files[f'{stem}.uf2'] = binary, uf2
+        images.append(dict(role=role, layout=layout, keymap='mac', uf2=f'{stem}.uf2',
+            binary=f'{stem}.bin', uf2_sha256=digest(uf2), binary_sha256=digest(binary),
             origin=0x27000 if role == 'receiver' else 0x1000,
             end_exclusive=int(proof['end_exclusive'], 16), binary_size=len(binary),
             policy='receiver_protected' if role == 'receiver' else f'{role}_startup',
@@ -129,7 +138,8 @@ def package_trial(output, report):
     encoded = (json.dumps(manifest, indent=2, sort_keys=True) + '\n').encode()
     destination = output / 'companion'
     destination.mkdir(exist_ok=True)
-    (destination / 'manifest.json').unlink(missing_ok=True)
+    for old in destination.iterdir():
+        old.unlink()
     for name, data in files.items():
         (destination / name).write_bytes(data)
     (destination / 'manifest.json').write_bytes(encoded)
@@ -147,18 +157,19 @@ def main():
     parser.add_argument('--output', '-o', type=Path,
                         default=ROOT / 'dist/firmware')
     parser.add_argument('--companion-trial', action='store_true',
-                        help='Also package an ANSI Companion trial; production package is unchanged')
+                        help='Also package the selected layouts for a local Companion trial')
     parser.add_argument('--toolchain', '-t', default=tomllib.loads(
         (ROOT / 'rust-toolchain.toml').read_text())['toolchain']['channel'])
     parser.add_argument('--dry-run', '-n', action='store_true', help='Print the build plan only')
     parser.add_argument('--version', '-v', action='version', version='%(prog)s 1.0.0')
     args = parser.parse_args()
     try:
-        if args.companion_trial and (args.all_layouts or args.layout != 'ansi'):
-            raise ValueError('Companion trial is ANSI only')
+        if args.companion_trial and args.layout != 'ansi' and not args.all_layouts:
+            raise ValueError('Build all layouts to package a non-ANSI Companion trial')
         manifest = tomllib.loads((ROOT / 'firmware/Cargo.toml').read_text())
         rmk = manifest['dependencies']['rmk']['rev']
         before = source_hashes()
+        reports = {}
         for layout in LAYOUTS if args.all_layouts else (args.layout,):
             output = args.output.resolve() / layout if args.all_layouts else args.output.resolve()
             plan = {'layout': layout, 'rmk_revision': rmk, 'roles': {role: features(role, layout) for role in ROLES},
@@ -206,8 +217,9 @@ def main():
                 raise ValueError('firmware sources changed during build; rebuild candidates')
             (output / 'manifest.json').write_text(json.dumps(report, indent=2) + '\n')
             print(f'Candidate manifest: {output / "manifest.json"}')
-            if args.companion_trial:
-                package_trial(output, report)
+            reports[layout] = report
+        if args.companion_trial and not args.dry_run:
+            package_trial(args.output.resolve(), reports)
     except (OSError, ValueError, subprocess.CalledProcessError) as error:
         parser.exit(1, f'Build rejected: {error}\n')
 

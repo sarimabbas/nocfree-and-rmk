@@ -65,6 +65,16 @@ class ReviewedZipTests(unittest.TestCase):
                 extractor.unpack(source, digest, output)
             self.assertEqual((output / 'manifest.json').read_bytes(), b'reviewed-fixture')
 
+    def test_all_layout_members_extract(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            source = root / 'input.zip'
+            with zipfile.ZipFile(source, 'w') as archive:
+                for name in sorted(extractor.ALL_LAYOUT_FILES):
+                    archive.writestr(name, b'reviewed-fixture')
+            extractor.unpack(source, hashlib.sha256(source.read_bytes()).hexdigest(), root / 'output')
+            self.assertEqual({p.name for p in (root / 'output').iterdir()}, extractor.ALL_LAYOUT_FILES)
+
     def test_checksum_and_unexpected_members_fail_before_output(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
@@ -76,7 +86,7 @@ class ReviewedZipTests(unittest.TestCase):
             for extra in ['../outside', 'unexpected.txt', 'manifest.json']:
                 with self.subTest(extra=extra):
                     source, digest = self.source(root, extra)
-                    with self.assertRaisesRegex(ValueError, 'exactly the seven'):
+                    with self.assertRaisesRegex(ValueError, 'exactly one reviewed package'):
                         extractor.unpack(source, digest, output)
                     self.assertFalse(output.exists())
                     self.assertFalse((root / 'outside').exists())

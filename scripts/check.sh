@@ -61,6 +61,7 @@ for physical_layout in $physical_layouts; do
                 if [ "$physical_layout" != ansi ]; then features="$features,layout-$physical_layout"; fi
             fi
             if [ "$role" = left ]; then features="$features,status-led"; fi
+            if [ "$role" != right ]; then features="$features,battery-telemetry"; fi
             cargo build --locked --release --bin nocfree-rmk --target thumbv7em-none-eabihf \
                 --no-default-features --features "$features"
         done

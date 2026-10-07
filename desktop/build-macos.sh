@@ -59,10 +59,9 @@ done
 /usr/bin/iconutil -c icns "$icon_work/Companion.iconset" -o "$bundle/Contents/Resources/Companion.icns"
 cp ../LICENSE "$bundle/Contents/Resources/LICENSE.txt"
 python3 ../scripts/companion_notices.py "$bundle/Contents/Resources/THIRD_PARTY_NOTICES.md"
+rm -rf "$bundle/Contents/Resources/Firmware"
 mkdir -p "$bundle/Contents/Resources/Firmware"
-for file in manifest.json left.uf2 left.bin right.uf2 right.bin receiver.uf2 receiver.bin; do
-    cp "$firmware/$file" "$bundle/Contents/Resources/Firmware/$file"
-done
+python3 ../scripts/copy_companion_firmware.py "$firmware" "$bundle/Contents/Resources/Firmware"
 cp "$binary" "$bundle/Contents/MacOS/nocfree-companion.new"
 mv "$bundle/Contents/MacOS/nocfree-companion.new" "$bundle/Contents/MacOS/nocfree-companion"
 cat > "$bundle/Contents/Info.plist" <<PLIST

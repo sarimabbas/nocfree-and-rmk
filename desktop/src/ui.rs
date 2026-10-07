@@ -173,6 +173,7 @@ pub struct Companion {
     operation: crate::operation::Operation,
     copies_folder: Option<PathBuf>,
     battery_levels: battery::Levels,
+    battery_current: [bool; 2],
     left_mode: Option<crate::device_status::Mode>,
     telemetry: Option<battery::Telemetry>,
     telemetry_seen: Option<Instant>,
@@ -408,6 +409,7 @@ impl Companion {
                                             .retain_for_usb_change(&key.2, &this.device_key)
                                             .expect("same battery producer");
                                         this.battery_levels.observe(readings);
+                                        this.battery_current = readings.known_levels();
                                         this.left_mode = readings.left_mode;
                                         this.telemetry = readings.telemetry;
                                         this.telemetry_seen = Some(Instant::now());
@@ -588,6 +590,7 @@ impl Companion {
             operation: Default::default(),
             copies_folder: None,
             battery_levels: crate::status_cache::levels(),
+            battery_current: [false; 2],
             left_mode: None,
             telemetry: None,
             telemetry_seen: None,
@@ -826,6 +829,7 @@ impl Companion {
             self.right_link_known = false;
             self.telemetry = None;
             self.telemetry_seen = None;
+            self.battery_current = [false; 2];
             self.left_mode = None;
             self.battery_error = None;
             self.battery_generation = self.battery_generation.wrapping_add(1);
@@ -2146,8 +2150,17 @@ impl Companion {
         crate::device_status::Observation {
             devices: &self.device_key,
             recovery_locations: self.recovery_locations,
-            levels: if self.telemetry_seen.is_some() {
-                self.battery_levels
+            levels: if self
+                .telemetry_seen
+                .is_some_and(|t| t.elapsed() < Duration::from_secs(45))
+            {
+                crate::battery::Levels {
+                    left: self.battery_levels.left.filter(|_| self.battery_current[0]),
+                    right: self
+                        .battery_levels
+                        .right
+                        .filter(|_| self.battery_current[1]),
+                }
             } else {
                 crate::battery::Levels::default()
             },

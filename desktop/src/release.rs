@@ -15,7 +15,7 @@ use std::path::{Component, Path};
 #[cfg(not(feature = "firmware-trial"))]
 const MANIFEST_SHA256: &str = "712a0099cf648e8339f0a5eb8a5fd4942857647e63c39964d268c98a5d0e7488";
 #[cfg(feature = "firmware-trial")]
-const MANIFEST_SHA256: &str = "5f724aadc8bab459dc5e39e0a341c1066a2eddbfb048b28197ae184fb578576e";
+const MANIFEST_SHA256: &str = "336d6daaf028c897e5b6e0c2f70d78999d3b0ea6ce0bcd03b1d4d869eb162c92";
 const MAX_FILE: u64 = 1024 * 1024;
 
 #[derive(Clone, Debug, Deserialize)]
@@ -64,6 +64,7 @@ pub struct FirmwareRelease {
     id: String,
     version: String,
     images: Vec<ReleaseImage>,
+    selected_layout: KeyboardLayout,
 }
 fn digest(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
@@ -122,7 +123,7 @@ impl FirmwareRelease {
         }
     }
     pub fn bundled_for(layout: KeyboardLayout) -> Result<Self, String> {
-        let release = Self::bundled()?;
+        let mut release = Self::bundled()?;
         if !release.native_controls() {
             return Err("The bundled firmware could not be loaded. Reinstall Companion.".into());
         }
@@ -132,6 +133,7 @@ impl FirmwareRelease {
                 layout.label()
             ));
         }
+        release.selected_layout = layout;
         Ok(release)
     }
 
@@ -143,9 +145,18 @@ impl FirmwareRelease {
     }
 
     pub fn supports_layout(&self, layout: KeyboardLayout) -> bool {
-        self.images
+        ["left", "right"].into_iter().all(|role| {
+            self.images
+                .iter()
+                .filter(|image| image.metadata.role == role && image.metadata.layout == layout.id())
+                .count()
+                == 1
+        }) && self
+            .images
             .iter()
-            .all(|image| image.metadata.role == "receiver" || image.metadata.layout == layout.id())
+            .filter(|image| image.metadata.role == "receiver")
+            .count()
+            == 1
     }
 
     pub fn layouts(&self) -> Vec<KeyboardLayout> {
@@ -163,25 +174,41 @@ impl FirmwareRelease {
         }
         let manifest: Manifest =
             serde_json::from_slice(&bytes).map_err(|_| "The firmware list is damaged")?;
-        if manifest.schema != 1 || manifest.images.len() != 3 {
+        if manifest.schema != 1 || !matches!(manifest.images.len(), 3 | 9) {
             return Err("Companion cannot read this firmware list format".into());
         }
+        let legacy = manifest.images.len() == 3;
+        let mut expected: Vec<(&str, &str)> = KeyboardLayout::ALL
+            .into_iter()
+            .filter(|layout| !legacy || *layout == KeyboardLayout::Ansi)
+            .flat_map(|layout| [("left", layout.id()), ("right", layout.id())])
+            .collect();
+        expected.push(("receiver", "ansi"));
         let mut images = Vec::new();
-        for (metadata, role) in
-            manifest
-                .images
-                .into_iter()
-                .zip([Role::Left, Role::Right, Role::Receiver])
-        {
-            let (name, policy) = match role {
-                Role::Left => ("left", ImagePolicy::LeftStartup),
-                Role::Right => ("right", ImagePolicy::RightStartup),
-                Role::Receiver => ("receiver", ImagePolicy::ReceiverProtectedPage),
+        for (metadata, (name, layout)) in manifest.images.into_iter().zip(expected) {
+            let (policy, stem) = match name {
+                "left" => (
+                    ImagePolicy::LeftStartup,
+                    if legacy {
+                        "left".to_owned()
+                    } else {
+                        format!("left-{layout}")
+                    },
+                ),
+                "right" => (
+                    ImagePolicy::RightStartup,
+                    if legacy {
+                        "right".to_owned()
+                    } else {
+                        format!("right-{layout}")
+                    },
+                ),
+                _ => (ImagePolicy::ReceiverProtectedPage, "receiver".to_owned()),
             };
-            if metadata.layout != KeyboardLayout::Ansi.id()
+            if metadata.layout != layout
                 || metadata.role != name
-                || metadata.uf2 != format!("{name}.uf2")
-                || metadata.binary != format!("{name}.bin")
+                || metadata.uf2 != format!("{stem}.uf2")
+                || metadata.binary != format!("{stem}.bin")
             {
                 return Err("The firmware file is for a different keyboard part".into());
             }
@@ -212,6 +239,7 @@ impl FirmwareRelease {
             id: manifest.release_id,
             version: manifest.version,
             images,
+            selected_layout: KeyboardLayout::Ansi,
         })
     }
     pub fn id(&self) -> &str {
@@ -221,11 +249,15 @@ impl FirmwareRelease {
         &self.version
     }
     pub fn image(&self, role: Role) -> &ReleaseImage {
-        &self.images[match role {
-            Role::Left => 0,
-            Role::Right => 1,
-            Role::Receiver => 2,
-        }]
+        let (name, layout) = match role {
+            Role::Left => ("left", self.selected_layout.id()),
+            Role::Right => ("right", self.selected_layout.id()),
+            Role::Receiver => ("receiver", "ansi"),
+        };
+        self.images
+            .iter()
+            .find(|image| image.metadata.role == name && image.metadata.layout == layout)
+            .expect("selected firmware layout was validated")
     }
 }
 
@@ -303,6 +335,7 @@ pub(crate) fn fixture() -> FirmwareRelease {
         id: "synthetic-test-release".into(),
         version: "test".into(),
         images,
+        selected_layout: KeyboardLayout::Ansi,
     }
 }
 
@@ -335,6 +368,23 @@ mod tests {
         release.images[0].metadata.layout = "iso".into();
         assert_eq!(release.layouts(), vec![KeyboardLayout::Iso]);
         assert_eq!(release.images[2].metadata.layout, "ansi");
+    }
+
+    #[test]
+    fn selected_layout_uses_its_two_halves_and_the_shared_receiver() {
+        let mut release = fixture();
+        for layout in [KeyboardLayout::Iso, KeyboardLayout::Jis, KeyboardLayout::Kr] {
+            for role in [Role::Left, Role::Right] {
+                let mut image = release.image(role).clone();
+                image.metadata.layout = layout.id().into();
+                release.images.push(image);
+            }
+        }
+        assert_eq!(release.layouts(), KeyboardLayout::ALL);
+        release.selected_layout = KeyboardLayout::Jis;
+        assert_eq!(release.image(Role::Left).metadata.layout, "jis");
+        assert_eq!(release.image(Role::Right).metadata.layout, "jis");
+        assert_eq!(release.image(Role::Receiver).metadata.layout, "ansi");
     }
 
     #[test]

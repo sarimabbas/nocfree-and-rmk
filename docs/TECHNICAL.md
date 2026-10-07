@@ -8,7 +8,7 @@ The keyboard images use the ANSI NocFree AND layout. The right half sends keys t
 
 ## Physical layouts
 
-Install RMK remembers the layout chosen on its setup screen. Next starts installation only when the app includes approved firmware for that layout. The current package contains ANSI firmware.
+Install RMK remembers the layout chosen on its setup screen. Next starts installation only when the app includes firmware for that layout. The current release contains ANSI firmware. The trial app bundles all four layouts for board testing.
 
 The scanner, default keys, split dimensions and Vial definition share one compile-time layout choice. ANSI is the default. Select `layout-iso`, `layout-jis` or `layout-kr` for both halves; these features are mutually exclusive. The dongle forwards reports and configuration to the left half and uses one common image.
 
@@ -78,7 +78,7 @@ RMK owns key processing, debounce, USB/BLE routing, profiles, bonds, storage and
 
 The startup gate requires the saved reset-pin setting and GPIO mode for LEFT's LED pins. Unused NFC pins can remain GPIO: published Embassy cannot change the saved NFC bit from zero to one and continues without programming it.
 
-The physical switch controls power, not the connection mode. Without USB, either top or bottom powers LEFT; middle turns it off. RMK uses the available connection. When USB and wireless are both ready, its saved preference decides. RMK owns dongle pairing. Battery sampling feeds RMK, but the private Companion battery, mode and pairing reports are absent. Companion tests each transport in isolation. It asks for the USB and host Bluetooth connections needed for that test, then checks typing from both halves. It does not require private mode or peer reports.
+The physical switch controls power, not the connection mode. Without USB, either top or bottom powers LEFT; middle turns it off. RMK uses the available connection. When USB and wireless are both ready, its saved preference decides. RMK owns dongle pairing. Battery sampling feeds RMK. The optional battery trial uses public RMK battery events, the dongle custom-message route and a separate read-only USB HID interface. It does not change RMK's keyboard or Vial reports. Companion tests each transport in isolation. It asks for the USB and host Bluetooth connections needed for that test, then checks typing from both halves.
 
 | Control | Action |
 | --- | --- |
@@ -122,14 +122,16 @@ The startup reserve at application offset `0x200` stays erased. It does not requ
 
 ### Companion trial
 
-Build the ANSI package and trial app:
+Build a trial app with ANSI, ISO, JIS and KR images:
 
 ```sh
-python3 scripts/build_firmware_candidates.py --output dist/native-trial-candidates --companion-trial
+python3 scripts/build_firmware_candidates.py --all-layouts --output dist/native-trial-candidates --companion-trial
 desktop/build-macos.sh --trial
 ```
 
 The manifest must match the reviewed trial hash in `desktop/src/release.rs`. A rebuild that changes the manifest needs a new review and pin. The trial has a separate app name and bundle ID. Its package records software checks only; it is not a production release.
+
+The battery trial reports both halves through LEFT USB or the dongle USB connection. LEFT sends changes at once and a heartbeat at most once per minute. The receiver clears readings after 135 seconds without a message. This public RMK custom-message route adds one BLE notification subscription on the LEFT-to-dongle link. Bluetooth already exposes RMK's standard battery services; Companion does not read those services yet. Test battery life, normal startup and local recovery on the board before considering this image for a release.
 
 Moving from the older fork firmware to the upstream storage schema resets saved mappings, macros, lighting settings and wireless pairings. Updating within a compatible schema preserves settings. Use the guided typing tests to check USB, Bluetooth and dongle operation. Normal USB enumeration confirms startup; it does not prove the selected typing route.
 
@@ -254,7 +256,7 @@ For automated work, do not flash, erase, unlock, change bootloaders, write UICR 
 
 The runtime identities are `4c4b:4643` (left), `4c4b:4671` (right) and `4c4b:4644` (dongle). The observed factory UF2 identity is `239a:0029`. Discover the DFU interface number from its `fe/01/01` descriptors; do not hard-code it. DFU DETACH targets the local part, while Vial requests through the dongle target the left.
 
-Vial uses usage page `ff60`, usage `61`, and 32-byte reports. The current firmware has no private Companion battery, mode or pairing protocol. RMK receives board battery samples; Companion uses host USB and Bluetooth observations for its journeys. The desktop retains read-only getters for older firmware and treats unsupported replies as unknown.
+Vial uses usage page `ff60`, usage `61`, and 32-byte reports. The battery trial adds usage page `ff60`, usage `62`: write byte `01` and read `[b2, 01, left, right]`, where `ff` means unknown. LEFT sends RMK battery events to the dongle through the public custom-message route. The current release has no such USB interface. Companion keeps its read-only getter for older firmware and treats unsupported replies as unknown.
 
 ## Diagnostics and bug reports
 

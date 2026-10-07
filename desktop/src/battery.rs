@@ -60,6 +60,19 @@ impl Levels {
 }
 
 impl Readings {
+    pub(crate) fn known_levels(self) -> [bool; 2] {
+        let known = |status| {
+            matches!(
+                status,
+                BatteryStatus::Available {
+                    level: Some(0..=100),
+                    ..
+                }
+            )
+        };
+        [known(self.left), known(self.right)]
+    }
+
     pub(crate) fn retain_for_usb_change(
         mut self,
         before: &crate::device_status::UsbKey,
@@ -321,6 +334,18 @@ mod tests {
         levels.observe(convert(available(Some(99)), available(None), true).unwrap());
         assert_eq!(levels.visible(true, true).left, Some(99));
         assert_eq!(levels.visible(true, true).right, Some(75));
+    }
+    #[test]
+    fn expired_receiver_values_do_not_look_live() {
+        let current = convert(available(Some(91)), available(Some(83)), true).unwrap();
+        assert_eq!(current.known_levels(), [true, true]);
+        let expired = convert(
+            BatteryStatus::Unavailable,
+            BatteryStatus::Unavailable,
+            false,
+        )
+        .unwrap();
+        assert_eq!(expired.known_levels(), [false, false]);
     }
     #[test]
     fn right_recovery_preserves_fresh_left_reading_but_not_right() {

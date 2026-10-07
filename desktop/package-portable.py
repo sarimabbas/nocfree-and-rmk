@@ -7,8 +7,11 @@ import platform
 import shutil
 import subprocess
 from pathlib import Path
+import sys
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT / 'scripts'))
+from copy_companion_firmware import copy as copy_firmware
 
 
 def main():
@@ -36,8 +39,7 @@ def main():
     resources.mkdir(parents=True)
     shutil.copy2(executable, bundle / executable.name)
     (resources / 'Firmware').mkdir()
-    for firmware_name in ('manifest.json', 'left.uf2', 'left.bin', 'right.uf2', 'right.bin', 'receiver.uf2', 'receiver.bin'):
-        shutil.copy2(firmware / firmware_name, resources / 'Firmware' / firmware_name)
+    copy_firmware(firmware, resources / 'Firmware')
     for source, target in [('LICENSE', 'LICENSE.txt')]:
         shutil.copy2(ROOT / source, resources / target)
     subprocess.run(['python3' if system == 'linux' else 'python',

@@ -44,6 +44,11 @@ jobs:
               - '.github/workflows/check.yml'
             companion:
               - 'desktop/**'
+              - 'scripts/copy_companion_firmware.py'
+              - 'scripts/unpack_companion_release.py'
+              - 'scripts/package_companion_release.py'
+              - 'scripts/test_companion_ci.py'
+              - 'scripts/test_companion_firmware_copy.py'
               - 'scripts/image_guard.py'
               - 'scripts/migration_guard.py'
               - 'tests/test_migration_guard.py'

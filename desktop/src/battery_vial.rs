@@ -10,6 +10,10 @@ use std::time::{Duration, Instant};
 
 const SIGNATURE: &[u8; 4] = b"NCBT";
 const HEADER: [u8; 4] = [0x08, 0x7e, 1, 1];
+const BATTERY_REPORT: &[u8] = &[
+    0x06, 0x60, 0xff, 0x09, 0x62, 0xa1, 0x01, 0x15, 0x00, 0x26, 0xff, 0x00, 0x75, 0x08, 0x95, 0x01,
+    0x09, 0x01, 0x91, 0x02, 0x95, 0x04, 0x09, 0x02, 0x81, 0x02, 0xc0,
+];
 
 fn request_version(version: u8) -> [u8; 33] {
     let mut value = request();
@@ -116,6 +120,19 @@ pub(super) fn read(started: Instant) -> Result<Readings, String> {
     let target = select_usb()?;
     let role = role(&target).ok_or("Unsupported keyboard identity.")?;
     let api = HidApi::new().map_err(|_| "Couldn't inspect the keyboard's HID battery service.")?;
+    let mut battery_interfaces = api.device_list().filter(|info| {
+        matches!(info.bus_type(), BusType::Usb)
+            && info.vendor_id() == 0x4c4b
+            && info.product_id() == role.product()
+            && info.product_string() == Some(role.name())
+            && (info.usage_page(), info.usage()) == (0xff60, 0x62)
+    });
+    if let Some(info) = battery_interfaces.next() {
+        if battery_interfaces.next().is_some() {
+            return Err("More than one battery interface is connected.".into());
+        }
+        return read_battery_interface(&api, &target, info, started);
+    }
     let mut interfaces = api.device_list().filter(|info| hid_matches(info, role));
     let info = interfaces
         .next()
@@ -205,6 +222,79 @@ pub(super) fn read(started: Instant) -> Result<Readings, String> {
         }
     }
     same_usb(&target)?;
+    Ok(readings)
+}
+
+fn read_battery_interface(
+    api: &HidApi,
+    target: &DeviceInfo,
+    info: &HidInfo,
+    started: Instant,
+) -> Result<Readings, String> {
+    let number = u8::try_from(info.interface_number())
+        .map_err(|_| "Couldn't identify the battery interface.")?;
+    if !target.interfaces().any(|interface| {
+        interface.interface_number() == number
+            && (
+                interface.class(),
+                interface.subclass(),
+                interface.protocol(),
+            ) == (3, 0, 0)
+    }) {
+        return Err("The selected interface is not a keyboard battery interface.".into());
+    }
+    let path = info.path().to_owned();
+    let device = api
+        .open_path(&path)
+        .map_err(|_| "Couldn't open the battery interface.")?;
+    let opened = device
+        .get_device_info()
+        .map_err(|_| "Couldn't confirm the battery interface.")?;
+    if opened.path() != path.as_c_str()
+        || opened.interface_number() != i32::from(number)
+        || (opened.usage_page(), opened.usage()) != (0xff60, 0x62)
+    {
+        return Err("The battery connection changed before the check.".into());
+    }
+    let mut descriptor = [0u8; 64];
+    let length = device
+        .get_report_descriptor(&mut descriptor)
+        .map_err(|_| "Couldn't inspect the battery interface.")?;
+    if &descriptor[..length] != BATTERY_REPORT {
+        return Err("The battery interface has an unexpected report layout.".into());
+    }
+    same_usb(target)?;
+    submission_allowed(started, Instant::now())?;
+    if device
+        .write(&[0, 1])
+        .map_err(|_| "Couldn't request battery levels.")?
+        != 2
+    {
+        return Err("The battery request was incomplete.".into());
+    }
+    let mut reply = [0u8; 5];
+    let length = device
+        .read_timeout(&mut reply, 1000)
+        .map_err(|_| "Couldn't read battery levels.")?;
+    let result = decode_battery_interface(&reply[..length])?;
+    same_usb(target)?;
+    Ok(result)
+}
+
+fn decode_battery_interface(reply: &[u8]) -> Result<Readings, String> {
+    let [0xb2, 1, left, right] = reply else {
+        return Err("The keyboard sent an invalid battery reply.".into());
+    };
+    let status = |level: u8| match level {
+        0..=100 => Ok(BatteryStatus::Available {
+            charge_state: ChargeState::Unknown,
+            level: Some(level),
+        }),
+        255 => Ok(BatteryStatus::Unavailable),
+        _ => Err("The keyboard sent an invalid battery level.".to_owned()),
+    };
+    let mut readings = super::convert(status(*left)?, status(*right)?, *right != 255)?;
+    readings.right_link_known = false;
     Ok(readings)
 }
 
@@ -508,6 +598,32 @@ mod tests {
 #[cfg(test)]
 mod telemetry_tests {
     use super::*;
+    #[test]
+    fn separate_battery_report_accepts_levels_and_unknown_but_rejects_invalid_data() {
+        let readings = decode_battery_interface(&[0xb2, 1, 95, 91]).unwrap();
+        assert!(matches!(
+            readings.left,
+            BatteryStatus::Available {
+                level: Some(95),
+                ..
+            }
+        ));
+        assert!(matches!(
+            readings.right,
+            BatteryStatus::Available {
+                level: Some(91),
+                ..
+            }
+        ));
+        assert!(readings.right_connected);
+        assert!(
+            !decode_battery_interface(&[0xb2, 1, 95, 255])
+                .unwrap()
+                .right_connected
+        );
+        assert!(decode_battery_interface(&[0xb2, 1, 101, 91]).is_err());
+        assert!(decode_battery_interface(&[0xb2, 1, 95]).is_err());
+    }
     #[test]
     fn v2_separates_power_active_route_and_known_switch() {
         let mut value = [0; 32];

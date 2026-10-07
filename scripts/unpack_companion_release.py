@@ -6,6 +6,12 @@ from pathlib import Path
 import zipfile
 
 FILES = {'manifest.json', *(f'{role}.{ext}' for role in ('left', 'right', 'receiver') for ext in ('bin', 'uf2'))}
+ALL_LAYOUT_FILES = {'manifest.json', 'receiver.bin', 'receiver.uf2', *(
+    f'{role}-{layout}.{ext}'
+    for role in ('left', 'right')
+    for layout in ('ansi', 'iso', 'jis', 'kr')
+    for ext in ('bin', 'uf2')
+)}
 
 def unpack(source, checksum, destination):
     raw = source.read_bytes()
@@ -13,8 +19,9 @@ def unpack(source, checksum, destination):
         raise ValueError('Firmware ZIP size or SHA256 does not match the reviewed input.')
     with zipfile.ZipFile(source) as archive:
         entries = archive.infolist()
-        if len(entries) != 7 or {e.filename for e in entries} != FILES:
-            raise ValueError('Firmware ZIP must contain exactly the seven package files at its root.')
+        names = {e.filename for e in entries}
+        if len(entries) != len(names) or names not in (FILES, ALL_LAYOUT_FILES):
+            raise ValueError('Firmware ZIP must contain exactly one reviewed package at its root.')
         if any(e.file_size > 1024 * 1024 or e.is_dir() or e.flag_bits & 1 for e in entries):
             raise ValueError('Firmware ZIP has an oversized, encrypted or directory entry.')
         if destination.exists():

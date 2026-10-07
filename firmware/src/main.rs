@@ -6,6 +6,8 @@ mod watchdog_recovery;
 compile_error!("The upstream half applications require the reclaimed SoftDevice layout");
 #[cfg(all(feature = "receiver", feature = "reclaimed-softdevice"))]
 compile_error!("The receiver keeps the factory application origin");
+#[cfg(feature = "battery-telemetry")]
+mod battery_telemetry;
 #[cfg(feature = "backlight")]
 mod board_backlight;
 #[cfg(feature = "backlight")]
@@ -287,6 +289,13 @@ async fn main(spawner: Spawner) {
             let mut keyboard = Keyboard::new(&keymap);
 
             let host_service = rmk::host::HostService::new(&keymap, &config);
+            #[cfg(feature = "battery-telemetry")]
+            let mut usb_builder = UsbTransport::builder(driver, device_config);
+            #[cfg(feature = "battery-telemetry")]
+            let battery_usb = battery_telemetry::usb(usb_builder.usb_builder());
+            #[cfg(feature = "battery-telemetry")]
+            let mut usb = usb_builder.build().with_host_service(&host_service);
+            #[cfg(not(feature = "battery-telemetry"))]
             let mut usb = UsbTransport::new(driver, device_config).with_host_service(&host_service);
             let ble = BleTransport::new(
                 sdc,
@@ -316,6 +325,14 @@ async fn main(spawner: Spawner) {
                 run_all!(matrix, battery_adc, battery, keyboard, storage, usb, ble);
             #[cfg(feature = "status-led")]
             let keyboard_tasks = rmk::futures::future::join(keyboard_tasks, status_led.run());
+            #[cfg(feature = "battery-telemetry")]
+            let keyboard_tasks = rmk::futures::future::join(
+                keyboard_tasks,
+                rmk::futures::future::join(
+                    battery_telemetry::run_usb(battery_usb),
+                    battery_telemetry::run_left(),
+                ),
+            );
             #[cfg(feature = "backlight")]
             rmk::futures::future::join(
                 keyboard_tasks,
@@ -335,10 +352,28 @@ async fn main(spawner: Spawner) {
         let mut storage = rmk::storage::new_storage_without_keymap(flash, storage_config).await;
         let router = DongleRouter::new();
         let mut dongle = Dongle::new(sdc, ble_addr(), &router);
+        #[cfg(feature = "battery-telemetry")]
+        let mut usb_builder = UsbTransport::builder(driver, device_config);
+        #[cfg(feature = "battery-telemetry")]
+        let battery_usb = battery_telemetry::usb(usb_builder.usb_builder());
+        #[cfg(feature = "battery-telemetry")]
+        let mut usb = usb_builder.build().with_dongle_router(&router);
+        #[cfg(not(feature = "battery-telemetry"))]
         let mut usb = UsbTransport::new(driver, device_config).with_dongle_router(&router);
         #[cfg(feature = "runtime-recovery")]
-        run_all!(storage, dongle, usb, watchdog_runner).await;
+        let tasks = run_all!(storage, dongle, usb, watchdog_runner);
         #[cfg(not(feature = "runtime-recovery"))]
-        run_all!(storage, dongle, usb).await;
+        let tasks = run_all!(storage, dongle, usb);
+        #[cfg(feature = "battery-telemetry")]
+        rmk::futures::future::join(
+            tasks,
+            rmk::futures::future::join(
+                battery_telemetry::run_usb(battery_usb),
+                battery_telemetry::run_receiver(&router),
+            ),
+        )
+        .await;
+        #[cfg(not(feature = "battery-telemetry"))]
+        tasks.await;
     }
 }
