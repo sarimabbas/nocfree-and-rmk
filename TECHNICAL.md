@@ -1,6 +1,6 @@
 # Technical guide
 
-Companion and its included ANSI firmware use version 1.0.1. The firmware uses upstream RMK and keeps the factory bootloader. This guide covers board code, recovery, builds and releases.
+Companion and its included ANSI firmware use version 1.0.2. The firmware uses upstream RMK and keeps the factory bootloader. This guide covers board code, recovery, builds and releases.
 
 ## Keyboard setup
 
@@ -209,7 +209,7 @@ Each transfer saves a fresh backup, writes the image once, reads it back to chec
 
 Test connections checks USB, Bluetooth and dongle typing in separate steps. Only Next advances the journey. Connection setup and typing share one screen. Five-second unplug checks run on the disconnect screen. Fresh host observations enable the typing field; an exact test string enables Next immediately. Competing USB and Bluetooth connections must be removed for each test. A connection change clears that test. RMK owns bonding; Companion does not clear bonds or send private pairing commands.
 
-Whole-keyboard installation ends with wired, Bluetooth and dongle typing checks. The test `qwert HJKL h` exercises left input, right input, cross-half Shift and modifier release.
+Use **Test connections** after installation to check wired, Bluetooth and dongle typing. The test `qwert HJKL h` exercises left input, right input, cross-half Shift and modifier release.
 
 Companion checks the latest public GitHub release once at startup. A newer stable app version shows an Update available link in the sidebar. The request runs in the background with a ten-second timeout; failed checks leave the app usable.
 

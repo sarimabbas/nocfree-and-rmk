@@ -54,28 +54,29 @@ fn tooltip(
         if !mode_matches && let Some(mode) = battery.and_then(|b| b.mode) {
             facts.push(mode.label().into());
         }
-        facts.push(
-            match route {
-                Connection::Usb if label == "Dongle" => "USB connected",
-                Connection::Usb => "Wired connected",
-                Connection::Bluetooth => "Bluetooth connected",
-                Connection::Dongle => "Connected through dongle",
-                Connection::Disconnected => "Not connected",
-                Connection::Unknown if usb_attachment => "USB connected",
-                Connection::Unknown => "Typing connection not reported",
-            }
-            .into(),
-        );
+        if route != Connection::Unknown || usb_attachment {
+            facts.push(
+                match route {
+                    Connection::Usb if label == "Dongle" => "USB connected",
+                    Connection::Usb => "Wired connected",
+                    Connection::Bluetooth => "Bluetooth connected",
+                    Connection::Dongle => "Connected through dongle",
+                    Connection::Disconnected => "Not connected",
+                    Connection::Unknown if usb_attachment => "USB connected",
+                    Connection::Unknown => unreachable!(),
+                }
+                .into(),
+            );
+        }
     } else if let Some(state) = battery {
-        facts.push(
-            match state.link_connected {
-                Some(true) => "Connected to left",
-                Some(false) => "Not connected",
-                None if usb_attachment => "USB connected",
-                None => "Wireless link not reported",
-            }
-            .into(),
-        );
+        if let Some(status) = match state.link_connected {
+            Some(true) => Some("Connected to left"),
+            Some(false) => Some("Not connected"),
+            None if usb_attachment => Some("USB connected"),
+            None => None,
+        } {
+            facts.push(status.into());
+        }
     }
     if let Some(state) = battery {
         if state.usb_connected
@@ -339,7 +340,7 @@ mod tests {
         );
         assert_eq!(
             tooltip("Right", None, Some(Peripheral::default()), false),
-            "Right · Wireless link not reported"
+            "Right"
         );
         assert_eq!(
             tooltip("Dongle", Some(Connection::Disconnected), None, true),

@@ -31,7 +31,7 @@ impl Procedure {
                     "Keep the left half in WIRED mode with USB connected. Unplug the right half, then reconnect it to the same USB port."
                 }
                 Role::Receiver => {
-                    "Unplug both halves and the dongle. Wait five seconds, then reconnect only the dongle to the same USB port."
+                    "Unplug both halves from USB. Unplug the dongle for five seconds, then reconnect it to the same USB port. Keep the halves' USB cables unplugged."
                 }
             },
             Self::FactoryLeft => {
@@ -41,7 +41,7 @@ impl Procedure {
                 "Keep the paired left half on factory firmware, in WIRED mode with USB connected. Turn the right half ON and connect its USB cable. Hold Fn + 0 on the number row for five seconds, then release both keys."
             }
             Self::FactoryReceiver => {
-                "Keep only the dongle connected by USB. Use the paired left half with factory firmware and move its switch to top DONGLE. Hold Fn + 6 on the left half for five seconds, then release both keys."
+                "Keep only the dongle connected by USB. Move the paired LEFT half to top DONGLE. Hold LEFT Fn, then press and hold the number-row 6 for five seconds. Release both keys."
             }
             Self::RuntimeApp => "Keep USB connected while the app opens the recovery drive.",
         }
@@ -214,16 +214,13 @@ impl RecoveryJourney {
     }
 }
 
-/// Production recovery starts from a local USB connection. Upstream RMK
-/// restricts the dongle DETACH interface to 30 seconds after CPU startup;
-/// LEFT uses the native VIA bootloader command instead.
+/// Identification first observes the attached part. The worker supplies any
+/// required reconnect instructions after checking its recovery interface.
 pub fn instruction(role: Role) -> &'static str {
     match role {
-        Role::Left => "Connect the left half by USB. ",
-        Role::Right => "Connect the right half by USB. ",
-        Role::Receiver => {
-            "Unplug the dongle, then plug it back in. Keep it connected while the app opens recovery."
-        }
+        Role::Left => "Connect the left half by USB and keep it connected.",
+        Role::Right => "Connect the right half by USB and keep it connected.",
+        Role::Receiver => "Connect the dongle by USB and keep it connected.",
     }
 }
 

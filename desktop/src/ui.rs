@@ -168,7 +168,6 @@ pub struct Companion {
     rescue_cancel: Option<Arc<AtomicBool>>,
     manual_advance: bool,
     pending_recovery: Option<(Attempt, RecoveryRole, crate::session::Session)>,
-    pending_procedure: Option<(Attempt, RecoveryRole, crate::recovery_journey::Procedure)>,
     backup_state: BackupMachine,
     session: Option<Journey>,
     operation: crate::operation::Operation,
@@ -188,7 +187,6 @@ pub struct Companion {
     version_refresh: bool,
     home: Home,
     firmware: Option<FirmwareJourney>,
-    pending_firmware: Option<FirmwareJourney>,
     pending_backup: Option<Journey>,
     install: Option<InstallMachine>,
     typing_input: Option<(
@@ -585,7 +583,6 @@ impl Companion {
             rescue_cancel: None,
             manual_advance: false,
             pending_recovery: None,
-            pending_procedure: None,
             backup_state: BackupMachine::new(),
             session: Some(session),
             operation: Default::default(),
@@ -605,7 +602,6 @@ impl Companion {
             version_refresh: false,
             home: Home::default(),
             firmware: None,
-            pending_firmware: None,
             pending_backup: None,
             install: None,
             typing_input: None,
@@ -652,7 +648,7 @@ impl Companion {
             ("setup", self.navigation.can_start())
         } else if self.pending_backup.is_some() {
             ("backup-saved", true)
-        } else if self.pending_recovery.is_some() || self.pending_procedure.is_some() {
+        } else if self.pending_recovery.is_some() {
             ("recovery-result", self.recovery_proof_ready())
         } else if let Some(install) = self.install.as_ref().filter(|install| {
             (self.firmware_page() || self.pairing_check_active())
@@ -689,9 +685,8 @@ impl Companion {
                 } else {
                     "restart"
                 },
-                self.pending_firmware
+                self.firmware
                     .as_ref()
-                    .or(self.firmware.as_ref())
                     .is_some_and(FirmwareJourney::can_next),
             )
         } else if self.navigation.page() == Page::Recovery {
@@ -799,7 +794,6 @@ impl Companion {
 
     fn firmware_view(&self) -> Option<FirmwareView> {
         displayed_firmware_view(
-            self.pending_firmware.as_ref().map(FirmwareJourney::view),
             self.firmware.as_ref().map(FirmwareJourney::view),
             self.operation.firmware_view(),
         )
@@ -1308,14 +1302,16 @@ impl Companion {
             };
         }
         let mut body = match self.navigation.page() {
-            Page::Restore => self.factory_sources_screen(cx).when(scope != Scope::Whole, |body| {
-                body.child(
-                    div()
-                        .text_center()
-                        .text_color(cx.theme().muted_foreground)
-                        .child("Restore the selected parts. Select all three parts to check typing after the restore."),
-                )
-            }),
+            Page::Restore => self
+                .factory_sources_screen(cx)
+                .when(scope != Scope::Whole, |body| {
+                    body.child(
+                        div()
+                            .text_center()
+                            .text_color(cx.theme().muted_foreground)
+                            .child("Restore the selected parts from their saved factory backups."),
+                    )
+                }),
             Page::Backups | Page::Home => {
                 scope_guide(scope, "Save the selected firmware on this computer.", cx)
             }
@@ -1327,7 +1323,12 @@ impl Companion {
             Page::Pairing => recovery_guide(
                 None,
                 "Test connections",
-                if self.latest_discovery.as_ref().is_some_and(|snapshot| snapshot.devices.iter().any(|d| d.factory_left() || d.factory_dongle())) {
+                if self.latest_discovery.as_ref().is_some_and(|snapshot| {
+                    snapshot
+                        .devices
+                        .iter()
+                        .any(|d| d.factory_left() || d.factory_dongle())
+                }) {
                     "Test both halves through the factory dongle. Follow the setup, then type the test text."
                 } else {
                     "Test both halves over USB, Bluetooth and the dongle. Follow each setup, then type the test text."
@@ -1338,9 +1339,9 @@ impl Companion {
             Page::Firmware => scope_guide(
                 scope,
                 if scope == Scope::Whole {
-                    "Install RMK on your dongle and both halves, then test USB, Bluetooth and the dongle. Your current firmware will be backed up automatically."
+                    "Install RMK on your dongle and both halves. Your current firmware will be backed up automatically."
                 } else {
-                    "Save the current firmware and install RMK on the selected parts. Select all three parts to test USB, Bluetooth and the dongle after installation."
+                    "Save the current firmware and install RMK on the selected parts."
                 },
                 cx,
             ),
@@ -1458,7 +1459,7 @@ impl Companion {
                                 if this.rescue_cancel.as_ref().is_some_and(|current| Arc::ptr_eq(current, &cancelled))
                                     && !cancelled.load(Ordering::Relaxed)
                                 {
-                                    if this.rescue.state() != RecoveryState::Guiding(role, procedure) { this.pending_procedure = Some((attempt, role, procedure)); }
+                                    this.rescue.observe(attempt, role, procedure);
                                     cx.notify();
                                 }
                             });
@@ -1472,7 +1473,7 @@ impl Companion {
 
     fn recovery_proof_ready(&self) -> bool {
         if self.pending_recovery.is_none() {
-            return self.pending_procedure.is_some();
+            return false;
         }
         if !self
             .discovery_seen
@@ -1504,7 +1505,6 @@ impl Companion {
             return;
         }
         if let Some((attempt, role, session)) = self.pending_recovery.take() {
-            self.pending_procedure = None;
             if let Ok((_, location, _)) = session.recovery_binding() {
                 self.recovery_locations[role_index(role)] = Some(location);
             }
@@ -1541,8 +1541,6 @@ impl Companion {
             } else {
                 self.rescue.complete(attempt, role, Ok(()));
             }
-        } else if let Some((attempt, role, procedure)) = self.pending_procedure.take() {
-            self.rescue.observe(attempt, role, procedure);
         }
         cx.notify();
     }
@@ -1550,21 +1548,22 @@ impl Companion {
         if self.operation.busy() {
             return;
         }
-        if let Some(journey) = self.pending_firmware.take() {
-            self.firmware = Some(journey);
-            if !self.firmware.as_mut().is_some_and(FirmwareJourney::next) {
-                self.manual_advance = true;
-                self.advance_firmware(cx);
-            }
-        } else if let Some(journey) = self.pending_backup.take() {
+        if let Some(journey) = self.pending_backup.take() {
             self.backup_state
                 .transition(BackupEvent::Observed(journey.state()));
             self.session = Some(journey);
             self.backup_state.next();
-        } else if self.pending_recovery.is_some() || self.pending_procedure.is_some() {
+        } else if self.pending_recovery.is_some() {
             self.recovery_next(cx);
         } else if self.firmware_page() {
             if self.firmware.as_mut().is_some_and(FirmwareJourney::next) {
+                if self
+                    .firmware_view()
+                    .is_some_and(|view| view.complete || view.needs_recovery)
+                {
+                    self.manual_advance = true;
+                    self.advance_firmware(cx);
+                }
                 cx.notify();
                 return;
             }
@@ -1592,7 +1591,6 @@ impl Companion {
 
     fn cancel_recovery(&mut self) {
         self.pending_recovery = None;
-        self.pending_procedure = None;
         if let Some(cancelled) = self.rescue_cancel.take() {
             cancelled.store(true, Ordering::Relaxed);
         }
@@ -1683,7 +1681,11 @@ impl Companion {
                                 this.navigation.reset();
                                 cx.notify();
                             } else {
+                                let page = this.navigation.page();
                                 this.navigate(Page::Home, cx);
+                                this.navigation.navigate(page);
+                                this.observe_preflight();
+                                cx.notify();
                             }
                         })),
                 )
@@ -1692,18 +1694,15 @@ impl Companion {
             .when_some(next, |row, next| row.child(next))
     }
     fn completed_operation_screen(&self, cx: &mut Context<Self>) -> JourneyScreen {
-        let (role, title, instruction) = if let Some(journey) = &self.pending_firmware {
-            let view = journey.view();
-            (Some(view.role), view.title, view.instruction)
-        } else {
-            (
-                self.backup_component(),
-                "Your firmware copy is saved".into(),
-                "Click Next for restart instructions.".into(),
-            )
-        };
         JourneyScreen {
-            body: recovery_guide_status(role, title, instruction, None, true, cx),
+            body: recovery_guide_status(
+                self.backup_component(),
+                "Your firmware copy is saved",
+                "Click Next for restart instructions.",
+                None,
+                true,
+                cx,
+            ),
             actions: Some(
                 self.footer(
                     Some(
@@ -1719,10 +1718,7 @@ impl Companion {
         if self.pending_backup.is_some() {
             return self.completed_operation_screen(cx);
         }
-        if self.rescue_cancel.is_some()
-            || self.pending_recovery.is_some()
-            || self.pending_procedure.is_some()
-        {
+        if self.rescue_cancel.is_some() || self.pending_recovery.is_some() {
             return self.recovery_screen(cx);
         }
         let complete = self.backup_state.state() == BackupState::Complete
@@ -1984,6 +1980,40 @@ impl Companion {
             };
         }
         let recovery_ready = self.recovery_proof_ready();
+        if let Some((_, role, _)) = self.pending_recovery.as_ref() {
+            let role = *role;
+            return JourneyScreen {
+                body: recovery_guide_status(
+                    Some(role),
+                    "Recovery drive",
+                    if recovery_ready {
+                        "The recovery drive is ready. Keep USB connected, then click Next."
+                    } else {
+                        "The recovery drive disconnected. Keep USB connected, then click Next to open it again."
+                    },
+                    None,
+                    recovery_ready,
+                    cx,
+                ),
+                actions: Some(self.footer(
+                    Some(button("recovery-result-next", "Next").on_click(cx.listener(
+                        |this, _, _, cx| {
+                            if this.recovery_proof_ready() {
+                                this.recovery_next(cx);
+                            } else if let Some((_, role, _)) = this.pending_recovery.as_ref() {
+                                let role = *role;
+                                let backup = this.navigation.page() == Page::Backups;
+                                this.cancel_recovery();
+                                if let Some(attempt) = this.rescue.start(role) {
+                                    this.run_recovery(role, attempt, backup, cx);
+                                }
+                            }
+                        },
+                    ))),
+                    cx,
+                )),
+            };
+        }
         let recovery_next = |cx: &mut Context<Self>| {
             button("recovery-step-next", "Next")
                 .disabled(!recovery_ready)
@@ -2336,9 +2366,9 @@ impl Companion {
                             "Both halves passed all three typing tests."
                         }
                     } else if self.navigation.page() == Page::Restore {
-                        "Factory firmware restored. All three typing tests passed."
+                        "Factory firmware restored. The selected parts passed readback verification."
                     } else {
-                        "RMK installed. All three typing tests passed."
+                        "RMK installed. The selected parts passed readback verification."
                     },
                     None,
                     cx,
@@ -2395,17 +2425,13 @@ impl Companion {
         self.cancel_recovery();
         self.operation.clear_error();
         self.firmware = None;
-        self.pending_firmware = None;
         let factory = self.navigation.page() == Page::Restore;
         let scope = self.navigation.scope().expect("Started firmware scope");
-        self.install = Some(InstallMachine::scoped(
-            if factory {
-                install_journey::Target::Factory
-            } else {
-                install_journey::Target::Rmk
-            },
-            scope,
-        ));
+        self.install = Some(InstallMachine::for_firmware(if factory {
+            install_journey::Target::Factory
+        } else {
+            install_journey::Target::Rmk
+        }));
         let layout = self.navigation.layout();
         if !factory {
             let _ = layout.save();
@@ -2442,8 +2468,9 @@ impl Companion {
                 match result {
                     Ok(mut journey) => {
                         journey.authorize_install();
-
-                        this.pending_firmware = Some(journey);
+                        this.firmware = Some(journey);
+                        this.manual_advance = true;
+                        this.advance_firmware(cx);
                     }
                     Err(error) => this.operation.fail(error),
                 }
@@ -2485,7 +2512,7 @@ impl Companion {
                 }
 
                 match result {
-                    Ok(()) => this.pending_firmware = Some(journey),
+                    Ok(()) => this.firmware = Some(journey),
                     Err(error) => {
                         this.firmware = Some(journey);
                         this.operation.fail(error);
@@ -2573,7 +2600,7 @@ impl Companion {
                             while let Ok(procedure) = receive.try_recv() {
                                 let _ = this.update(cx, |this, cx| {
                                     if this.rescue_cancel.as_ref().is_some_and(|c| Arc::ptr_eq(c, &cancelled)) && !cancelled.load(Ordering::Relaxed) {
-                                        if this.rescue.state() != RecoveryState::Guiding(role, procedure) { this.pending_procedure = Some((attempt, role, procedure)); }
+                                        this.rescue.observe(attempt, role, procedure);
                                         cx.notify();
                                     }
                                 });
@@ -2586,9 +2613,6 @@ impl Companion {
     }
 
     fn firmware_screen(&self, cx: &mut Context<Self>) -> JourneyScreen {
-        if self.pending_firmware.is_some() {
-            return self.completed_operation_screen(cx);
-        }
         if let Some(error) = self.operation.error() {
             return JourneyScreen {
                 body: recovery_guide(
@@ -2625,10 +2649,7 @@ impl Companion {
                 ),
             };
         }
-        if self.rescue_cancel.is_some()
-            || self.pending_recovery.is_some()
-            || self.pending_procedure.is_some()
-        {
+        if self.rescue_cancel.is_some() || self.pending_recovery.is_some() {
             return self.recovery_screen(cx);
         }
         let Some(view) = self.firmware_view() else {
@@ -2879,7 +2900,6 @@ impl Companion {
         if self.operation.busy() || self.navigation.page() == page {
             return;
         }
-        self.pending_firmware = None;
         self.pending_backup = None;
         self.usb_identification.cancel();
         if let Some(batch) = self.peripherals.as_mut() {
@@ -3161,7 +3181,7 @@ impl Render for Companion {
                         self.firmware_view().map_or(0, |v| v.step)
                     }
                     Some(InstallStage::Checking(_)) => 3,
-                    Some(InstallStage::Complete) => 4,
+                    Some(InstallStage::Complete) => 3,
                     _ => 0,
                 };
                 heading = heading.child(
@@ -3171,9 +3191,9 @@ impl Render for Companion {
                         .disabled(true)
                         .items(
                             (if self.navigation.page() == Page::Restore {
-                                vec!["Left half", "Right half", "Dongle", "Test modes"]
+                                vec!["Left half", "Right half", "Dongle"]
                             } else {
-                                vec!["Dongle", "Right half", "Left half", "Test modes"]
+                                vec!["Dongle", "Right half", "Left half"]
                             })
                             .into_iter()
                             .map(|label| StepperItem::new().child(label)),
@@ -3595,14 +3615,12 @@ fn scope_guide(scope: Scope, instruction: &str, cx: &App) -> gpui::Div {
         .child(instruction_line(instruction.to_owned(), false, cx))
 }
 
-// Completed worker results remain authoritative for display while Next has not
-// adopted them. Reading the view never changes the journey.
+// Keep showing the active journey while the operation reports its prior view.
 fn displayed_firmware_view(
-    pending: Option<FirmwareView>,
     current: Option<FirmwareView>,
     operation: Option<FirmwareView>,
 ) -> Option<FirmwareView> {
-    pending.or(current).or(operation)
+    current.or(operation)
 }
 
 #[cfg(test)]
@@ -3610,7 +3628,7 @@ mod firmware_presentation_tests {
     use super::*;
 
     #[test]
-    fn completed_right_step_keeps_its_progress_until_next_adoption() {
+    fn completed_right_step_keeps_its_progress() {
         let mut right = FirmwareJourney::new(crate::release::fixture()).view();
         right.role = RecoveryRole::Right;
         right.step = 1;
@@ -3623,20 +3641,18 @@ mod firmware_presentation_tests {
             )
             .unwrap();
         assert_eq!(
-            displayed_firmware_view(None, None, operation.firmware_view())
+            displayed_firmware_view(None, operation.firmware_view())
                 .unwrap()
                 .step,
             1
         );
         assert!(operation.complete(ticket));
-        let pending = displayed_firmware_view(Some(right), None, operation.firmware_view())
-            .expect("pending worker result must remain visible");
-        assert_eq!(pending.role, RecoveryRole::Right);
-        assert_eq!(pending.step, 1);
+        let current = displayed_firmware_view(Some(right), operation.firmware_view())
+            .expect("completed journey must remain visible");
+        assert_eq!(current.role, RecoveryRole::Right);
+        assert_eq!(current.step, 1);
         assert_eq!(
-            displayed_firmware_view(None, Some(pending), None)
-                .unwrap()
-                .step,
+            displayed_firmware_view(Some(current), None).unwrap().step,
             1
         );
     }

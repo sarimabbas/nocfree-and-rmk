@@ -119,8 +119,6 @@ enum Phase {
     Approval,
     Reconcile,
     Disconnect,
-    PowerOn,
-    StartWait(Instant),
     Reconnect,
     Complete,
     Failed,
@@ -132,7 +130,6 @@ pub struct View {
     pub instruction: String,
     pub role: Role,
     pub step: usize,
-    pub needs_power_on_ack: bool,
     pub needs_wired_ack: bool,
     pub can_transfer: bool,
     pub needs_recovery: bool,
@@ -176,7 +173,6 @@ enum FirmwareEvent<'a> {
     TransferAttempted,
     TransferResult(&'a Result<(), String>),
     Verified,
-    PowerOn(Instant),
     Observe(
         &'a Result<Snapshot, String>,
         Instant,
@@ -261,9 +257,6 @@ impl StatigState<FirmwareData> for Phase {
                 data.error = None;
                 return Transition(Phase::Disconnect);
             }
-            FirmwareEvent::PowerOn(now) if *self == Phase::PowerOn => {
-                return Transition(Phase::StartWait(*now));
-            }
             _ => {}
         }
         let (FirmwareEvent::Observe(observation, now, mode)
@@ -287,9 +280,7 @@ impl StatigState<FirmwareData> for Phase {
                 data.absent_since = None;
                 if *self != Phase::Failed {
                     data.retry_phase = Some(match self {
-                        Phase::PowerOn | Phase::StartWait(_) | Phase::Reconnect => {
-                            Phase::Disconnect
-                        }
+                        Phase::Reconnect => Phase::Disconnect,
                         phase => *phase,
                     });
                 }
@@ -331,15 +322,13 @@ impl StatigState<FirmwareData> for Phase {
         // Verification already proved the installed image. A fresh normal
         // descriptor on its bound port proves it returned; an unplug can occur
         // entirely between discovery polls, so do not require observing absence.
-        let returned = matches!(
-            phase,
-            Phase::Disconnect | Phase::PowerOn | Phase::StartWait(_) | Phase::Reconnect
-        ) && normal_return(
-            snapshot,
-            data.role(),
-            baseline.location,
-            data.release.factory(),
-        );
+        let returned = matches!(phase, Phase::Disconnect | Phase::Reconnect)
+            && normal_return(
+                snapshot,
+                data.role(),
+                baseline.location,
+                data.release.factory(),
+            );
         data.wired_ack_available = returned && data.role() == Role::Left && data.release.factory();
         if !returned {
             data.wired_ack = false;
@@ -348,10 +337,7 @@ impl StatigState<FirmwareData> for Phase {
         // selection is checked separately by the isolated typing journey.
         let return_allowed = data.role() != Role::Left || !data.release.factory() || data.wired_ack;
         if matches!(event, FirmwareEvent::Observe(..))
-            && matches!(
-                phase,
-                Phase::Disconnect | Phase::PowerOn | Phase::StartWait(_) | Phase::Reconnect
-            )
+            && matches!(phase, Phase::Disconnect | Phase::Reconnect)
         {
             return Handled;
         }
@@ -371,21 +357,11 @@ impl StatigState<FirmwareData> for Phase {
             };
         }
         let next = match phase {
-            Phase::PowerOn | Phase::StartWait(_) if connected => Phase::Disconnect,
             Phase::Disconnect
                 if !connected
                     && data.absent_since.is_some_and(|since| {
                         now.saturating_duration_since(since) >= Duration::from_secs(5)
                     }) =>
-            {
-                if data.role() == Role::Right {
-                    Phase::PowerOn
-                } else {
-                    Phase::Reconnect
-                }
-            }
-            Phase::StartWait(since)
-                if now.saturating_duration_since(since) >= Duration::from_secs(10) =>
             {
                 Phase::Reconnect
             }
@@ -832,35 +808,46 @@ impl FirmwareJourney {
     }
     pub fn view(&self) -> View {
         let (title, instruction) = match *self.machine.state() {
+            Phase::Recovery if self.is_factory() => (
+                "Back up current firmware",
+                "Open recovery to save a copy before restoring factory firmware.",
+            ),
             Phase::Recovery => (
-                "Connect your keyboard",
-                "Follow the recovery steps to save a copy before installing.",
+                "Back up current firmware",
+                "Open recovery to save a copy before installing RMK.",
+            ),
+            Phase::Approval if self.is_factory() => (
+                "Ready to restore",
+                "Your RMK firmware copy is saved. Restore factory firmware when you’re ready.",
             ),
             Phase::Approval => (
                 "Ready to install",
-                "Your firmware copy is saved. Install the update when you’re ready.",
+                "Your firmware copy is saved. Install RMK when you’re ready.",
+            ),
+            Phase::Reconcile if self.is_factory() => (
+                "Check restored firmware",
+                "Open recovery again to check the factory image.",
             ),
             Phase::Reconcile => (
-                "Check the installed firmware",
-                "Open recovery again. We’ll check the saved bytes before continuing.",
+                "Check installed firmware",
+                "Open recovery again to check the RMK image.",
             ),
             Phase::Disconnect if self.role() == Role::Right => (
-                "Start the right half",
-                "If the recovery drive is open, turn RIGHT OFF and unplug USB for five seconds. Keep it OFF until prompted to turn it ON.",
+                "Restart the right half",
+                "If the recovery drive is open, turn RIGHT OFF and unplug USB for five seconds.",
             ),
             Phase::Disconnect if self.role() == Role::Left => (
-                "Start the left half",
+                "Reconnect the left half",
                 "Move LEFT to middle WIRED. If the recovery drive is open, unplug USB for five seconds; otherwise keep it connected.",
             ),
             Phase::Disconnect => (
-                "Start the dongle",
+                "Reconnect the dongle",
                 "If the recovery drive is open, unplug the dongle for five seconds. Otherwise keep it connected.",
             ),
-            Phase::PowerOn => (
-                "Turn the right half ON",
-                "Keep USB unplugged. Turn it ON, then continue.",
+            Phase::Reconnect if self.role() == Role::Right => (
+                "Start the right half",
+                "Turn RIGHT ON. Wait ten seconds, then reconnect USB to the same port.",
             ),
-            Phase::StartWait(_) => ("Let it start", "Keep USB unplugged for ten seconds."),
             Phase::Reconnect => ("Reconnect USB", "Reconnect it to the same USB port."),
             Phase::Complete if self.is_factory() => (
                 "Factory firmware restored",
@@ -881,10 +868,8 @@ impl FirmwareJourney {
         };
         View {
             title: if self.machine.inner().already_current
-                && matches!(
-                    self.machine.state(),
-                    Phase::Disconnect | Phase::PowerOn | Phase::StartWait(_) | Phase::Reconnect
-                ) {
+                && matches!(self.machine.state(), Phase::Disconnect | Phase::Reconnect)
+            {
                 if self.is_factory() {
                     "Already on factory firmware"
                 } else {
@@ -902,7 +887,6 @@ impl FirmwareJourney {
                 && self.role() == Role::Left
                 && !self.machine.inner().wired_ack
                 && matches!(*self.machine.state(), Phase::Disconnect | Phase::Reconnect),
-            needs_power_on_ack: *self.machine.state() == Phase::PowerOn,
             can_transfer: *self.machine.state() == Phase::Approval
                 && !self.machine.inner().attempted,
             needs_recovery: matches!(*self.machine.state(), Phase::Recovery | Phase::Reconcile),
@@ -1105,14 +1089,6 @@ impl FirmwareJourney {
                             now.saturating_duration_since(since) >= Duration::from_secs(5)
                         }))
             }
-            Phase::PowerOn => returned || !connected,
-            Phase::StartWait(since) => {
-                returned
-                    || connected
-                    || self.machine.inner().absent_since.is_some_and(|absent| {
-                        now.saturating_duration_since(absent.max(since)) >= Duration::from_secs(10)
-                    })
-            }
             Phase::Reconnect => returned || connected && !normal,
             _ => false,
         }
@@ -1129,27 +1105,12 @@ impl FirmwareJourney {
         if self.view().needs_wired_ack {
             self.confirm_wired();
         }
-        if *self.machine.state() == Phase::PowerOn
-            && !snapshot.devices.iter().any(|d| {
-                self.machine
-                    .inner()
-                    .baseline
-                    .as_ref()
-                    .is_some_and(|b| d.location == b.location)
-            })
-        {
-            self.machine.handle(&FirmwareEvent::PowerOn(now));
-        } else {
-            self.machine
-                .handle(&FirmwareEvent::Advance(&Ok(snapshot), now, mode));
-        }
+        self.machine
+            .handle(&FirmwareEvent::Advance(&Ok(snapshot), now, mode));
         true
     }
     pub fn confirm_wired(&mut self) {
         self.machine.handle(&FirmwareEvent::ConfirmWired);
-    }
-    pub fn confirm_power_on(&mut self) {
-        self.machine.handle(&FirmwareEvent::PowerOn(Instant::now()));
     }
     pub fn observe(&mut self, observation: Result<Snapshot, String>) {
         self.observe_at(observation, Instant::now());
@@ -1550,30 +1511,15 @@ mod tests {
             journey.observe_at(Ok(Snapshot::default()), now + Duration::from_secs(10));
             assert_eq!(*journey.machine.state(), Phase::Disconnect);
             assert!(journey.next_at(now + Duration::from_secs(10)));
-            assert_eq!(
-                *journey.machine.state(),
-                if role == Role::Right {
-                    Phase::PowerOn
-                } else {
-                    Phase::Reconnect
-                }
-            );
+            assert_eq!(*journey.machine.state(), Phase::Reconnect);
         }
     }
     #[test]
-    fn right_restart_requires_off_wait_ack_start_wait_and_unique_same_port_normal() {
+    fn right_restart_requires_off_wait_and_unique_same_port_normal() {
         let mut journey = model(Role::Right);
         let now = Instant::now();
         journey.observe_advance_at(Ok(Snapshot::default()), now);
         journey.observe_advance_at(Ok(Snapshot::default()), now + Duration::from_secs(5));
-        assert_eq!(*journey.machine.state(), Phase::PowerOn);
-        assert!(journey.view().needs_power_on_ack);
-        unsafe {
-            *journey.machine.state_mut() = Phase::StartWait(now + Duration::from_secs(5));
-        }
-        journey.observe_advance_at(Ok(Snapshot::default()), now + Duration::from_secs(14));
-        assert!(matches!(*journey.machine.state(), Phase::StartWait(_)));
-        journey.observe_advance_at(Ok(Snapshot::default()), now + Duration::from_secs(15));
         assert_eq!(*journey.machine.state(), Phase::Reconnect);
         journey.observe_advance_at(Ok(normal(Role::Right, 11)), now + Duration::from_secs(16));
         assert_eq!(*journey.machine.state(), Phase::Reconnect);
@@ -1620,12 +1566,7 @@ mod tests {
     #[test]
     fn verified_fresh_normal_return_can_finish_between_discovery_polls() {
         for role in PLAN {
-            for phase in [
-                Phase::Disconnect,
-                Phase::PowerOn,
-                Phase::StartWait(Instant::now()),
-                Phase::Reconnect,
-            ] {
+            for phase in [Phase::Disconnect, Phase::Reconnect] {
                 let mut journey = model(role);
                 unsafe {
                     *journey.machine.state_mut() = phase;
@@ -1715,7 +1656,7 @@ mod tests {
         settle(&mut journey, Ok(normal(Role::Right, 10)));
         assert_eq!(journey.role(), Role::Left);
         assert!(!journey.machine.inner().already_current);
-        assert_eq!(journey.view().title, "Connect your keyboard");
+        assert_eq!(journey.view().title, "Back up current firmware");
     }
     #[test]
     fn automatic_transfer_requires_overall_approval_and_a_ready_phase() {
@@ -2155,12 +2096,7 @@ mod tests {
     #[test]
     fn returning_discovery_failure_requires_new_verified_off_interval() {
         let now = Instant::now();
-        for phase in [
-            Phase::Disconnect,
-            Phase::PowerOn,
-            Phase::StartWait(now),
-            Phase::Reconnect,
-        ] {
+        for phase in [Phase::Disconnect, Phase::Reconnect] {
             let mut journey = model(Role::Right);
             unsafe {
                 journey.machine.inner_mut().attempted = true;

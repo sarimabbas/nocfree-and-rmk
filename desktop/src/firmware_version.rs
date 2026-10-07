@@ -95,7 +95,7 @@ pub(crate) fn connected_label(
     }) {
         label(true, observations)
     } else {
-        "Firmware not detected".into()
+        "Connect USB to see firmware version".into()
     }
 }
 
@@ -124,9 +124,15 @@ mod tests {
             connected_label(&devices, &[]),
             "Running factory firmware · version unknown"
         );
-        assert_eq!(connected_label(&vec![], &[]), "Firmware not detected");
+        assert_eq!(
+            connected_label(&vec![], &[]),
+            "Connect USB to see firmware version"
+        );
         let unknown = vec![(1, 0x2886, 0x8029, "Other dongle".into())];
-        assert_eq!(connected_label(&unknown, &[]), "Firmware not detected");
+        assert_eq!(
+            connected_label(&unknown, &[]),
+            "Connect USB to see firmware version"
+        );
     }
     #[test]
     fn only_project_semver_stamp_is_a_version() {

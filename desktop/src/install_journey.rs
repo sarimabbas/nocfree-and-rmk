@@ -1,6 +1,6 @@
-//! Install coordinates child completion and three observable typing checks.
+//! Install coordinates firmware completion and optional connection checks.
 //! Firmware retains its own machine; this parent performs no IO.
-use crate::{device_status::Mode, scope::Scope, status_strip::Connection};
+use crate::{device_status::Mode, status_strip::Connection};
 use statig::prelude::*;
 use std::{
     sync::atomic::{AtomicU64, Ordering},
@@ -129,7 +129,7 @@ mod machine {
         pub generation: u64,
         pub phase: u64,
         pub target: Target,
-        pub scope: Scope,
+        pub check_connections: bool,
     }
     pub enum Event {
         Installed(Ticket, Result<(), String>),
@@ -162,7 +162,7 @@ mod machine {
                     match result {
                         Ok(()) => {
                             self.advance();
-                            if self.scope != Scope::Whole {
+                            if !self.check_connections {
                                 return Transition(State::complete());
                             }
                             Transition(State::checking(Mode::Wired, None, String::new()))
@@ -271,11 +271,11 @@ impl Default for Machine {
 }
 impl Machine {
     pub fn new() -> Self {
-        Self::scoped(Target::Rmk, Scope::Whole)
+        Self::with_checks(Target::Rmk)
     }
     #[cfg(test)]
     pub fn factory() -> Self {
-        Self::scoped(Target::Factory, Scope::Whole)
+        Self::with_checks(Target::Factory)
     }
     pub fn rmk_check() -> Self {
         let mut machine = Self::new();
@@ -283,14 +283,20 @@ impl Machine {
         machine
     }
     pub fn factory_dongle_check() -> Self {
-        let mut machine = Self::scoped(Target::Factory, Scope::Whole);
+        let mut machine = Self::with_checks(Target::Factory);
         machine.dispatch(machine::Event::CheckFactoryDongle);
         machine
     }
     pub fn target(&self) -> Target {
         self.machine.inner().target
     }
-    pub fn scoped(target: Target, scope: Scope) -> Self {
+    pub fn for_firmware(target: Target) -> Self {
+        Self::with_mode(target, false)
+    }
+    fn with_checks(target: Target) -> Self {
+        Self::with_mode(target, true)
+    }
+    fn with_mode(target: Target, check_connections: bool) -> Self {
         Self {
             machine: machine::Install {
                 generation: GENERATION
@@ -300,7 +306,7 @@ impl Machine {
                     .expect("Install generation exhausted"),
                 phase: 0,
                 target,
-                scope,
+                check_connections,
             }
             .state_machine(),
         }
@@ -532,13 +538,11 @@ mod tests {
         assert!(!failed.installed(failed.ticket(), Ok(())));
     }
     #[test]
-    fn single_part_install_does_not_require_whole_keyboard_checks() {
+    fn firmware_completion_does_not_require_typing_checks() {
         for target in [Target::Rmk, Target::Factory] {
-            for role in Scope::Whole.roles() {
-                let mut machine = Machine::scoped(target, Scope::Part(role));
-                assert!(machine.installed(machine.ticket(), Ok(())));
-                assert_eq!(machine.stage(), Stage::Complete);
-            }
+            let mut machine = Machine::for_firmware(target);
+            assert!(machine.installed(machine.ticket(), Ok(())));
+            assert_eq!(machine.stage(), Stage::Complete);
         }
     }
     #[test]
