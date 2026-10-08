@@ -10,13 +10,13 @@ from image_guard import inspect as inspect_receiver
 from migration_guard import inspect_startup_image
 
 ROOT = Path(__file__).resolve().parents[1]
-VERSION = '1.0.3'
-MANIFEST_SHA256 = '3c1a278cf9e18b231c9d59b59389008d7bdab03976ee41c1ca1e9ee9ffcd0466'
-SOURCE = '.evidence/native-release-1.0.3/companion'
+VERSION = '1.1.0'
+MANIFEST_SHA256 = 'f99e2fe2b748ef3ee01c2804ca5d0aefa7a07ae0cdceff544ad232a9a6b791f3'
+SOURCE = '.evidence/native-release-1.1.0/companion'
 ROLES = {
-    'left': ('native-release-1.0.3/companion', 'cc6d8aa050c184aa2a2c728c8af814f04e2047723612575c9bc64546731e1527', 'a03153b92f9e89f09a0f2ee57c0a1106c7e6105cb7537ec0d1c75296b9a6d868', '4a52e1a5c48fc53803454939b35fdfdc1584b40d', '434ab4d7d29d8e9ba689837358c8a44996ba38cc'),
-    'right': ('native-release-1.0.3/companion', '833cdb336137604dbca0395b9145a78b8594f271be808996c81d9baed3acc4d1', '527c398eec835665d91eca056f1c9bccdf23bab6c28647f07e4cc1ac7dd44aa9', '4a52e1a5c48fc53803454939b35fdfdc1584b40d', '434ab4d7d29d8e9ba689837358c8a44996ba38cc'),
-    'receiver': ('native-release-1.0.3/companion', '3d3f4de4a76b49880924308d6e6929641eda4192abfeeb0fd35511c095042c71', '338323349918a9f3ada58d391ca77ba86f58a6f339da93e3f0c36e751fd339bc', '4a52e1a5c48fc53803454939b35fdfdc1584b40d', '434ab4d7d29d8e9ba689837358c8a44996ba38cc'),
+    'left': ('native-release-1.1.0/companion', '592818dde1be286d4ed5b87e6e190cce875e5bacf78dfe69d5c3275ed35ae58a', '0669cd1c0cae13ae90e2fe2278409f83640674f3997a43e72e7e792b0ca03cbd', '6ddd1f942a986a0b8e268339e36113de9c73ce11', '434ab4d7d29d8e9ba689837358c8a44996ba38cc'),
+    'right': ('native-release-1.1.0/companion', '74b46f6a881f1da69a3eb883c22d2a0d829a04dc7c089583a2031b7ec86fb5b8', '373ba1405ca84ecdcecbc076588bba971ed179912a54c7eec86426c939250722', '6ddd1f942a986a0b8e268339e36113de9c73ce11', '434ab4d7d29d8e9ba689837358c8a44996ba38cc'),
+    'receiver': ('native-release-1.1.0/companion', '4dafd352037eb5bf1ed5c024992b1859a7a0b4587c50558e04e781eb3e6b5353', 'f8cb36d982f5a9b8d3bd1033aab59f31274734b5da08a416eabf03290cae8ca9', '6ddd1f942a986a0b8e268339e36113de9c73ce11', '434ab4d7d29d8e9ba689837358c8a44996ba38cc'),
 }
 
 

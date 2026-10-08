@@ -13,7 +13,7 @@ use std::path::PathBuf;
 use std::path::{Component, Path};
 
 #[cfg(not(feature = "firmware-trial"))]
-const MANIFEST_SHA256: &str = "3c1a278cf9e18b231c9d59b59389008d7bdab03976ee41c1ca1e9ee9ffcd0466";
+const MANIFEST_SHA256: &str = "f99e2fe2b748ef3ee01c2804ca5d0aefa7a07ae0cdceff544ad232a9a6b791f3";
 #[cfg(feature = "firmware-trial")]
 const MANIFEST_SHA256: &str = "336d6daaf028c897e5b6e0c2f70d78999d3b0ea6ce0bcd03b1d4d869eb162c92";
 const MAX_FILE: u64 = 1024 * 1024;
@@ -409,20 +409,22 @@ mod tests {
         // Packaging is required before this integration test, never silently skipped.
         let release = FirmwareRelease::load_from(&source).unwrap();
         assert_eq!(release.image(Role::Right).proof.role(), Role::Right);
-        assert_eq!(release.image(Role::Receiver).proof.end_exclusive(), 0x64000);
+        assert_eq!(release.version(), env!("CARGO_PKG_VERSION"));
+        assert!(release.supports_layout(KeyboardLayout::Iso));
+        assert!(release.supports_layout(KeyboardLayout::Jis));
+        assert!(release.supports_layout(KeyboardLayout::Kr));
         let temporary =
             std::env::temp_dir().join(format!("nocfree-release-test-{}", std::process::id()));
         std::fs::create_dir_all(&temporary).unwrap();
-        for name in [
-            "manifest.json",
-            "left.uf2",
-            "left.bin",
-            "right.uf2",
-            "right.bin",
-            "receiver.uf2",
-            "receiver.bin",
-        ] {
-            std::fs::copy(source.join(name), temporary.join(name)).unwrap();
+        std::fs::copy(
+            source.join("manifest.json"),
+            temporary.join("manifest.json"),
+        )
+        .unwrap();
+        for image in &release.images {
+            for name in [&image.metadata.uf2, &image.metadata.binary] {
+                std::fs::copy(source.join(name), temporary.join(name)).unwrap();
+            }
         }
         let original = std::fs::read(temporary.join("manifest.json")).unwrap();
         let mut corrupt = original.clone();
@@ -431,12 +433,20 @@ mod tests {
         assert!(FirmwareRelease::load_from(&temporary).is_err());
         std::fs::write(temporary.join("manifest.json"), &original).unwrap();
         // Half images share an origin: explicit role hash pins must reject a swap.
-        std::fs::copy(source.join("right.uf2"), temporary.join("left.uf2")).unwrap();
+        std::fs::copy(
+            source.join("right-ansi.uf2"),
+            temporary.join("left-ansi.uf2"),
+        )
+        .unwrap();
         assert!(FirmwareRelease::load_from(&temporary).is_err());
-        std::fs::copy(source.join("left.uf2"), temporary.join("left.uf2")).unwrap();
-        let mut binary = std::fs::read(temporary.join("left.bin")).unwrap();
+        std::fs::copy(
+            source.join("left-ansi.uf2"),
+            temporary.join("left-ansi.uf2"),
+        )
+        .unwrap();
+        let mut binary = std::fs::read(temporary.join("left-ansi.bin")).unwrap();
         binary[100] ^= 1;
-        std::fs::write(temporary.join("left.bin"), binary).unwrap();
+        std::fs::write(temporary.join("left-ansi.bin"), binary).unwrap();
         assert!(FirmwareRelease::load_from(&temporary).is_err());
         std::fs::remove_dir_all(temporary).unwrap();
     }

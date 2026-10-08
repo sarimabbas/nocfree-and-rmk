@@ -38,7 +38,7 @@ To return to the original software, select **Restore factory** and follow the ap
 - [x] Install the included ANSI, ISO, JIS or KR layout
 - [x] Type through USB, Bluetooth or the RMK dongle
 - [x] Check both halves with guided typing tests
-- [x] Change keys with Vial
+- [x] Change keys and create macros, combos and Tap Dance actions with Vial
 - [x] Backlight brightness
 
 ## Use the keyboard

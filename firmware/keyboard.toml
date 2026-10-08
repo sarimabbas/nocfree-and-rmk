@@ -1,11 +1,11 @@
 [rmk]
 debounce_time = 5
-combo_max_num = 0
+combo_max_num = 8
 fork_max_num = 0
-morse_max_num = 0
+morse_max_num = 4
 morse_profile_max_num = 1
-macro_max_num = 0
-macro_space_size = 32
+macro_max_num = 8
+macro_space_size = 256
 split_peripherals_num = 1
 # Native central idle timeout.
 split_central_sleep_timeout_seconds = 1800
