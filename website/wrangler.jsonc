@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json.schemastore.org/wrangler.json",
+  "name": "nocfree-rmk-site",
+  "account_id": "f7df7fafe5b4e9d4e0446100575c0bf4",
+  "compatibility_date": "2026-10-07",
+  "assets": {
+    "directory": "./public",
+    "not_found_handling": "404-page"
+  },
+  "routes": [
+    {
+      "pattern": "nocfree-rmk.lil.run",
+      "custom_domain": true
+    }
+  ]
+}

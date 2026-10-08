@@ -289,6 +289,8 @@ Release jobs build the app first. A protected job signs the build with a tempora
 
 Use the same version for Companion and firmware. Put the checked firmware package in a draft of the new app release, then start the release workflow with that draft's tag and the package SHA256. A staging job retrieves the draft asset; the read-only builds check it and bundle it in all three apps. The signing job adds the app downloads to the same draft. Firmware and app downloads share one release.
 
+The project site is in `website/public/`. Deploy it from `website/` with `npx wrangler@4.127.1 deploy`. Its custom domain is `nocfree-rmk.lil.run`; the `lil.run` Search Console domain property covers it.
+
 ## Windows and Linux
 
 All three app builds use the same keyboard images and state machines.

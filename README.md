@@ -1,6 +1,6 @@
 # NocFree RMK Companion
 
-Install RMK on your NocFree AND keyboard with a guided app for Mac, Windows and Linux. USB, Bluetooth and dongle supported. 
+Install RMK on your NocFree AND keyboard with a [guided app](https://nocfree-rmk.lil.run/) for Mac, Windows and Linux. USB, Bluetooth and dongle supported.
 
 ![Choose the keyboard parts to update](docs/images/install-rmk.png)
 
