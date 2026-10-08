@@ -150,7 +150,7 @@ jobs:
           cp "$RUNNER_TEMP/firmware-input/companion-firmware.zip" "$RUNNER_TEMP/release-input/companion-firmware.zip"
           ditto -c -k --keepParent "dist/NocFree RMK Companion.app" "$RUNNER_TEMP/release-input/nocfree-rmk-companion-unsigned.zip"
           cat > "$RUNNER_TEMP/release-input/${VERSION}.md" <<'NOTES'
-          Companion shows the battery level for both keyboard halves over USB, Bluetooth and the dongle.
+          Create macros, key combos and Tap Dance actions in Vial.
 
           The app includes firmware for ANSI, ISO, JIS and KR keyboards.
           NOTES
