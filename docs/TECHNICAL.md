@@ -94,6 +94,8 @@ Backlight uses RMK User actions, events, user-data storage and split messages. B
 
 Configure keys in Vial through LEFT USB. Saved mappings also apply to Bluetooth and dongle typing. ANSI USB Matrix Tester, remapping and persistence after restart passed. Dongle Vial layout reads can exceed the client’s 500 ms timeout; retries can then read stale replies. Read-only checks with a 2 s timeout returned the complete 796-byte layout. Keep this transport issue upstream; do not patch RMK to change its connection policy.
 
+`firmware/keyboard.toml` reserves eight macros sharing 256 bytes, eight combos and four Vial Tap Dance entries through RMK's `morse_max_num`. The slots start empty; users configure them in Vial. Changing these capacities changes RMK's storage schema hash on LEFT and the dongle, which resets their saved settings, key mappings and pairings on the next boot. Export the Vial layout before installing a build with different capacities, then import it and pair again.
+
 ### Local USB recovery
 
 LEFT and dongle use RMK's standard runtime DFU DETACH interface. It accepts entry only within 30 seconds of CPU startup. Replugging the bus-powered dongle restarts that window; reconnecting LEFT USB while its battery keeps it running does not. LEFT also exposes upstream Vial's bootloader request; that command is not gated by Vial unlock. Upstream Rynk's equivalent request requires unlock. That request must go to LEFT, not be presented as recovery of the dongle relay.
