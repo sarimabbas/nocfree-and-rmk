@@ -1,7 +1,7 @@
 {
   "desktop": {
-    "cargo_lock_sha256": "02bb0568199f067b6c9af3c4594eb6046d37a7abc4dfdc658c1e3c0dce0d828d",
-    "cargo_manifest_sha256": "d539d13c1e6901a029630ba05dc69d04d08fac3b763c483ad3d8bae3321069f4",
+    "cargo_lock_sha256": "a238b0da49582739e28eb625a2d850f2b4eeff97a23040eb458abe86937c1f53",
+    "cargo_manifest_sha256": "3341bd279ae81edf2f469fe8989f07f12a0815b843434966aa85a1089fe8e892",
     "packages": [
       {
         "license": "MIT OR Apache-2.0",
@@ -16325,7 +16325,7 @@
     "features": "all-features (conservative dependency superset)",
     "graphs": [
       {
-        "cargo_lock_sha256": "bb06cdaa2b156d56bb08534564b4644a68d361b209ddde38893906b112913760",
+        "cargo_lock_sha256": "0ab7a0583ac4888a04a4ad70c9409283ed70368c2936f99044c27231afa72645",
         "cargo_manifest_sha256": "78c44d137444021f5af6f8cf11439a62fb3da6d62ee212015c9c3bb893a658f0",
         "packages": [
           {
@@ -21638,21 +21638,21 @@
           }
         ],
         "rmk_revision": "434ab4d7d29d8e9ba689837358c8a44996ba38cc",
-        "source_commit": "4a52e1a5c48fc53803454939b35fdfdc1584b40d"
+        "source_commit": "6ddd1f942a986a0b8e268339e36113de9c73ce11"
       }
     ],
     "roles": {
       "left": {
         "rmk_revision": "434ab4d7d29d8e9ba689837358c8a44996ba38cc",
-        "source_commit": "4a52e1a5c48fc53803454939b35fdfdc1584b40d"
+        "source_commit": "6ddd1f942a986a0b8e268339e36113de9c73ce11"
       },
       "receiver": {
         "rmk_revision": "434ab4d7d29d8e9ba689837358c8a44996ba38cc",
-        "source_commit": "4a52e1a5c48fc53803454939b35fdfdc1584b40d"
+        "source_commit": "6ddd1f942a986a0b8e268339e36113de9c73ce11"
       },
       "right": {
         "rmk_revision": "434ab4d7d29d8e9ba689837358c8a44996ba38cc",
-        "source_commit": "4a52e1a5c48fc53803454939b35fdfdc1584b40d"
+        "source_commit": "6ddd1f942a986a0b8e268339e36113de9c73ce11"
       }
     },
     "target": "thumbv7em-none-eabihf"
